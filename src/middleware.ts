@@ -7,7 +7,15 @@ export function middleware(request: NextRequest) {
     const adminSession = request.cookies.get('admin_session');
 
     if (!adminSession) {
-      return NextResponse.redirect(new URL('/login', request.url));
+      // Behind reverse proxies, Next's request.url can end up as localhost.
+      // Build the redirect origin explicitly from forwarded headers.
+      const proto = request.headers.get('x-forwarded-proto') ?? 'http';
+      const host =
+        request.headers.get('x-forwarded-host') ??
+        request.headers.get('host') ??
+        'localhost';
+
+      return NextResponse.redirect(new URL('/login', `${proto}://${host}`));
     }
   }
 
