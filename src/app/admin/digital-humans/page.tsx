@@ -46,6 +46,7 @@ type Row = {
   avatar?: string | null
   gender?: string | null
   created_at: string
+  updated_at: string
   postsCount: number
 }
 
@@ -110,7 +111,7 @@ export default function ManageDigitalHumans() {
     setLoading(true)
     let q = supabase
       .from("users")
-      .select("userid,username,profession,avatar,gender,created_at")
+      .select("userid,username,profession,avatar,gender,created_at,updated_at")
       .eq("is_digital_human", true)
       .order("created_at", { ascending: false })
 
@@ -323,7 +324,10 @@ export default function ManageDigitalHumans() {
                   {columns.avatar ? (
                     <TableCell className="pl-4">
                       <Avatar className="h-9 w-9">
-                        <AvatarImage src={`/api/avatar/${r.userid}`} alt={r.username} />
+                        <AvatarImage
+                          src={`/api/avatar/${r.userid}?v=${encodeURIComponent(r.updated_at || r.created_at)}`}
+                          alt={r.username}
+                        />
                         <AvatarFallback>{r.username?.slice(0, 2)?.toUpperCase()}</AvatarFallback>
                       </Avatar>
                     </TableCell>

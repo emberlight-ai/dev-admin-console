@@ -21,6 +21,11 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024
 const ACCEPTED_MIME = new Set(["image/jpeg", "image/png"])
 const ACCEPT_ATTR = "image/jpeg,image/png"
 
+function avatarExtFor(file: File) {
+  if (file.type === "image/png") return "png"
+  return "jpg"
+}
+
 export default function CreateDigitalHuman() {
   const router = useRouter()
   const [loading, setLoading] = React.useState(false)
@@ -134,14 +139,19 @@ export default function CreateDigitalHuman() {
         toast.error("Avatar must be a JPG or PNG under 5MB")
         return
       }
-      const filePath = `${userId}/avatar.jpg`
+      const idPart =
+        typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now())
+      const filePath = `${userId}/avatar_${idPart}.${avatarExtFor(avatarFile)}`
       const { error: uploadError } = await supabase.storage
         .from("images")
         .upload(filePath, avatarFile, { upsert: true, contentType: avatarFile.type })
       if (uploadError) throw uploadError
 
       const { data: pub } = supabase.storage.from("images").getPublicUrl(filePath)
-      await supabase.from("users").update({ avatar: pub.publicUrl }).eq("userid", userId)
+      await supabase
+        .from("users")
+        .update({ avatar: pub.publicUrl, updated_at: new Date().toISOString() })
+        .eq("userid", userId)
 
       // Initial post (optional): create row to get id, then upload into /post_<postId>/<n>.jpg
       if (postFiles.length > 0 || initialPostDescription.trim()) {

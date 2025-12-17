@@ -8,7 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Amber Console",
+  title: "Amber Foundary",
   description: "User Management Platform",
 };
 
