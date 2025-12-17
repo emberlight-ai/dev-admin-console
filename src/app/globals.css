@@ -60,7 +60,7 @@
   --muted-foreground: oklch(0.556 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  --destructive: oklch(0.48 0.16 29); /* More red: higher chroma, hue for pure vivid red */
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -113,46 +113,62 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* Premium SaaS brand palette (paired with `src/components/theme-color.tsx`) */
-[data-color="indigo"] {
-  --primary: hsl(231 48% 48%);
-  --ring: hsl(231 48% 48% / 0.35);
-  --sidebar-primary: hsl(231 48% 48%);
+/* Elden Ring / Dark Souls-style affinities (paired with `src/components/theme-color.tsx`) */
+[data-color="magic"] {
+  --primary: hsl(221 92% 56%); /* vibrant glintstone blue */
+  --primary-foreground: hsl(0 0% 100%);
+  --ring: hsl(221 92% 56% / 0.35);
+  --sidebar-primary: hsl(221 92% 56%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
 }
-[data-color="ocean"] {
-  --primary: hsl(190 65% 32%);
-  --ring: hsl(190 65% 32% / 0.35);
-  --sidebar-primary: hsl(190 65% 32%);
+[data-color="cold"] {
+  --primary: hsl(196 92% 55%); /* brighter icy cyan */
+  --primary-foreground: hsl(222 47% 11%);
+  --ring: hsl(196 92% 55% / 0.35);
+  --sidebar-primary: hsl(196 92% 55%);
+  --sidebar-primary-foreground: hsl(222 47% 11%);
 }
-[data-color="slate"] {
-  --primary: hsl(215 18% 34%);
-  --ring: hsl(215 18% 34% / 0.35);
-  --sidebar-primary: hsl(215 18% 34%);
+[data-color="fire"] {
+  --primary: hsl(22 95% 55%); /* hotter orange */
+  --primary-foreground: hsl(0 0% 100%);
+  --ring: hsl(22 95% 55% / 0.35);
+  --sidebar-primary: hsl(22 95% 55%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
 }
-[data-color="sage"] {
-  --primary: hsl(164 34% 32%);
-  --ring: hsl(164 34% 32% / 0.35);
-  --sidebar-primary: hsl(164 34% 32%);
+[data-color="sacred"] {
+  --primary: hsl(46 98% 56%); /* richer gold */
+  --primary-foreground: hsl(222 47% 11%);
+  --ring: hsl(46 98% 56% / 0.35);
+  --sidebar-primary: hsl(46 98% 56%);
+  --sidebar-primary-foreground: hsl(222 47% 11%);
 }
-[data-color="amber"] {
-  --primary: hsl(28 75% 42%);
-  --ring: hsl(28 75% 42% / 0.35);
-  --sidebar-primary: hsl(28 75% 42%);
+[data-color="poison"] {
+  --primary: #5da500; /* vibrant poison green */
+  --primary-foreground: hsl(0 0% 100%);
+  --ring: color-mix(in oklab, #5da500 35%, transparent);
+  --sidebar-primary: #5da500;
+  --sidebar-primary-foreground: hsl(0 0% 100%);
 }
-[data-color="crimson"] {
-  --primary: hsl(349 64% 38%);
-  --ring: hsl(349 64% 38% / 0.35);
-  --sidebar-primary: hsl(349 64% 38%);
+[data-color="blood"] {
+  --primary: hsl(356 88% 52%); /* vivid crimson */
+  --primary-foreground: hsl(0 0% 100%);
+  --ring: hsl(356 88% 52% / 0.35);
+  --sidebar-primary: hsl(356 88% 52%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
 }
-[data-color="plum"] {
-  --primary: hsl(270 32% 42%);
-  --ring: hsl(270 32% 42% / 0.35);
-  --sidebar-primary: hsl(270 32% 42%);
+[data-color="dark"] {
+  --primary: hsl(268, 51%, 38%); /* deeper violet */
+  --primary-foreground: hsl(0 0% 100%);
+  --ring: hsl(268 70% 62% / 0.35); /* brighter ring so it's visible in dark mode */
+  --sidebar-primary: hsl(268, 51%, 38%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
 }
-[data-color="sky"] {
-  --primary: hsl(201 78% 36%);
-  --ring: hsl(201 78% 36% / 0.35);
-  --sidebar-primary: hsl(201 78% 36%);
+[data-color="quality"] {
+  --primary: hsl(215 22% 52%); /* cleaner steel */
+  --primary-foreground: hsl(0 0% 100%);
+  --ring: hsl(215 22% 52% / 0.35);
+  --sidebar-primary: hsl(215 22% 52%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
 }
 
 @layer base {
@@ -162,4 +178,9 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Sidebar active item tint (very light, derived from current theme ring) */
+.sidebar-active {
+  background-color: color-mix(in oklab, var(--ring) 12%, transparent);
 }

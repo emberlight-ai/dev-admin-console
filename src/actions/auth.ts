@@ -20,7 +20,7 @@ export async function login(formData: FormData) {
       sameSite: 'strict',
       path: '/',
     });
-    redirect('/admin/digital-humans');
+    redirect('/admin/users');
   } else {
     return { error: 'Invalid credentials' };
   }
@@ -36,4 +36,3 @@ export async function isLoggedIn() {
   const cookieStore = await cookies();
   return cookieStore.has(SESSION_COOKIE_NAME);
 }
-

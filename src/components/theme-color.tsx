@@ -13,36 +13,36 @@ import {
 import { Button } from "@/components/ui/button"
 
 export type ThemeColor =
-  | "indigo"
-  | "ocean"
-  | "slate"
-  | "sage"
-  | "amber"
-  | "crimson"
-  | "plum"
-  | "sky"
+  | "magic"
+  | "cold"
+  | "fire"
+  | "sacred"
+  | "poison"
+  | "blood"
+  | "dark"
+  | "quality"
 
 const THEME_COLORS: { value: ThemeColor; label: string }[] = [
-  { value: "indigo", label: "Indigo" },
-  { value: "ocean", label: "Ocean" },
-  { value: "slate", label: "Slate" },
-  { value: "sage", label: "Sage" },
-  { value: "amber", label: "Amber" },
-  { value: "crimson", label: "Crimson" },
-  { value: "plum", label: "Plum" },
-  { value: "sky", label: "Sky" },
+  { value: "magic", label: "Magic" },
+  { value: "cold", label: "Cold" },
+  { value: "fire", label: "Fire" },
+  { value: "sacred", label: "Sacred" },
+  { value: "poison", label: "Poison" },
+  { value: "blood", label: "Blood" },
+  { value: "dark", label: "Dark" },
+  { value: "quality", label: "Quality" },
 ]
 
 const COLOR_SWATCH: Record<ThemeColor, string> = {
-  // Premium SaaS palette (muted, brandable)
-  indigo: "hsl(231 48% 48%)",  // ~ #3F51B5
-  ocean: "hsl(190 65% 32%)",   // deep teal
-  slate: "hsl(215 18% 34%)",   // graphite/slate
-  sage: "hsl(164 34% 32%)",    // muted green
-  amber: "hsl(28 75% 42%)",    // warm amber
-  crimson: "hsl(349 64% 38%)", // premium red (cardinal-ish)
-  plum: "hsl(270 32% 42%)",    // muted violet
-  sky: "hsl(201 78% 36%)",     // premium blue
+  // Elden Ring / Dark Souls-inspired affinities (still readable for SaaS UI)
+  magic: "hsl(221 92% 56%)",   // vibrant glintstone blue
+  cold: "hsl(196 92% 55%)",    // brighter icy cyan
+  fire: "hsl(22 95% 55%)",     // hotter orange
+  sacred: "hsl(46 98% 56%)",   // richer gold
+  poison: "#5da500",           // vibrant poison green
+  blood: "hsl(356 88% 52%)",   // vivid crimson
+  dark: "hsl(268, 51%, 38%)",  // deeper violet
+  quality: "hsl(215 22% 52%)", // cleaner steel
 }
 
 const STORAGE_KEY = "theme-color"
@@ -55,35 +55,37 @@ function applyThemeColor(color: ThemeColor) {
 
 function getInitialThemeColor(): ThemeColor {
   const storedRaw = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null
-  // Backwards compatibility for older values (AntD -> early shadcn -> premium palette)
+  // Backwards compatibility for older values (AntD -> premium palette -> affinities)
   const migrated =
-    storedRaw === "green" ? "sage" :
-    storedRaw === "red" ? "crimson" :
-    storedRaw === "neutral" ? "slate" :
-    storedRaw === "blue" ? "sky" :
-    storedRaw === "lime" ? "sage" :
-    storedRaw === "cyan" ? "ocean" :
-    storedRaw === "orange" ? "amber" :
-    storedRaw === "cardinal" ? "crimson" :
-    storedRaw === "rose" ? "crimson" :
-    storedRaw === "violet" ? "plum" :
-    storedRaw === "yellow" ? "amber" :
+    storedRaw === "green" ? "poison" :
+    storedRaw === "red" ? "blood" :
+    storedRaw === "neutral" ? "quality" :
+    storedRaw === "indigo" ? "magic" :
+    storedRaw === "ocean" ? "cold" :
+    storedRaw === "slate" ? "quality" :
+    storedRaw === "sage" ? "poison" :
+    storedRaw === "amber" ? "fire" :
+    storedRaw === "crimson" ? "blood" :
+    storedRaw === "plum" ? "dark" :
+    storedRaw === "sky" ? "magic" :
     storedRaw
 
   const stored = migrated as ThemeColor | null
   if (stored && THEME_COLORS.some((c) => c.value === stored)) return stored
-  return "indigo"
+  return "magic"
 }
 
 type ThemeColorContextValue = {
   color: ThemeColor
   setColor: (c: ThemeColor) => void
+  changeNonce: number
 }
 
 const ThemeColorContext = React.createContext<ThemeColorContextValue | null>(null)
 
 export function ThemeColorProvider({ children }: { children: React.ReactNode }) {
-  const [color, setColorState] = React.useState<ThemeColor>("indigo")
+  const [color, setColorState] = React.useState<ThemeColor>("magic")
+  const [changeNonce, setChangeNonce] = React.useState(0)
 
   React.useEffect(() => {
     const initial = getInitialThemeColor()
@@ -94,10 +96,11 @@ export function ThemeColorProvider({ children }: { children: React.ReactNode }) 
   const setColor = React.useCallback((c: ThemeColor) => {
     setColorState(c)
     applyThemeColor(c)
+    setChangeNonce((n) => n + 1)
   }, [])
 
   return (
-    <ThemeColorContext.Provider value={{ color, setColor }}>
+    <ThemeColorContext.Provider value={{ color, setColor, changeNonce }}>
       {children}
     </ThemeColorContext.Provider>
   )

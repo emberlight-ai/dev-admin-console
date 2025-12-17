@@ -3,11 +3,12 @@
 import * as React from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
-import { ArrowLeft, Pencil, Plus, RefreshCw, Send } from "lucide-react"
+import { ArrowLeft, Pencil, Plus, Send, Trash2, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { supabase } from "@/lib/supabase"
-import { upsertBotProfile } from "@/lib/botProfile"
+import { buildSystemPrompt } from "@/lib/botProfile"
+import { FileDropzone } from "@/components/file-dropzone"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -19,6 +20,11 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
+  Dialog,
+  DialogContent,
+  DialogXCloseButton,
+} from "@/components/ui/dialog"
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -26,6 +32,17 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 
 interface ChatMessage {
   role: 'user' | 'model';
@@ -52,13 +69,17 @@ type DbPost = {
   created_at: string;
 };
 
+const MAX_FILE_BYTES = 5 * 1024 * 1024
+const ACCEPTED_MIME = new Set(["image/jpeg", "image/png"])
+const ACCEPT_ATTR = "image/jpeg,image/png"
+
 export default function DigitalHumanDetail() {
   const { id } = useParams();
   const [user, setUser] = React.useState<DbUser | null>(null)
   const [posts, setPosts] = React.useState<DbPost[]>([])
   const [loading, setLoading] = React.useState(true)
-  const [systemPrompt, setSystemPrompt] = React.useState("")
-  const [promptEditing, setPromptEditing] = React.useState(false)
+  const [avatarBust, setAvatarBust] = React.useState<number>(0)
+  const [zoomSrc, setZoomSrc] = React.useState<string | null>(null)
   
   // Chat state
   const [chatHistory, setChatHistory] = React.useState<ChatMessage[]>([])
@@ -83,12 +104,68 @@ export default function DigitalHumanDetail() {
   const [editPost, setEditPost] = React.useState<DbPost | null>(null)
   const [editPostDescription, setEditPostDescription] = React.useState("")
   const [editPostFiles, setEditPostFiles] = React.useState<File[]>([])
+  const [editPostPhotos, setEditPostPhotos] = React.useState<string[]>([])
 
   // Add post sheet
   const [addPostOpen, setAddPostOpen] = React.useState(false)
   const [addPostSaving, setAddPostSaving] = React.useState(false)
   const [newPostDescription, setNewPostDescription] = React.useState("")
   const [newPostFiles, setNewPostFiles] = React.useState<File[]>([])
+
+  const validateFiles = React.useCallback(
+    (files: File[]) => {
+      const valid: File[] = []
+      const errors: string[] = []
+      for (const f of files) {
+        if (!ACCEPTED_MIME.has(f.type)) {
+          errors.push(`${f.name}: only JPG/PNG supported`)
+          continue
+        }
+        if (f.size > MAX_FILE_BYTES) {
+          errors.push(`${f.name}: file must be under 5MB`)
+          continue
+        }
+        valid.push(f)
+      }
+      return { valid, errors }
+    },
+    []
+  )
+
+  const avatarPreviewUrl = React.useMemo(() => {
+    if (!editAvatarFile) return null
+    return URL.createObjectURL(editAvatarFile)
+  }, [editAvatarFile])
+
+  React.useEffect(() => {
+    return () => {
+      if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl)
+    }
+  }, [avatarPreviewUrl])
+
+  const editPostPreviewUrls = React.useMemo(
+    () => editPostFiles.map((f) => ({ file: f, url: URL.createObjectURL(f) })),
+    [editPostFiles]
+  )
+
+  React.useEffect(() => {
+    return () => {
+      editPostPreviewUrls.forEach((p) => URL.revokeObjectURL(p.url))
+    }
+  }, [editPostPreviewUrls])
+
+  const newPostPreviewUrls = React.useMemo(
+    () => newPostFiles.map((f) => ({ file: f, url: URL.createObjectURL(f) })),
+    [newPostFiles]
+  )
+
+  React.useEffect(() => {
+    return () => {
+      newPostPreviewUrls.forEach((p) => URL.revokeObjectURL(p.url))
+    }
+  }, [newPostPreviewUrls])
+
+  // (FileDropzone extracted to src/components/file-dropzone.tsx)
 
   React.useEffect(() => {
     if (!id) return;
@@ -112,10 +189,15 @@ export default function DigitalHumanDetail() {
       toast.error("Failed to fetch user details")
     } else {
       setUser(data);
-      setSystemPrompt(data.system_prompt || '');
     }
     setLoading(false);
   };
+
+  const avatarSrc = React.useMemo(() => {
+    if (!user?.userid) return undefined
+    const base = `/api/avatar/${user.userid}`
+    return avatarBust ? `${base}?v=${avatarBust}` : base
+  }, [user?.userid, avatarBust])
 
   const fetchPosts = async () => {
     const { data } = await supabase
@@ -152,9 +234,25 @@ export default function DigitalHumanDetail() {
         bio: editBio.trim() || null,
       }
 
+      // Always (re)generate the system prompt from the latest profile info.
+      updates.system_prompt = buildSystemPrompt({
+        name: updates.username ?? user.username,
+        age: updates.age ?? user.age ?? null,
+        archetype: updates.profession ?? user.profession ?? null,
+        bio: updates.bio ?? user.bio ?? null,
+      })
+
       // Upload avatar.jpg if provided
       let newAvatarUrl: string | null | undefined = undefined
       if (editAvatarFile) {
+        if (!ACCEPTED_MIME.has(editAvatarFile.type)) {
+          toast.error("Avatar must be a JPG or PNG under 5MB")
+          return
+        }
+        if (editAvatarFile.size > MAX_FILE_BYTES) {
+          toast.error("Avatar must be under 5MB")
+          return
+        }
         const filePath = `${user.userid}/avatar.jpg`
         const { error: uploadError } = await supabase.storage
           .from("images")
@@ -164,6 +262,8 @@ export default function DigitalHumanDetail() {
         const { data: pub } = supabase.storage.from("images").getPublicUrl(filePath)
         newAvatarUrl = pub.publicUrl
         updates.avatar = newAvatarUrl
+        // Bust browser/CDN cache for this session (same URL path gets cached aggressively)
+        setAvatarBust(Date.now())
       }
 
       const { error } = await supabase.from("users").update(updates).eq("userid", user.userid)
@@ -184,6 +284,7 @@ export default function DigitalHumanDetail() {
     setEditPost(p)
     setEditPostDescription(p.description ?? "")
     setEditPostFiles([])
+    setEditPostPhotos(p.photos ?? [])
     setPostOpen(true)
   }
 
@@ -191,14 +292,36 @@ export default function DigitalHumanDetail() {
     if (!user || !editPost) return
     setPostSaving(true)
     try {
-      let photos = editPost.photos ?? []
+      let photos = editPostPhotos ?? []
 
-      // If user uploaded new photos, overwrite post_1.jpg, post_2.jpg... in the user's folder
+      // If user uploaded new photos, ADD them (do not replace existing).
+      // We save them as /<userid>/post_<postId>/<n>.jpg and append URLs to `photos`.
       if (editPostFiles.length > 0) {
+        const remainingSlots = Math.max(0, 9 - photos.length)
+        if (remainingSlots === 0) {
+          toast.error("Max 9 images per post")
+          return
+        }
+
+        if (editPostFiles.length > remainingSlots) toast.error("Max 9 images per post")
+        const { valid, errors } = validateFiles(editPostFiles.slice(0, remainingSlots))
+        if (errors.length) {
+          toast.error(errors[0])
+          return
+        }
+
+        const existingNumbers = (photos ?? [])
+          .map((u) => {
+            const m = u.match(new RegExp(`/post_${editPost.id}/(\\d+)\\.jpg`, "i"))
+            return m ? Number(m[1]) : null
+          })
+          .filter((n): n is number => typeof n === "number" && Number.isFinite(n))
+        const startIndex = (existingNumbers.length ? Math.max(...existingNumbers) : 0) + 1
+
         const urls: string[] = []
-        for (let i = 0; i < editPostFiles.length; i++) {
-          const f = editPostFiles[i]
-          const filePath = `${user.userid}/post_${i + 1}.jpg`
+        for (let i = 0; i < valid.length; i++) {
+          const f = valid[i]
+          const filePath = `${user.userid}/post_${editPost.id}/${startIndex + i}.jpg`
           const { error: uploadError } = await supabase.storage
             .from("images")
             .upload(filePath, f, { upsert: true, contentType: f.type })
@@ -206,7 +329,7 @@ export default function DigitalHumanDetail() {
           const { data: pub } = supabase.storage.from("images").getPublicUrl(filePath)
           urls.push(pub.publicUrl)
         }
-        photos = urls
+        photos = [...photos, ...urls]
       }
 
       const { error } = await supabase
@@ -222,6 +345,7 @@ export default function DigitalHumanDetail() {
       toast.success("Post updated")
       setPostOpen(false)
       setEditPost(null)
+      setEditPostPhotos([])
       void fetchPosts()
     } catch (err: unknown) {
       console.error(err)
@@ -231,15 +355,55 @@ export default function DigitalHumanDetail() {
     }
   }
 
+  const deletePost = async () => {
+    if (!editPost) return
+    setPostSaving(true)
+    try {
+      const { error } = await supabase.from("user_posts").delete().eq("id", editPost.id)
+      if (error) throw error
+      toast.success("Post deleted")
+      setPostOpen(false)
+      setEditPost(null)
+      setEditPostDescription("")
+      setEditPostFiles([])
+      setEditPostPhotos([])
+      void fetchPosts()
+    } catch (err: unknown) {
+      console.error(err)
+      toast.error(err instanceof Error ? err.message : "Failed to delete post")
+    } finally {
+      setPostSaving(false)
+    }
+  }
+
   const createPost = async () => {
     if (!user) return
     setAddPostSaving(true)
     try {
+      // Create the row first so we can use the post id as a unique storage folder
+      const { data: created, error: createError } = await supabase
+        .from("user_posts")
+        .insert({
+          userid: user.userid,
+          photos: [],
+          description: newPostDescription.trim() || null,
+        })
+        .select("id")
+        .single()
+
+      if (createError) throw createError
+
       const urls: string[] = []
       if (newPostFiles.length > 0) {
-        for (let i = 0; i < newPostFiles.length; i++) {
-          const f = newPostFiles[i]
-          const filePath = `${user.userid}/post_${i + 1}.jpg`
+        const { valid, errors } = validateFiles(newPostFiles.slice(0, 9))
+        if (errors.length) {
+          toast.error(errors[0])
+          return
+        }
+        if (newPostFiles.length > 9) toast.error("Max 9 images per post")
+        for (let i = 0; i < valid.length; i++) {
+          const f = valid[i]
+          const filePath = `${user.userid}/post_${created.id}/${i + 1}.jpg`
           const { error: uploadError } = await supabase.storage
             .from("images")
             .upload(filePath, f, { upsert: true, contentType: f.type })
@@ -249,12 +413,13 @@ export default function DigitalHumanDetail() {
         }
       }
 
-      const { error } = await supabase.from("user_posts").insert({
-        userid: user.userid,
-        photos: urls,
-        description: newPostDescription.trim() || null,
-      })
-      if (error) throw error
+      if (urls.length > 0) {
+        const { error: updErr } = await supabase
+          .from("user_posts")
+          .update({ photos: urls })
+          .eq("id", created.id)
+        if (updErr) throw updErr
+      }
 
       toast.success("Post created")
       setAddPostOpen(false)
@@ -268,22 +433,6 @@ export default function DigitalHumanDetail() {
       setAddPostSaving(false)
     }
   }
-
-  const handleUpdatePrompt = async () => {
-    const { error } = await supabase
-      .from('users')
-      .update({ system_prompt: systemPrompt })
-      .eq('userid', id);
-
-    if (error) {
-      toast.error("Failed to update system prompt")
-    } else {
-      toast.success("System prompt updated")
-      setPromptEditing(false);
-      // Update local user state
-      setUser((prev) => (prev ? { ...prev, system_prompt: systemPrompt } : prev));
-    }
-  };
 
   const handleSendMessage = async () => {
     if (!chatInput.trim()) return;
@@ -327,18 +476,6 @@ export default function DigitalHumanDetail() {
   if (loading) return <div className="text-sm text-muted-foreground">Loading...</div>
   if (!user) return <div className="text-sm text-muted-foreground">User not found</div>
 
-  const handleRefreshBotProfile = () => {
-    setSystemPrompt((prev) =>
-      upsertBotProfile(prev, {
-        name: user.username,
-        age: user.age ?? null,
-        archetype: user.profession ?? null,
-        bio: user.bio ?? null,
-      })
-    )
-    toast.success("Updated <bot_profile> from current user info")
-  }
-
   return (
     <div className="max-w-6xl space-y-4">
       <Link href="/admin/digital-humans" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
@@ -359,10 +496,21 @@ export default function DigitalHumanDetail() {
             <Separator className="my-0" />
 
             <div className="flex flex-col items-center text-center">
-              <Avatar className="h-28 w-28">
-                <AvatarImage src={user.avatar ?? undefined} alt={user.username} />
-                <AvatarFallback>{user.username.slice(0, 2).toUpperCase()}</AvatarFallback>
-              </Avatar>
+              <button
+                type="button"
+                className="group rounded-full"
+                onClick={() => setZoomSrc(avatarSrc ?? null)}
+                aria-label="View avatar"
+              >
+                <Avatar className="h-28 w-28 overflow-hidden">
+                  <AvatarImage
+                    src={avatarSrc}
+                    alt={user.username}
+                    className="transition-transform duration-200 group-hover:scale-[1.06]"
+                  />
+                  <AvatarFallback>{user.username.slice(0, 2).toUpperCase()}</AvatarFallback>
+                </Avatar>
+              </button>
               <div className="mt-4">
                 <div className="text-xl font-semibold">{user.username}</div>
                 <div className="text-sm text-muted-foreground">{user.profession ?? "—"}</div>
@@ -397,46 +545,25 @@ export default function DigitalHumanDetail() {
           <Card className="p-6">
             <div className="flex items-center justify-between">
               <div className="text-sm font-medium">System Prompt</div>
-              <div className="flex items-center gap-2">
-                {promptEditing ? (
-                  <Button variant="outline" size="sm" className="gap-2" onClick={handleRefreshBotProfile}>
-                    <RefreshCw className="h-4 w-4" />
-                    Refresh
-                  </Button>
-                ) : null}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => (promptEditing ? handleUpdatePrompt() : setPromptEditing(true))}
-                >
-                  {promptEditing ? "Save" : "Edit"}
-                </Button>
-              </div>
             </div>
-            {promptEditing ? (
-              <Textarea
-                value={systemPrompt}
-                onChange={(e) => setSystemPrompt(e.target.value)}
-                className="max-h-[400px]"
-                rows={12}
-              />
-            ) : (
-              <ScrollArea className="h-[400px] rounded-md border bg-muted/20 p-3">
-                <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+            <ScrollArea className="h-[400px] rounded-md border bg-muted/20 p-3">
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">
                 {user.system_prompt ?? "—"}
-                </p>
-              </ScrollArea>
-            )}
+              </p>
+            </ScrollArea>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Auto-generated from profile fields; updates when you save profile changes.
+            </p>
           </Card>
         </div>
 
         {/* Right Column: Tabs (Chat & Posts) */}
         <div className="lg:col-span-2">
           <Card className="p-6">
-            <Tabs defaultValue="chat" className="w-full">
+            <Tabs defaultValue="posts" className="w-full">
               <TabsList>
+              <TabsTrigger value="posts">Post History</TabsTrigger>
                 <TabsTrigger value="chat">Chat &amp; Tuning</TabsTrigger>
-                <TabsTrigger value="posts">Post History</TabsTrigger>
               </TabsList>
 
               <TabsContent value="chat" className="mt-4 space-y-4">
@@ -510,7 +637,7 @@ export default function DigitalHumanDetail() {
                       <div key={p.id} className="p-4">
                         <div className="flex items-center justify-between gap-3">
                           <div className="text-xs text-muted-foreground">
-                            {new Date(p.created_at).toLocaleString()}
+                            {new Date(p.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
                           </div>
                           <Button variant="outline" size="sm" className="gap-2" onClick={() => openPostEditor(p)}>
                             <Pencil className="h-4 w-4" />
@@ -521,11 +648,13 @@ export default function DigitalHumanDetail() {
                         {p.photos?.length ? (
                           <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
                             {p.photos.slice(0, 6).map((url) => (
+                              /* eslint-disable-next-line @next/next/no-img-element */
                               <img
                                 key={url}
                                 src={url}
                                 alt="post"
-                                className="h-28 w-full rounded-md object-cover"
+                                className="h-28 w-full cursor-zoom-in rounded-md object-cover transition-transform duration-200 hover:scale-[1.03]"
+                                onClick={() => setZoomSrc(url)}
                               />
                             ))}
                           </div>
@@ -575,10 +704,33 @@ export default function DigitalHumanDetail() {
               <Label>Bio</Label>
               <Textarea rows={4} value={editBio} onChange={(e) => setEditBio(e.target.value)} />
             </div>
-            <div className="space-y-2">
-              <Label>Avatar (saved as avatar.jpg)</Label>
-              <Input type="file" accept="image/*" onChange={(e) => setEditAvatarFile(e.target.files?.[0] ?? null)} />
-            </div>
+            <FileDropzone
+              label="Avatar"
+              helper="JPG/PNG only, max 5MB. Saved as avatar.jpg."
+              accept={ACCEPT_ATTR}
+              filesCount={editAvatarFile ? 1 : 0}
+              onPickFiles={(files) => {
+                const { valid, errors } = validateFiles(files)
+                if (errors.length) toast.error(errors[0])
+                setEditAvatarFile(valid[0] ?? null)
+              }}
+              onClear={editAvatarFile ? () => setEditAvatarFile(null) : undefined}
+              preview={
+                <div className="flex items-center gap-3">
+                  <div className="h-16 w-16 overflow-hidden rounded-full border bg-muted">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={avatarPreviewUrl ?? avatarSrc ?? ""}
+                      alt="avatar preview"
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {editAvatarFile ? editAvatarFile.name : "Current avatar"}
+                  </div>
+                </div>
+              }
+            />
           </div>
 
           <SheetFooter>
@@ -605,27 +757,115 @@ export default function DigitalHumanDetail() {
               <Label>Description</Label>
               <Textarea rows={4} value={editPostDescription} onChange={(e) => setEditPostDescription(e.target.value)} />
             </div>
-            <div className="space-y-2">
-              <Label>Replace photos (uploads to post_1.jpg, post_2.jpg...)</Label>
-              <Input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={(e) => setEditPostFiles(Array.from(e.target.files ?? []))}
-              />
-              <p className="text-xs text-muted-foreground">
-                If you upload new photos, they will overwrite the existing post images.
-              </p>
-            </div>
+            <FileDropzone
+              label="Add photos"
+              helper="JPG/PNG only, max 5MB each, up to 9 images total. Adds to this post (does not replace existing)."
+              accept={ACCEPT_ATTR}
+              multiple
+              filesCount={editPostFiles.length}
+              onPickFiles={(files) => {
+                // Append to existing selection (do not replace)
+                const remaining = Math.max(0, 9 - editPostPhotos.length - editPostFiles.length)
+                if (remaining === 0) {
+                  toast.error("Max 9 images per post")
+                  return
+                }
+                if (files.length > remaining) toast.error("Max 9 images per post")
+                const { valid, errors } = validateFiles(files.slice(0, remaining))
+                if (errors.length) toast.error(errors[0])
+                setEditPostFiles((prev) => [...prev, ...valid])
+              }}
+              onClear={editPostFiles.length ? () => setEditPostFiles([]) : undefined}
+              preview={
+                editPostPhotos.length || editPostFiles.length ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {editPostPhotos.slice(0, 9).map((url) => (
+                      <div key={url} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={url}
+                          alt="existing"
+                          className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
+                          onClick={() => setZoomSrc(url)}
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="secondary"
+                          className="absolute right-1 top-1 h-7 w-7"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setEditPostPhotos((prev) => prev.filter((u) => u !== url))
+                          }}
+                          title="Remove image"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+
+                    {editPostPreviewUrls.slice(0, Math.max(0, 9 - editPostPhotos.length)).map((p) => (
+                      <div key={p.url} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={p.url}
+                          alt={p.file.name}
+                          className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
+                          onClick={() => setZoomSrc(p.url)}
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="secondary"
+                          className="absolute right-1 top-1 h-7 w-7"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setEditPostFiles((prev) => prev.filter((f) => f !== p.file))
+                          }}
+                          title="Remove pending upload"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null
+              }
+            />
           </div>
 
           <SheetFooter>
-            <Button variant="outline" onClick={() => setPostOpen(false)} disabled={postSaving}>
-              Cancel
-            </Button>
-            <Button onClick={savePost} disabled={postSaving || !editPost}>
-              {postSaving ? "Saving..." : "Save post"}
-            </Button>
+            <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" disabled={postSaving || !editPost} className="gap-2">
+                    <Trash2 className="h-4 w-4" />
+                    Delete post
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this post?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete the post row. (Images in storage are not removed automatically.)
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => void deletePost()}>Delete</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <Button variant="outline" onClick={() => setPostOpen(false)} disabled={postSaving}>
+                  Cancel
+                </Button>
+                <Button onClick={savePost} disabled={postSaving || !editPost}>
+                  {postSaving ? "Saving..." : "Save post"}
+                </Button>
+              </div>
+            </div>
           </SheetFooter>
         </SheetContent>
       </Sheet>
@@ -648,18 +888,37 @@ export default function DigitalHumanDetail() {
                 placeholder="Write something..."
               />
             </div>
-            <div className="space-y-2">
-              <Label>Photos (uploads to post_1.jpg, post_2.jpg...)</Label>
-              <Input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={(e) => setNewPostFiles(Array.from(e.target.files ?? []))}
-              />
-              <p className="text-xs text-muted-foreground">
-                Uploading will overwrite existing post_*.jpg files under this user folder.
-              </p>
-            </div>
+            <FileDropzone
+              label="Photos"
+              helper="JPG/PNG only, max 5MB each, up to 9 images."
+              accept={ACCEPT_ATTR}
+              multiple
+              filesCount={newPostFiles.length}
+              onPickFiles={(files) => {
+                if (files.length > 9) toast.error("Max 9 images per post")
+                const { valid, errors } = validateFiles(files.slice(0, 9))
+                if (errors.length) toast.error(errors[0])
+                setNewPostFiles(valid)
+              }}
+              onClear={newPostFiles.length ? () => setNewPostFiles([]) : undefined}
+              preview={
+                newPostFiles.length ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {newPostPreviewUrls.slice(0, 9).map((p) => (
+                      <div key={p.url} className="aspect-square overflow-hidden rounded-md border bg-muted">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={p.url}
+                          alt={p.file.name}
+                          className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
+                          onClick={() => setZoomSrc(p.url)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : null
+              }
+            />
           </div>
 
           <SheetFooter>
@@ -672,6 +931,29 @@ export default function DigitalHumanDetail() {
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      {/* Global image zoom dialog */}
+      <Dialog open={!!zoomSrc} onOpenChange={(o) => (!o ? setZoomSrc(null) : null)}>
+        <DialogContent
+          className="border-0 bg-transparent p-0 shadow-none"
+          onClick={() => setZoomSrc(null)}
+        >
+          <DialogXCloseButton />
+          <div className="flex items-center justify-center p-4">
+            <div
+              className="max-h-[90vh] max-w-[94vw] overflow-hidden rounded-xl border bg-background/10 backdrop-blur"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={zoomSrc ?? ""}
+                alt="full"
+                className="max-h-[90vh] max-w-[94vw] object-contain"
+              />
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
