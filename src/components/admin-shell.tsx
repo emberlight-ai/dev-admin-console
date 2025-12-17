@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BookOpen, Users, Bot, LogOut } from "lucide-react"
+import { BookOpen, Users, Bot, LogOut, Github, GitBranch } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -25,7 +25,10 @@ const navGroups: {
   },
   {
     title: "Backend",
-    items: [{ href: "/admin/api-documents", label: "API Documents", icon: BookOpen }],
+    items: [
+      { href: "/admin/api-documents", label: "API Documents", icon: BookOpen },
+      { href: "https://github.com/emberlight-ai/dev-admin-console", label: "Github Repository", icon: GitBranch }
+    ],
   },
 ]
 
@@ -151,7 +154,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         >
           <div className="h-14 w-full px-4 flex items-center gap-2">
             <StoneRingMark />
-            <span className="font-semibold tracking-wide text-xl">Amber Foundary</span>
+            <span className="font-semibold tracking-wide text-xl">Amber Foundry</span>
           </div>
         </GlareHover>
         <Separator />
