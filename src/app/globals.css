@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "tailwindcss-animate";
 /* Tailwind v4 directives are supported at build time; some CSS linters flag them. */
 @custom-variant dark (&:is(.dark *));
 
@@ -112,45 +113,46 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-[data-color="blue"] {
-  --primary: hsl(221.2 83.2% 53.3%);
-  --ring: hsl(221.2 83.2% 53.3% / 0.35);
-  --sidebar-primary: hsl(221.2 83.2% 53.3%);
+/* Premium SaaS brand palette (paired with `src/components/theme-color.tsx`) */
+[data-color="indigo"] {
+  --primary: hsl(231 48% 48%);
+  --ring: hsl(231 48% 48% / 0.35);
+  --sidebar-primary: hsl(231 48% 48%);
 }
-[data-color="green"] {
-  --primary: hsl(142.1 76.2% 36.3%);
-  --ring: hsl(142.1 76.2% 36.3% / 0.35);
-  --sidebar-primary: hsl(142.1 76.2% 36.3%);
+[data-color="ocean"] {
+  --primary: hsl(190 65% 32%);
+  --ring: hsl(190 65% 32% / 0.35);
+  --sidebar-primary: hsl(190 65% 32%);
 }
-[data-color="neutral"] {
-  --primary: hsl(0 0% 20%);
-  --ring: hsl(0 0% 20% / 0.35);
-  --sidebar-primary: hsl(0 0% 20%);
+[data-color="slate"] {
+  --primary: hsl(215 18% 34%);
+  --ring: hsl(215 18% 34% / 0.35);
+  --sidebar-primary: hsl(215 18% 34%);
 }
-[data-color="orange"] {
-  --primary: hsl(24.6 95% 53.1%);
-  --ring: hsl(24.6 95% 53.1% / 0.35);
-  --sidebar-primary: hsl(24.6 95% 53.1%);
+[data-color="sage"] {
+  --primary: hsl(164 34% 32%);
+  --ring: hsl(164 34% 32% / 0.35);
+  --sidebar-primary: hsl(164 34% 32%);
 }
-[data-color="red"] {
-  --primary: hsl(0 84.2% 60.2%);
-  --ring: hsl(0 84.2% 60.2% / 0.35);
-  --sidebar-primary: hsl(0 84.2% 60.2%);
+[data-color="amber"] {
+  --primary: hsl(28 75% 42%);
+  --ring: hsl(28 75% 42% / 0.35);
+  --sidebar-primary: hsl(28 75% 42%);
 }
-[data-color="rose"] {
-  --primary: hsl(346.8 77.2% 49.8%);
-  --ring: hsl(346.8 77.2% 49.8% / 0.35);
-  --sidebar-primary: hsl(346.8 77.2% 49.8%);
+[data-color="crimson"] {
+  --primary: hsl(349 64% 38%);
+  --ring: hsl(349 64% 38% / 0.35);
+  --sidebar-primary: hsl(349 64% 38%);
 }
-[data-color="violet"] {
-  --primary: hsl(262.1 83.3% 57.8%);
-  --ring: hsl(262.1 83.3% 57.8% / 0.35);
-  --sidebar-primary: hsl(262.1 83.3% 57.8%);
+[data-color="plum"] {
+  --primary: hsl(270 32% 42%);
+  --ring: hsl(270 32% 42% / 0.35);
+  --sidebar-primary: hsl(270 32% 42%);
 }
-[data-color="yellow"] {
-  --primary: hsl(47.9 95.8% 53.1%);
-  --ring: hsl(47.9 95.8% 53.1% / 0.35);
-  --sidebar-primary: hsl(47.9 95.8% 53.1%);
+[data-color="sky"] {
+  --primary: hsl(201 78% 36%);
+  --ring: hsl(201 78% 36% / 0.35);
+  --sidebar-primary: hsl(201 78% 36%);
 }
 
 @layer base {

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Users, Bot, LogOut } from "lucide-react"
+import { Database, Users, Bot, LogOut, FlameIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -23,8 +23,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-background text-foreground">
       <div className="fixed inset-y-0 left-0 w-64 border-r bg-sidebar">
         <div className="h-14 px-4 flex items-center gap-2">
-          <LayoutDashboard className="h-4 w-4" />
-          <span className="font-semibold tracking-wide">AMBER ADMIN</span>
+          <span className="font-semibold tracking-wide text-xl">Amber Console</span>
         </div>
         <Separator />
         <nav className="p-2 space-y-1">
