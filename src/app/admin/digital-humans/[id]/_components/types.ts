@@ -22,6 +22,10 @@ export type DbPost = {
   userid: string
   photos: string[] | null
   description?: string | null
+  occurred_at?: string | null
+  location_name?: string | null
+  longitude?: number | null
+  latitude?: number | null
   created_at: string
 }
 

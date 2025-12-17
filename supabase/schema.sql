@@ -1,5 +1,7 @@
 -- Enable UUID extension
 create extension if not exists "uuid-ossp";
+-- Enable PostGIS for geospatial queries (range/bbox, distance, etc.)
+create extension if not exists postgis;
 
 -- Create User table
 create table public.users (
@@ -26,12 +28,36 @@ create table public.user_posts (
   userid uuid references public.users(userid) on delete cascade not null,
   photos text[] not null default '{}',
   description text,
-  altitude float,
-  latitude float,
+  location_name text,
+  longitude double precision,
+  latitude double precision,
+  altitude double precision,
+  occurred_at timestamptz default now(),
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   deleted_at timestamptz
 );
+
+-- Geospatial point for indexing (generated from longitude/latitude)
+alter table public.user_posts
+  add column geom geometry(Point, 4326)
+  generated always as (
+    case
+      when longitude is null or latitude is null then null
+      else st_setsrid(st_makepoint(longitude, latitude), 4326)
+    end
+  ) stored;
+
+-- Basic coordinate validation (allows NULL when no location set)
+alter table public.user_posts
+  add constraint user_posts_longitude_range check (longitude is null or (longitude >= -180 and longitude <= 180));
+alter table public.user_posts
+  add constraint user_posts_latitude_range check (latitude is null or (latitude >= -90 and latitude <= 90));
+
+-- Fast bounding-box and spatial queries
+create index user_posts_geom_gix on public.user_posts using gist (geom);
+-- Common sorting / filtering by time
+create index user_posts_occurred_at_idx on public.user_posts (occurred_at);
 
 -- Create Matches table
 create table public.matches (

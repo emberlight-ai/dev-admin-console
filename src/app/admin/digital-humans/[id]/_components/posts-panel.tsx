@@ -6,7 +6,9 @@ import { toast } from "sonner"
 
 import { supabase } from "@/lib/supabase"
 import { FileDropzone } from "@/components/file-dropzone"
+import { LocationAutocomplete } from "@/components/location-autocomplete"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
@@ -29,6 +31,20 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024
 const ACCEPTED_MIME = new Set(["image/jpeg", "image/png"])
 const ACCEPT_ATTR = "image/jpeg,image/png"
 
+function toDatetimeLocal(iso: string | null | undefined) {
+  if (!iso) return ""
+  const d = new Date(iso)
+  if (!Number.isFinite(d.getTime())) return ""
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function datetimeLocalToIso(v: string) {
+  if (!v) return null
+  const d = new Date(v)
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null
+}
+
 export function PostsPanel({
   userid,
   onZoom,
@@ -44,6 +60,10 @@ export function PostsPanel({
   const [postSaving, setPostSaving] = React.useState(false)
   const [editPost, setEditPost] = React.useState<DbPost | null>(null)
   const [editPostDescription, setEditPostDescription] = React.useState("")
+  const [editPostDatetimeLocal, setEditPostDatetimeLocal] = React.useState("")
+  const [editPostLocationName, setEditPostLocationName] = React.useState("")
+  const [editPostLongitude, setEditPostLongitude] = React.useState<number | null>(null)
+  const [editPostLatitude, setEditPostLatitude] = React.useState<number | null>(null)
   const [editPostFiles, setEditPostFiles] = React.useState<File[]>([])
   const [editPostPhotos, setEditPostPhotos] = React.useState<string[]>([])
 
@@ -51,6 +71,10 @@ export function PostsPanel({
   const [addPostOpen, setAddPostOpen] = React.useState(false)
   const [addPostSaving, setAddPostSaving] = React.useState(false)
   const [newPostDescription, setNewPostDescription] = React.useState("")
+  const [newPostDatetimeLocal, setNewPostDatetimeLocal] = React.useState(() => toDatetimeLocal(new Date().toISOString()))
+  const [newPostLocationName, setNewPostLocationName] = React.useState("")
+  const [newPostLongitude, setNewPostLongitude] = React.useState<number | null>(null)
+  const [newPostLatitude, setNewPostLatitude] = React.useState<number | null>(null)
   const [newPostFiles, setNewPostFiles] = React.useState<File[]>([])
 
   const validateFiles = React.useCallback((files: File[]) => {
@@ -98,6 +122,7 @@ export function PostsPanel({
       .from("user_posts")
       .select("*")
       .eq("userid", userid)
+      .order("occurred_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false })
     if (error) {
       console.error(error)
@@ -115,6 +140,10 @@ export function PostsPanel({
   const openPostEditor = (p: DbPost) => {
     setEditPost(p)
     setEditPostDescription(p.description ?? "")
+    setEditPostDatetimeLocal(toDatetimeLocal(p.occurred_at ?? p.created_at))
+    setEditPostLocationName(p.location_name ?? "")
+    setEditPostLongitude(p.longitude ?? null)
+    setEditPostLatitude(p.latitude ?? null)
     setEditPostFiles([])
     setEditPostPhotos(p.photos ?? [])
     setPostOpen(true)
@@ -167,6 +196,10 @@ export function PostsPanel({
         .update({
           description: editPostDescription.trim() || null,
           photos,
+          occurred_at: datetimeLocalToIso(editPostDatetimeLocal) ?? editPost.occurred_at ?? editPost.created_at,
+          location_name: editPostLocationName.trim() || null,
+          longitude: editPostLongitude,
+          latitude: editPostLatitude,
         })
         .eq("id", editPost.id)
       if (error) throw error
@@ -214,6 +247,10 @@ export function PostsPanel({
           userid,
           photos: [],
           description: newPostDescription.trim() || null,
+          occurred_at: datetimeLocalToIso(newPostDatetimeLocal) ?? new Date().toISOString(),
+          location_name: newPostLocationName.trim() || null,
+          longitude: newPostLongitude,
+          latitude: newPostLatitude,
         })
         .select("id")
         .single()
@@ -247,6 +284,10 @@ export function PostsPanel({
       toast.success("Post created")
       setAddPostOpen(false)
       setNewPostDescription("")
+      setNewPostDatetimeLocal(toDatetimeLocal(new Date().toISOString()))
+      setNewPostLocationName("")
+      setNewPostLongitude(null)
+      setNewPostLatitude(null)
       setNewPostFiles([])
       void fetchPosts()
     } catch (err: unknown) {
@@ -276,7 +317,7 @@ export function PostsPanel({
                 <div key={p.id} className="p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-xs text-muted-foreground">
-                      {new Date(p.created_at).toLocaleDateString("en-US", {
+                      {new Date(p.occurred_at ?? p.created_at).toLocaleDateString("en-US", {
                         year: "numeric",
                         month: "long",
                         day: "numeric",
@@ -287,6 +328,13 @@ export function PostsPanel({
                       Edit
                     </Button>
                   </div>
+                  {p.location_name || (p.longitude != null && p.latitude != null) ? (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {p.location_name
+                        ? p.location_name
+                        : `lon ${Number(p.longitude).toFixed(4)} · lat ${Number(p.latitude).toFixed(4)}`}
+                    </div>
+                  ) : null}
                   <div className="mt-2 text-sm">{p.description ?? "—"}</div>
                   {p.photos?.length ? (
                     <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
@@ -313,10 +361,45 @@ export function PostsPanel({
         <SheetContent className="sm:max-w-lg">
           <SheetHeader>
             <SheetTitle>Edit post</SheetTitle>
-            <SheetDescription>Edit description and optionally replace photos.</SheetDescription>
+            <SheetDescription>Edit time, location, description and photos.</SheetDescription>
           </SheetHeader>
 
           <div className="space-y-4 px-4">
+            <div className="space-y-2">
+              <Label>Post time</Label>
+              <Input
+                type="datetime-local"
+                value={editPostDatetimeLocal}
+                onChange={(e) => setEditPostDatetimeLocal(e.target.value)}
+              />
+            </div>
+
+            <LocationAutocomplete
+              value={editPostLocationName}
+              onValueChange={(v) => {
+                setEditPostLocationName(v)
+                setEditPostLongitude(null)
+                setEditPostLatitude(null)
+              }}
+              onSelect={(sel) => {
+                setEditPostLocationName(sel.name)
+                setEditPostLongitude(sel.longitude)
+                setEditPostLatitude(sel.latitude)
+              }}
+              onClear={() => {
+                setEditPostLocationName("")
+                setEditPostLongitude(null)
+                setEditPostLatitude(null)
+              }}
+              placeholder="Search location (e.g. Prague, Czech Republic)"
+            />
+
+            {editPostLongitude != null && editPostLatitude != null ? (
+              <div className="text-xs text-muted-foreground">
+                Selected: lon {editPostLongitude.toFixed(4)} · lat {editPostLatitude.toFixed(4)}
+              </div>
+            ) : null}
+
             <div className="space-y-2">
               <Label>Description</Label>
               <Textarea rows={4} value={editPostDescription} onChange={(e) => setEditPostDescription(e.target.value)} />
@@ -441,10 +524,45 @@ export function PostsPanel({
         <SheetContent className="sm:max-w-lg">
           <SheetHeader>
             <SheetTitle>Add post</SheetTitle>
-            <SheetDescription>Create a new post for this digital human.</SheetDescription>
+            <SheetDescription>Create a new post with time, location, and photos.</SheetDescription>
           </SheetHeader>
 
           <div className="space-y-4 px-4">
+            <div className="space-y-2">
+              <Label>Post time</Label>
+              <Input
+                type="datetime-local"
+                value={newPostDatetimeLocal}
+                onChange={(e) => setNewPostDatetimeLocal(e.target.value)}
+              />
+            </div>
+
+            <LocationAutocomplete
+              value={newPostLocationName}
+              onValueChange={(v) => {
+                setNewPostLocationName(v)
+                setNewPostLongitude(null)
+                setNewPostLatitude(null)
+              }}
+              onSelect={(sel) => {
+                setNewPostLocationName(sel.name)
+                setNewPostLongitude(sel.longitude)
+                setNewPostLatitude(sel.latitude)
+              }}
+              onClear={() => {
+                setNewPostLocationName("")
+                setNewPostLongitude(null)
+                setNewPostLatitude(null)
+              }}
+              placeholder="Search location (e.g. Prague, Czech Republic)"
+            />
+
+            {newPostLongitude != null && newPostLatitude != null ? (
+              <div className="text-xs text-muted-foreground">
+                Selected: lon {newPostLongitude.toFixed(4)} · lat {newPostLatitude.toFixed(4)}
+              </div>
+            ) : null}
+
             <div className="space-y-2">
               <Label>Description</Label>
               <Textarea

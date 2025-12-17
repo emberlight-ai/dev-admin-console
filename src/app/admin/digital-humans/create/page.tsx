@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { FileDropzone } from "@/components/file-dropzone"
 import { buildSystemPrompt } from "@/lib/botProfile"
+import { LocationAutocomplete } from "@/components/location-autocomplete"
 
 type Gender = "Male" | "Female" | "Non-binary" | "Other"
 
@@ -24,6 +25,29 @@ const ACCEPT_ATTR = "image/jpeg,image/png"
 function avatarExtFor(file: File) {
   if (file.type === "image/png") return "png"
   return "jpg"
+}
+
+type DraftFile = { file: File; url: string }
+type DraftPost = {
+  key: string
+  description: string
+  datetimeLocal: string
+  locationName: string
+  longitude: number | null
+  latitude: number | null
+  files: DraftFile[]
+}
+
+function nowDatetimeLocal() {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function datetimeLocalToIso(v: string) {
+  if (!v) return null
+  const d = new Date(v)
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null
 }
 
 export default function CreateDigitalHuman() {
@@ -38,8 +62,25 @@ export default function CreateDigitalHuman() {
   const [bio, setBio] = React.useState("")
 
   const [avatarFile, setAvatarFile] = React.useState<File | null>(null)
-  const [postFiles, setPostFiles] = React.useState<File[]>([])
-  const [initialPostDescription, setInitialPostDescription] = React.useState("")
+  const [draftPosts, setDraftPosts] = React.useState<DraftPost[]>(() => [
+    {
+      key: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now()),
+      description: "",
+      datetimeLocal: nowDatetimeLocal(),
+      locationName: "",
+      longitude: null,
+      latitude: null,
+      files: [],
+    },
+  ])
+
+  React.useEffect(() => {
+    return () => {
+      // cleanup any object URLs
+      draftPosts.forEach((p) => p.files.forEach((f) => URL.revokeObjectURL(f.url)))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const canSubmit = React.useMemo(() => {
     if (loading) return false
@@ -86,23 +127,27 @@ export default function CreateDigitalHuman() {
     }
   }, [avatarPreviewUrl])
 
-  const postPreviewUrls = React.useMemo(
-    () => postFiles.map((f) => ({ file: f, url: URL.createObjectURL(f) })),
-    [postFiles]
-  )
-
-  React.useEffect(() => {
-    return () => {
-      postPreviewUrls.forEach((p) => URL.revokeObjectURL(p.url))
-    }
-  }, [postPreviewUrls])
-
   // (FileDropzone extracted to src/components/file-dropzone.tsx)
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     try {
+      // Validate draft posts before creating anything:
+      // - Post time + location are optional.
+      // - If a post is "touched" (has location/description/photos), it must have description OR photos.
+      for (let i = 0; i < draftPosts.length; i++) {
+        const p = draftPosts[i]
+        const hasPhotos = p.files.length > 0
+        const hasDescription = Boolean(p.description.trim())
+        const hasLocation = Boolean(p.locationName.trim()) || (p.longitude != null && p.latitude != null)
+        const touched = hasPhotos || hasDescription || hasLocation
+        if (touched && !hasPhotos && !hasDescription) {
+          toast.error(`Post ${i + 1}: add a description or at least one photo (location/time are optional)`)
+          return
+        }
+      }
+
       if (!bio.trim()) {
         toast.error("Bio is required")
         return
@@ -153,21 +198,34 @@ export default function CreateDigitalHuman() {
         .update({ avatar: pub.publicUrl, updated_at: new Date().toISOString() })
         .eq("userid", userId)
 
-      // Initial post (optional): create row to get id, then upload into /post_<postId>/<n>.jpg
-      if (postFiles.length > 0 || initialPostDescription.trim()) {
-        const { valid, errors } = validateFiles(postFiles.slice(0, 9))
+      // Posts (optional): create rows to get ids, then upload into /post_<postId>/<n>.jpg
+      const postsToCreate = draftPosts.filter((p) => {
+        if (p.files.length > 0) return true
+        if (p.description.trim()) return true
+        if (p.locationName.trim()) return true
+        if (p.longitude != null && p.latitude != null) return true
+        return false
+      })
+
+      for (const p of postsToCreate) {
+        const pickedFiles = p.files.map((x) => x.file)
+        const { valid, errors } = validateFiles(pickedFiles.slice(0, 9))
         if (errors.length) {
           toast.error(errors[0])
           return
         }
-        if (postFiles.length > 9) toast.error("Max 9 images per post")
+        if (pickedFiles.length > 9) toast.error("Max 9 images per post")
 
         const { data: createdPost, error: postErr } = await supabase
           .from("user_posts")
           .insert({
             userid: userId,
             photos: [],
-            description: initialPostDescription.trim() || null,
+            description: p.description.trim() || null,
+            occurred_at: datetimeLocalToIso(p.datetimeLocal) ?? new Date().toISOString(),
+            location_name: p.locationName.trim() || null,
+            longitude: p.longitude,
+            latitude: p.latitude,
           })
           .select("id")
           .single()
@@ -177,18 +235,13 @@ export default function CreateDigitalHuman() {
         for (let i = 0; i < valid.length; i++) {
           const f = valid[i]
           const filePath = `${userId}/post_${createdPost.id}/${i + 1}.jpg`
-          const { error } = await supabase.storage
-            .from("images")
-            .upload(filePath, f, { upsert: true, contentType: f.type })
+          const { error } = await supabase.storage.from("images").upload(filePath, f, { upsert: true, contentType: f.type })
           if (error) throw error
           const { data: pub } = supabase.storage.from("images").getPublicUrl(filePath)
           urls.push(pub.publicUrl)
         }
         if (urls.length) {
-          const { error: updErr } = await supabase
-            .from("user_posts")
-            .update({ photos: urls })
-            .eq("id", createdPost.id)
+          const { error: updErr } = await supabase.from("user_posts").update({ photos: urls }).eq("id", createdPost.id)
           if (updErr) throw updErr
         }
       }
@@ -234,6 +287,32 @@ export default function CreateDigitalHuman() {
 
       <Card className="w-full p-6">
         <form id="create-dh-form" className="space-y-6" onSubmit={onSubmit}>
+          <FileDropzone
+            label="Avatar"
+            helper="JPG/PNG only, max 5MB. Saved as avatar.jpg."
+            accept={ACCEPT_ATTR}
+            filesCount={avatarFile ? 1 : 0}
+            onPickFiles={(files) => {
+              const { valid, errors } = validateFiles(files)
+              if (errors.length) toast.error(errors[0])
+              setAvatarFile(valid[0] ?? null)
+            }}
+            onClear={avatarFile ? () => setAvatarFile(null) : undefined}
+            preview={
+              <div className="flex items-center gap-3">
+                <div className="h-16 w-16 overflow-hidden rounded-full border bg-muted">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={avatarPreviewUrl ?? "/default-avatar.svg"}
+                    alt="avatar preview"
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="text-xs text-muted-foreground">{avatarFile ? avatarFile.name : "No avatar selected"}</div>
+              </div>
+            }
+          />
+
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label>Name</Label>
@@ -272,77 +351,164 @@ export default function CreateDigitalHuman() {
           </div>
 
           <div className="space-y-4">
-            <FileDropzone
-              label="Avatar"
-              helper="JPG/PNG only, max 5MB. Saved as avatar.jpg."
-              accept={ACCEPT_ATTR}
-              filesCount={avatarFile ? 1 : 0}
-              onPickFiles={(files) => {
-                const { valid, errors } = validateFiles(files)
-                if (errors.length) toast.error(errors[0])
-                setAvatarFile(valid[0] ?? null)
-              }}
-              onClear={avatarFile ? () => setAvatarFile(null) : undefined}
-              preview={
-                <div className="flex items-center gap-3">
-                  <div className="h-16 w-16 overflow-hidden rounded-full border bg-muted">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={avatarPreviewUrl ?? "/default-avatar.svg"}
-                      alt="avatar preview"
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
+            <div className="rounded-lg border bg-muted/10 p-4">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Posts</div>
                   <div className="text-xs text-muted-foreground">
-                    {avatarFile ? avatarFile.name : "No avatar selected"}
+                    Optional: seed multiple posts. Each post supports time, location, description, and up to 9 images.
                   </div>
                 </div>
-              }
-            />
 
-            <div className="rounded-lg border bg-muted/10 p-4">
-              <div className="mb-3">
-                <div className="text-sm font-medium">Initial post</div>
-                <div className="text-xs text-muted-foreground">Optional: seed one post with up to 9 images.</div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => {
+                    setDraftPosts((prev) => [
+                      ...prev,
+                      {
+                        key:
+                          typeof crypto !== "undefined" && "randomUUID" in crypto
+                            ? crypto.randomUUID()
+                            : String(Date.now()),
+                        description: "",
+                        datetimeLocal: nowDatetimeLocal(),
+                        locationName: "",
+                        longitude: null,
+                        latitude: null,
+                        files: [],
+                      },
+                    ])
+                  }}
+                >
+                  Add post
+                </Button>
               </div>
 
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Description</Label>
-                  <Textarea
-                    rows={3}
-                    value={initialPostDescription}
-                    onChange={(e) => setInitialPostDescription(e.target.value)}
-                    placeholder="Write the first post..."
-                  />
-                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 xl:gap-6">
+                  {draftPosts.map((p, idx) => (
+                    <div key={p.key} className="w-full max-w-[520px] justify-self-center rounded-md border bg-background p-4">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div className="text-sm font-medium">Post {idx + 1}</div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setDraftPosts((prev) => {
+                            const target = prev.find((x) => x.key === p.key)
+                            if (target) target.files.forEach((f) => URL.revokeObjectURL(f.url))
+                            return prev.filter((x) => x.key !== p.key)
+                          })
+                        }}
+                        disabled={draftPosts.length <= 1}
+                      >
+                        Remove
+                      </Button>
+                    </div>
 
-                <FileDropzone
-                  label="Photos"
-                  helper="JPG/PNG only, max 5MB each, up to 9 images."
-                  accept={ACCEPT_ATTR}
-                  multiple
-                  filesCount={postFiles.length}
-                  onPickFiles={(files) => {
-                    if (files.length > 9) toast.error("Max 9 images per post")
-                    const { valid, errors } = validateFiles(files.slice(0, 9))
-                    if (errors.length) toast.error(errors[0])
-                    setPostFiles(valid)
-                  }}
-                  onClear={postFiles.length ? () => setPostFiles([]) : undefined}
-                  preview={
-                    postFiles.length ? (
-                      <div className="grid grid-cols-3 gap-2">
-                        {postPreviewUrls.slice(0, 9).map((p) => (
-                          <div key={p.url} className="aspect-square overflow-hidden rounded-md border bg-muted">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={p.url} alt={p.file.name} className="h-full w-full object-cover" />
-                          </div>
-                        ))}
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Post time</Label>
+                        <Input
+                          type="datetime-local"
+                          value={p.datetimeLocal}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            setDraftPosts((prev) => prev.map((x) => (x.key === p.key ? { ...x, datetimeLocal: v } : x)))
+                          }}
+                        />
                       </div>
-                    ) : null
-                  }
-                />
+
+                      <LocationAutocomplete
+                        label="Location"
+                        value={p.locationName}
+                        onValueChange={(v) => {
+                          setDraftPosts((prev) =>
+                            prev.map((x) =>
+                              x.key === p.key ? { ...x, locationName: v, longitude: null, latitude: null } : x
+                            )
+                          )
+                        }}
+                        onSelect={(sel) => {
+                          setDraftPosts((prev) =>
+                            prev.map((x) =>
+                              x.key === p.key
+                                ? { ...x, locationName: sel.name, longitude: sel.longitude, latitude: sel.latitude }
+                                : x
+                            )
+                          )
+                        }}
+                        onClear={() => {
+                          setDraftPosts((prev) =>
+                            prev.map((x) => (x.key === p.key ? { ...x, locationName: "", longitude: null, latitude: null } : x))
+                          )
+                        }}
+                        placeholder="Search location (e.g. Prague, Czech Republic)"
+                      />
+
+                      {p.longitude != null && p.latitude != null ? (
+                        <div className="text-xs text-muted-foreground">
+                          Selected: lon {p.longitude.toFixed(4)} · lat {p.latitude.toFixed(4)}
+                        </div>
+                      ) : null}
+
+                      <div className="space-y-2">
+                        <Label>Description</Label>
+                        <Textarea
+                          rows={3}
+                          value={p.description}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            setDraftPosts((prev) => prev.map((x) => (x.key === p.key ? { ...x, description: v } : x)))
+                          }}
+                          placeholder="Write the post..."
+                        />
+                      </div>
+
+                      <FileDropzone
+                        label="Photos"
+                        helper="JPG/PNG only, max 5MB each, up to 9 images."
+                        accept={ACCEPT_ATTR}
+                        multiple
+                        filesCount={p.files.length}
+                        onPickFiles={(files) => {
+                          if (p.files.length + files.length > 9) toast.error("Max 9 images per post")
+                          const { valid, errors } = validateFiles(files.slice(0, Math.max(0, 9 - p.files.length)))
+                          if (errors.length) toast.error(errors[0])
+                          const next = valid.map((f) => ({ file: f, url: URL.createObjectURL(f) }))
+                          setDraftPosts((prev) => prev.map((x) => (x.key === p.key ? { ...x, files: [...x.files, ...next] } : x)))
+                        }}
+                        onClear={
+                          p.files.length
+                            ? () => {
+                                setDraftPosts((prev) => {
+                                  const target = prev.find((x) => x.key === p.key)
+                                  if (target) target.files.forEach((f) => URL.revokeObjectURL(f.url))
+                                  return prev.map((x) => (x.key === p.key ? { ...x, files: [] } : x))
+                                })
+                              }
+                            : undefined
+                        }
+                        preview={
+                          p.files.length ? (
+                            <div className="grid grid-cols-3 gap-2">
+                              {p.files.slice(0, 9).map((f) => (
+                                <div key={f.url} className="aspect-square overflow-hidden rounded-md border bg-muted">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={f.url} alt={f.file.name} className="h-full w-full object-cover" />
+                                </div>
+                              ))}
+                            </div>
+                          ) : null
+                        }
+                      />
+                    </div>
+                  </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
