@@ -59,7 +59,6 @@ export default function CreateDigitalHuman() {
   const [gender, setGender] = React.useState<Gender>("Female")
   const [availablePersonalities, setAvailablePersonalities] = React.useState<string[]>([])
   const [personality, setPersonality] = React.useState("")
-  const [zipcode, setZipcode] = React.useState("")
   const [bio, setBio] = React.useState("")
 
   const [avatarFile, setAvatarFile] = React.useState<File | null>(null)
@@ -201,7 +200,6 @@ export default function CreateDigitalHuman() {
           age: age ? Number(age) : null,
           gender,
           personality: personality.trim() || null,
-          zipcode,
           bio: bio.trim(),
           is_digital_human: true,
         })
@@ -319,44 +317,36 @@ export default function CreateDigitalHuman() {
 
       <Card className="w-full p-6">
         <form id="create-dh-form" className="space-y-6" onSubmit={onSubmit}>
-          <FileDropzone
-            label="Avatar"
-            helper="JPG/PNG only, max 5MB. Saved as avatar.jpg."
-            accept={ACCEPT_ATTR}
-            filesCount={avatarFile ? 1 : 0}
-            onPickFiles={(files) => {
-              const { valid, errors } = validateFiles(files)
-              if (errors.length) toast.error(errors[0])
-              setAvatarFile(valid[0] ?? null)
-            }}
-            onClear={avatarFile ? () => setAvatarFile(null) : undefined}
-            preview={
-              <div className="flex items-center gap-3">
-                <div className="h-16 w-16 overflow-hidden rounded-full border bg-muted">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={avatarPreviewUrl ?? "/default-avatar.svg"}
-                    alt="avatar preview"
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-                <div className="text-xs text-muted-foreground">{avatarFile ? avatarFile.name : "No avatar selected"}</div>
-              </div>
-            }
-          />
-
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FileDropzone
+              label="Avatar"
+              helper="JPG/PNG only, max 5MB. Saved as avatar.jpg."
+              accept={ACCEPT_ATTR}
+              filesCount={avatarFile ? 1 : 0}
+              onPickFiles={(files) => {
+                const { valid, errors } = validateFiles(files)
+                if (errors.length) toast.error(errors[0])
+                setAvatarFile(valid[0] ?? null)
+              }}
+              onClear={avatarFile ? () => setAvatarFile(null) : undefined}
+              preview={
+                <div className="flex items-center gap-3">
+                  <div className="h-16 w-16 overflow-hidden rounded-full border bg-muted">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={avatarPreviewUrl ?? "/default-avatar.svg"}
+                      alt="avatar preview"
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground">{avatarFile ? avatarFile.name : "No avatar selected"}</div>
+                </div>
+              }
+            />
+
             <div className="space-y-2">
               <Label>Name</Label>
               <Input value={username} onChange={(e) => setUsername(e.target.value)} required />
-            </div>
-            <div className="space-y-2">
-              <Label>Profession</Label>
-              <Input value={profession} onChange={(e) => setProfession(e.target.value)} required />
-            </div>
-            <div className="space-y-2">
-              <Label>Age</Label>
-              <Input type="number" min={18} max={100} value={age} onChange={(e) => setAge(e.target.value)} required />
             </div>
             <div className="space-y-2">
               <Label>Gender</Label>
@@ -370,6 +360,10 @@ export default function CreateDigitalHuman() {
                 <option>Non-binary</option>
                 <option>Other</option>
               </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Profession</Label>
+              <Input value={profession} onChange={(e) => setProfession(e.target.value)} required />
             </div>
             <div className="space-y-2">
               <Label>Personality (optional)</Label>
@@ -393,9 +387,9 @@ export default function CreateDigitalHuman() {
                 )}
               </select>
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label>Zipcode</Label>
-              <Input value={zipcode} onChange={(e) => setZipcode(e.target.value)} />
+            <div className="space-y-2">
+              <Label>Age</Label>
+              <Input type="number" min={18} max={100} value={age} onChange={(e) => setAge(e.target.value)} required />
             </div>
           </div>
 

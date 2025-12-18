@@ -173,13 +173,13 @@ export function ProfileEditSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-lg">
-        <SheetHeader>
+      <SheetContent className="flex flex-col gap-0 sm:max-w-lg">
+        <SheetHeader className="px-4 py-4">
           <SheetTitle>Edit profile</SheetTitle>
           <SheetDescription>Update username, avatar, and details.</SheetDescription>
         </SheetHeader>
 
-        <div className="space-y-4 px-4">
+        <div className="flex-1 overflow-y-auto space-y-4 px-4 py-4">
           <div className="space-y-2">
             <Label>Username</Label>
             <Input value={editUsername} onChange={(e) => setEditUsername(e.target.value)} />
@@ -275,7 +275,7 @@ export function ProfileEditSheet({
           />
         </div>
 
-        <SheetFooter>
+        <SheetFooter className="px-4 pb-4">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancel
           </Button>

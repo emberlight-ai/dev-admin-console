@@ -38,6 +38,44 @@ export function ChatPanel({
   const [testUserHobbies, setTestUserHobbies] = React.useState<string[]>([])
   const [testUserMoodNeed, setTestUserMoodNeed] = React.useState<string[]>([])
 
+  const STORAGE_KEY = "chat-test-user-profile"
+
+  // Load from localStorage on mount
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      if (stored) {
+        const parsed = JSON.parse(stored) as {
+          name?: string
+          age?: string
+          hobbies?: string[]
+          moodNeed?: string[]
+        }
+        if (parsed.name) setTestUserName(parsed.name)
+        if (parsed.age) setTestUserAge(parsed.age)
+        if (Array.isArray(parsed.hobbies)) setTestUserHobbies(parsed.hobbies)
+        if (Array.isArray(parsed.moodNeed)) setTestUserMoodNeed(parsed.moodNeed)
+      }
+    } catch (err) {
+      console.error("Failed to load test user profile from localStorage", err)
+    }
+  }, [])
+
+  // Save to localStorage whenever values change
+  React.useEffect(() => {
+    try {
+      const toStore = {
+        name: testUserName,
+        age: testUserAge,
+        hobbies: testUserHobbies,
+        moodNeed: testUserMoodNeed,
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore))
+    } catch (err) {
+      console.error("Failed to save test user profile to localStorage", err)
+    }
+  }, [testUserName, testUserAge, testUserHobbies, testUserMoodNeed])
+
   const effectiveSystemPrompt = React.useMemo(() => {
     return getEffectiveSystemPrompt(
       systemPrompt,
@@ -62,6 +100,11 @@ export function ChatPanel({
     setTestUserAge("")
     setTestUserHobbies([])
     setTestUserMoodNeed([])
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch (err) {
+      console.error("Failed to clear test user profile from localStorage", err)
+    }
   }
 
   React.useEffect(() => {
