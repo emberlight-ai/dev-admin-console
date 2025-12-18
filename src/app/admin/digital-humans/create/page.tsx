@@ -318,31 +318,31 @@ export default function CreateDigitalHuman() {
       <Card className="w-full p-6">
         <form id="create-dh-form" className="space-y-6" onSubmit={onSubmit}>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <FileDropzone
-              label="Avatar"
-              helper="JPG/PNG only, max 5MB. Saved as avatar.jpg."
-              accept={ACCEPT_ATTR}
-              filesCount={avatarFile ? 1 : 0}
-              onPickFiles={(files) => {
-                const { valid, errors } = validateFiles(files)
-                if (errors.length) toast.error(errors[0])
-                setAvatarFile(valid[0] ?? null)
-              }}
-              onClear={avatarFile ? () => setAvatarFile(null) : undefined}
-              preview={
-                <div className="flex items-center gap-3">
-                  <div className="h-16 w-16 overflow-hidden rounded-full border bg-muted">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={avatarPreviewUrl ?? "/default-avatar.svg"}
-                      alt="avatar preview"
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                  <div className="text-xs text-muted-foreground">{avatarFile ? avatarFile.name : "No avatar selected"}</div>
+          <FileDropzone
+            label="Avatar"
+            helper="JPG/PNG only, max 5MB. Saved as avatar.jpg."
+            accept={ACCEPT_ATTR}
+            filesCount={avatarFile ? 1 : 0}
+            onPickFiles={(files) => {
+              const { valid, errors } = validateFiles(files)
+              if (errors.length) toast.error(errors[0])
+              setAvatarFile(valid[0] ?? null)
+            }}
+            onClear={avatarFile ? () => setAvatarFile(null) : undefined}
+            preview={
+              <div className="flex items-center gap-3">
+                <div className="h-16 w-16 overflow-hidden rounded-full border bg-muted">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={avatarPreviewUrl ?? "/default-avatar.svg"}
+                    alt="avatar preview"
+                    className="h-full w-full object-cover"
+                  />
                 </div>
-              }
-            />
+                <div className="text-xs text-muted-foreground">{avatarFile ? avatarFile.name : "No avatar selected"}</div>
+              </div>
+            }
+          />
 
             <div className="space-y-2">
               <Label>Name</Label>

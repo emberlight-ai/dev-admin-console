@@ -63,8 +63,8 @@ export default function ManageDigitalHumans() {
   const [columns, setColumns] = React.useState({
     avatar: true,
     profession: true,
-    posts: true,
-    created: true,
+    posts: false,
+    created: false,
   })
 
   const visibleColumnCount = React.useMemo(() => {
@@ -177,7 +177,6 @@ export default function ManageDigitalHumans() {
             <DialogTrigger asChild>
               <Button variant="outline" className="gap-2">
                 <SlidersHorizontal className="h-4 w-4" />
-                Customize Columns
               </Button>
             </DialogTrigger>
             <DialogContent>

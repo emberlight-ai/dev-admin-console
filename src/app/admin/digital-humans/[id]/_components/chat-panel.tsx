@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from "react"
-import { Send, Settings, RotateCcw } from "lucide-react"
+import { Send, Settings, RotateCcw, ChevronDown, Check } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { composeSystemPromptWithUserProfile, type UserProfileInput } from "@/lib/botProfile"
 
 import type { ChatMessage } from "./types"
@@ -175,18 +181,34 @@ export function ChatPanel({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div className="space-y-1">
           <Label>Model</Label>
-          <select
-            className="h-10 w-full rounded-md border bg-background px-3 text-sm sm:w-[260px]"
-            value={model}
-            onChange={(e) => setModel(e.target.value as (typeof MODEL_OPTIONS)[number]["value"])}
-            disabled={chatLoading}
-          >
-            {MODEL_OPTIONS.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={chatLoading}
+                className="w-full justify-between gap-2 sm:w-[260px]"
+              >
+                <span className="truncate">{MODEL_OPTIONS.find((m) => m.value === model)?.label ?? model}</span>
+                <ChevronDown className="h-4 w-4 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-[260px]">
+              {MODEL_OPTIONS.map((m) => {
+                const selected = m.value === model
+                return (
+                  <DropdownMenuItem
+                    key={m.value}
+                    onClick={() => setModel(m.value)}
+                    className="flex items-center justify-between"
+                  >
+                    <span>{m.label}</span>
+                    {selected ? <Check className="h-4 w-4" /> : null}
+                  </DropdownMenuItem>
+                )
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         <div className="flex items-center gap-2">
@@ -198,7 +220,6 @@ export function ChatPanel({
             className="gap-2"
           >
             <RotateCcw className="h-4 w-4" />
-            Refresh Chat
           </Button>
 
           <Button
@@ -209,7 +230,6 @@ export function ChatPanel({
             className="gap-2"
           >
             <Settings className="h-4 w-4" />
-            Edit User Profile
           </Button>
         </div>
       </div>

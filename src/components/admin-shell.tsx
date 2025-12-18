@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BookOpen, Users, Bot, LogOut, GitBranch, ScrollText, Menu } from "lucide-react"
+import { BookOpen, Users, Bot, LogOut, GitBranch, ScrollText, Menu, LayoutDashboard } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -21,16 +21,16 @@ const navGroups: {
   {
     title: "Users and Bots",
     items: [
-      { href: "/admin/users", label: "Manage Users", icon: Users },
-      { href: "/admin/digital-humans", label: "Manage Digital Humans", icon: Bot },
-      { href: "/admin/digital-human-prompts", label: "Digital Human Prompts", icon: ScrollText },
+      { href: "/admin/users", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/admin/digital-humans", label: "Digital Humans", icon: Bot },
+      { href: "/admin/digital-human-prompts", label: "System Prompts", icon: ScrollText },
     ],
   },
   {
     title: "Backend",
     items: [
-      { href: "/admin/api-documents", label: "API Documents", icon: BookOpen },
-      { href: "https://github.com/emberlight-ai/dev-admin-console", label: "Github Repository", icon: GitBranch }
+      { href: "/admin/api-documents", label: "API Doc", icon: BookOpen },
+      { href: "https://github.com/emberlight-ai/dev-admin-console", label: "Github Repo", icon: GitBranch }
     ],
   },
 ]
@@ -139,7 +139,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
       <div className="pl-0 md:pl-64">
         <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
-          <div className="h-14 px-4 md:px-6 flex items-center justify-between gap-2">
+          <div className="h-14 px-4 md:px-6 flex items-center justify-between md:justify-end gap-2">
             {/* Mobile nav trigger */}
             <div className="flex items-center gap-2 md:hidden">
               <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
@@ -202,8 +202,8 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
             {/* Desktop: keep right-aligned controls; Mobile: controls still accessible */}
             <div className="flex items-center gap-2">
-              <ThemeColorPicker />
-              <ThemeToggle />
+            <ThemeColorPicker />
+            <ThemeToggle />
             </div>
           </div>
         </header>
