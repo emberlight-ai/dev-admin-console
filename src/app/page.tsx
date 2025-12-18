@@ -22,11 +22,8 @@ export default function Home() {
 
       <div className="relative z-10 flex flex-col items-center justify-center h-full pointer-events-none">
         <h1 className="text-6xl md:text-8xl font-bold tracking-tighter mb-4 text-center mix-blend-difference">
-          Get Dev <br/> Team
+          Something New <br/> Entirely
         </h1>
-        <p className="text-xl md:text-2xl text-center max-w-2xl mx-auto px-4 mix-blend-difference font-mono">
-          We are a team of developers who are passionate about building the next generation of software.
-        </p>
       </div>
     </main>
   );

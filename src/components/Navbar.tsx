@@ -18,7 +18,7 @@ export default function Navbar() {
       <div className="flex items-center justify-between gap-4 px-5 py-3 sm:px-7">
         <div className="text-white text-lg sm:text-xl font-semibold tracking-wide">
           <Link href="/" className="inline-flex items-center gap-2">
-            Get Dev Team
+            Matrix OS
           </Link>
         </div>
         <div className="flex items-center gap-2">
