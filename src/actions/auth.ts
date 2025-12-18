@@ -3,8 +3,16 @@
 import { cookies } from 'next/headers';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { createHash } from 'crypto';
 
 const SESSION_COOKIE_NAME = 'admin_session';
+
+function adminCredsVersion() {
+  const u = process.env.ADMIN_USERNAME ?? '';
+  const p = process.env.ADMIN_PASSWORD ?? '';
+  // Hash so we never store raw creds in cookies; changing env invalidates old sessions.
+  return createHash('sha256').update(`${u}:${p}`).digest('hex');
+}
 
 export async function login(formData: FormData) {
   const username = formData.get('username') as string;
@@ -19,7 +27,7 @@ export async function login(formData: FormData) {
     const proto = headerStore.get('x-forwarded-proto') ?? 'http';
     const isSecure = proto === 'https';
 
-    cookieStore.set(SESSION_COOKIE_NAME, 'true', {
+    cookieStore.set(SESSION_COOKIE_NAME, adminCredsVersion(), {
       httpOnly: true,
       // Respect TLS termination in front of Next (e.g. Nginx/Cloudflare).
       // If users hit plain http://, a Secure cookie will not be stored/sent and
@@ -45,5 +53,7 @@ export async function logout() {
 
 export async function isLoggedIn() {
   const cookieStore = await cookies();
-  return cookieStore.has(SESSION_COOKIE_NAME);
+  const cookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+  if (!cookie) return false;
+  return cookie === adminCredsVersion();
 }
