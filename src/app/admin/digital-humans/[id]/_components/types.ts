@@ -10,9 +10,9 @@ export type DbUser = {
   avatar?: string | null
   age?: number | null
   gender?: string | null
+  personality?: string | null
   zipcode?: string | null
   bio?: string | null
-  system_prompt?: string | null
   created_at?: string | null
   updated_at?: string | null
 }

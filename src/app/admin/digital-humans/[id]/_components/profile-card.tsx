@@ -17,11 +17,13 @@ export function ProfileCard({
   avatarSrc,
   onEdit,
   onZoomAvatar,
+  computedSystemPrompt,
 }: {
   user: DbUser
   avatarSrc?: string
   onEdit: () => void
   onZoomAvatar: () => void
+  computedSystemPrompt?: string | null
 }) {
   return (
     <div className="space-y-6">
@@ -71,6 +73,10 @@ export function ProfileCard({
             <dd>{user.gender ?? "—"}</dd>
           </div>
           <div className="flex items-center justify-between gap-4">
+            <dt className="text-muted-foreground">Personality</dt>
+            <dd>{user.personality ?? "—"}</dd>
+          </div>
+          <div className="flex items-center justify-between gap-4">
             <dt className="text-muted-foreground">Location</dt>
             <dd>{user.zipcode ?? "—"}</dd>
           </div>
@@ -87,11 +93,11 @@ export function ProfileCard({
         </div>
         <ScrollArea className="h-[400px] rounded-md border bg-muted/20 p-3">
           <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-            {user.system_prompt ?? "—"}
+            {computedSystemPrompt ?? "—"}
           </p>
         </ScrollArea>
         <p className="mt-2 text-xs text-muted-foreground">
-          Auto-generated from profile fields; updates when you save profile changes.
+          Composed at runtime from the latest template for this gender/personality, plus this digital human’s profile.
         </p>
       </Card>
     </div>

@@ -4,7 +4,6 @@ import * as React from "react"
 import { toast } from "sonner"
 
 import { supabase } from "@/lib/supabase"
-import { buildSystemPrompt } from "@/lib/botProfile"
 import { FileDropzone } from "@/components/file-dropzone"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -42,6 +41,8 @@ export function ProfileEditSheet({
   const [editProfession, setEditProfession] = React.useState("")
   const [editAge, setEditAge] = React.useState<string>("")
   const [editGender, setEditGender] = React.useState("")
+  const [editPersonality, setEditPersonality] = React.useState("")
+  const [availablePersonalities, setAvailablePersonalities] = React.useState<string[]>([])
   const [editZipcode, setEditZipcode] = React.useState("")
   const [editBio, setEditBio] = React.useState("")
 
@@ -72,11 +73,42 @@ export function ProfileEditSheet({
     setEditProfession(user.profession ?? "")
     setEditAge(user.age != null ? String(user.age) : "")
     setEditGender(user.gender ?? "")
+    setEditPersonality(user.personality ?? "")
+    setAvailablePersonalities([])
     setEditZipcode(user.zipcode ?? "")
     setEditBio(user.bio ?? "")
     setEditAvatarFile(null)
     editAvatarFileRef.current = null
   }, [open, user])
+
+  React.useEffect(() => {
+    if (!open) return
+    const g = editGender.trim()
+    if (g !== "Male" && g !== "Female") {
+      setAvailablePersonalities([])
+      return
+    }
+
+    let cancelled = false
+    const run = async () => {
+      try {
+        const res = await fetch(`/api/system-prompts/personalities?gender=${encodeURIComponent(g)}`)
+        const json = (await res.json()) as { data?: string[]; error?: string }
+        if (!res.ok) throw new Error(json.error || "Failed to load personalities")
+        if (cancelled) return
+        const list = (json.data ?? []).filter(Boolean)
+        setAvailablePersonalities(list)
+      } catch (err: unknown) {
+        console.error(err)
+        if (cancelled) return
+        setAvailablePersonalities([])
+      }
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [open, editGender])
 
   const avatarPreviewUrl = React.useMemo(() => {
     if (!editAvatarFile) return null
@@ -99,17 +131,11 @@ export function ProfileEditSheet({
         profession: editProfession.trim() || null,
         age: editAge ? Number(editAge) : null,
         gender: editGender.trim() || null,
+        personality: editPersonality.trim() || null,
         zipcode: editZipcode.trim() || null,
         bio: editBio.trim() || null,
         updated_at: new Date().toISOString(),
       }
-
-      updates.system_prompt = buildSystemPrompt({
-        name: updates.username ?? user.username,
-        age: updates.age ?? user.age ?? null,
-        archetype: updates.profession ?? user.profession ?? null,
-        bio: updates.bio ?? user.bio ?? null,
-      })
 
       if (avatarFile) {
         if (!ACCEPTED_MIME.has(avatarFile.type)) {
@@ -171,6 +197,36 @@ export function ProfileEditSheet({
               <Label>Gender</Label>
               <Input value={editGender} onChange={(e) => setEditGender(e.target.value)} placeholder="e.g. Male" />
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Personality (optional)</Label>
+            <select
+              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+              value={editPersonality}
+              onChange={(e) => setEditPersonality(e.target.value)}
+              disabled={availablePersonalities.length === 0}
+            >
+              {availablePersonalities.length === 0 ? (
+                <>
+                  {/* Preserve existing value if present, even when there are no options */}
+                  {editPersonality.trim() ? <option value={editPersonality}>{editPersonality}</option> : null}
+                  <option value="">No personalities available</option>
+                </>
+              ) : (
+                <>
+                  <option value="">None</option>
+                  {/* Preserve existing value if it's not in the list */}
+                  {editPersonality.trim() && !availablePersonalities.includes(editPersonality) ? (
+                    <option value={editPersonality}>{editPersonality}</option>
+                  ) : null}
+                  {availablePersonalities.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
           </div>
           <div className="space-y-2">
             <Label>Zipcode</Label>

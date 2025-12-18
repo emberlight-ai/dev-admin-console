@@ -13,7 +13,6 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { FileDropzone } from "@/components/file-dropzone"
-import { buildSystemPrompt } from "@/lib/botProfile"
 import { LocationAutocomplete } from "@/components/location-autocomplete"
 
 type Gender = "Male" | "Female" | "Non-binary" | "Other"
@@ -58,6 +57,8 @@ export default function CreateDigitalHuman() {
   const [profession, setProfession] = React.useState("")
   const [age, setAge] = React.useState<string>("")
   const [gender, setGender] = React.useState<Gender>("Female")
+  const [availablePersonalities, setAvailablePersonalities] = React.useState<string[]>([])
+  const [personality, setPersonality] = React.useState("")
   const [zipcode, setZipcode] = React.useState("")
   const [bio, setBio] = React.useState("")
 
@@ -95,6 +96,42 @@ export default function CreateDigitalHuman() {
     if (avatarFile.size > MAX_FILE_BYTES) return false
     return true
   }, [loading, username, profession, age, bio, avatarFile])
+
+  React.useEffect(() => {
+    const g = gender === "Male" || gender === "Female" ? gender : null
+    if (!g) {
+      setAvailablePersonalities([])
+      setPersonality("")
+      return
+    }
+
+    let cancelled = false
+    const run = async () => {
+      try {
+        const res = await fetch(`/api/system-prompts/personalities?gender=${encodeURIComponent(g)}`)
+        const json = (await res.json()) as { data?: string[]; error?: string }
+        if (!res.ok) throw new Error(json.error || "Failed to load personalities")
+        if (cancelled) return
+        const list = (json.data ?? []).filter(Boolean)
+        setAvailablePersonalities(list)
+        // Default to a random personality if any exist; otherwise blank.
+        setPersonality((prev) => {
+          if (prev.trim()) return prev
+          if (!list.length) return ""
+          return list[Math.floor(Math.random() * list.length)]
+        })
+      } catch (err: unknown) {
+        console.error(err)
+        if (cancelled) return
+        setAvailablePersonalities([])
+        setPersonality("")
+      }
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [gender])
 
   const validateFiles = React.useCallback(
     (files: File[]) => {
@@ -163,15 +200,10 @@ export default function CreateDigitalHuman() {
           profession,
           age: age ? Number(age) : null,
           gender,
+          personality: personality.trim() || null,
           zipcode,
           bio: bio.trim(),
           is_digital_human: true,
-          system_prompt: buildSystemPrompt({
-            name: username,
-            age: age ? Number(age) : null,
-            archetype: profession,
-            bio: bio.trim(),
-          }),
         })
         .select()
         .single()
@@ -337,6 +369,28 @@ export default function CreateDigitalHuman() {
                 <option>Female</option>
                 <option>Non-binary</option>
                 <option>Other</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Personality (optional)</Label>
+              <select
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                value={personality}
+                onChange={(e) => setPersonality(e.target.value)}
+                disabled={availablePersonalities.length === 0}
+              >
+                {availablePersonalities.length === 0 ? (
+                  <option value="">No personalities available</option>
+                ) : (
+                  <>
+                    <option value="">None</option>
+                    {availablePersonalities.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </>
+                )}
               </select>
             </div>
             <div className="space-y-2 md:col-span-2">

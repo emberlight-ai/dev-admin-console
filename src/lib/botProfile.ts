@@ -6,6 +6,16 @@ export type BotProfileInput = {
   background?: string | null;
 };
 
+export type UserProfileInput = {
+  name?: string | null;
+  age?: number | null;
+  bioVibe?: string | null;
+  zodiac?: string | null;
+  mbti?: string | null;
+  hobbiesInterests?: string[] | null;
+  currentMoodNeed?: string[] | null;
+};
+
 export const PERSONALITY_TRAITS = [
   'playboy',
   'affirming',
@@ -111,19 +121,97 @@ function pickRandomUnique<T>(arr: readonly T[], count: number): T[] {
   return out;
 }
 
+function fnv1a32(input: string) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    // 32-bit FNV_prime = 16777619
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function pickRandomSeeded<T>(arr: readonly T[], rng: () => number): T {
+  return arr[Math.floor(rng() * arr.length)];
+}
+
+function pickRandomUniqueSeeded<T>(
+  arr: readonly T[],
+  count: number,
+  rng: () => number
+): T[] {
+  const pool = [...arr];
+  const out: T[] = [];
+  while (pool.length && out.length < count) {
+    const idx = Math.floor(rng() * pool.length);
+    out.push(pool[idx]);
+    pool.splice(idx, 1);
+  }
+  return out;
+}
+
 function cleanOneLine(s?: string | null) {
   return (s ?? '').replace(/\s+/g, ' ').trim();
 }
 
-export function generateBotProfileBlock(input: BotProfileInput) {
+function cleanTags(input?: string[] | null) {
+  const out: string[] = [];
+  for (const raw of input ?? []) {
+    const v = cleanOneLine(raw);
+    if (!v) continue;
+    if (out.includes(v)) continue;
+    out.push(v);
+  }
+  return out;
+}
+
+export function generateUserProfileBlock(input?: UserProfileInput | null) {
+  const name = cleanOneLine(input?.name) || 'N/A';
+  const age = input?.age ?? undefined;
+  const bioVibe = cleanOneLine(input?.bioVibe) || 'N/A';
+  const zodiac = cleanOneLine(input?.zodiac) || 'N/A';
+  const mbti = cleanOneLine(input?.mbti) || 'N/A';
+  const hobbies = cleanTags(input?.hobbiesInterests).join(', ') || 'N/A';
+  const mood = cleanTags(input?.currentMoodNeed).join(', ') || 'N/A';
+
+  return `<user_profile>
+**Name:** ${name}
+**Bio/Vibe:** ${bioVibe}
+**Age:** ${age ?? '—'}
+**Zodiac:** ${zodiac}
+**MBTI:** ${mbti}
+**Hobbies/Interests:** ${hobbies}
+**Current Mood/Need:** ${mood}
+</user_profile>`;
+}
+
+export function generateBotProfileBlock(input: BotProfileInput, seed?: string) {
   const name = cleanOneLine(input.name) || 'Unknown';
   const age = input.age ?? undefined;
   const archetype = cleanOneLine(input.archetype) || 'Digital Human';
   const bio = cleanOneLine(input.bio) || '—';
   const background = cleanOneLine(input.background) || bio || '—';
 
-  const traits = pickRandomUnique(PERSONALITY_TRAITS, 2).join(', ');
-  const speakingStyle = pickRandom(SPEAKING_STYLES);
+  const rng = seed ? mulberry32(fnv1a32(seed)) : null;
+  const traits = (
+    rng
+      ? pickRandomUniqueSeeded(PERSONALITY_TRAITS, 2, rng)
+      : pickRandomUnique(PERSONALITY_TRAITS, 2)
+  ).join(', ');
+  const speakingStyle = rng
+    ? pickRandomSeeded(SPEAKING_STYLES, rng)
+    : pickRandom(SPEAKING_STYLES);
 
   return `<bot_profile>
 **Name:** ${name}
@@ -142,6 +230,44 @@ export function buildSystemPrompt(
   const userBlock = (userProfileBlock ?? DEFAULT_USER_PROFILE_BLOCK).trim();
   const botBlock = generateBotProfileBlock(input).trim();
   return `${STATIC_SYSTEM_PROMPT_PREFIX.trim()}\n\n${userBlock}\n\n${botBlock}\n\n${STATIC_SYSTEM_PROMPT_SUFFIX.trim()}`;
+}
+
+export function composeSystemPromptFromTemplate(
+  template: string,
+  input: BotProfileInput,
+  seed?: string
+) {
+  const t = (template ?? '').toString();
+  const botBlock = generateBotProfileBlock(
+    {
+      name: input.name,
+      age: input.age ?? null,
+      archetype: input.archetype ?? null,
+      bio: input.bio ?? null,
+      background: input.background ?? input.bio ?? null,
+    },
+    seed
+  );
+
+  // Replace the required placeholder:
+  // <bot_profile>
+  // BOT_PROFILE_DETAILS
+  // </bot_profile>
+  const placeholderRe =
+    /<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot_profile>/i;
+  if (!placeholderRe.test(t)) return t;
+  return t.replace(placeholderRe, botBlock);
+}
+
+export function composeSystemPromptWithUserProfile(
+  systemPrompt: string,
+  userProfile?: UserProfileInput | null
+) {
+  const t = (systemPrompt ?? '').toString();
+  const placeholderRe =
+    /<user_profile>[\s\r\n]*USER_PROFILE_DETAILS[\s\r\n]*<\/user_profile>/i;
+  if (!placeholderRe.test(t)) return t;
+  return t.replace(placeholderRe, generateUserProfileBlock(userProfile));
 }
 
 function findRealBotProfileBlock(prompt: string) {

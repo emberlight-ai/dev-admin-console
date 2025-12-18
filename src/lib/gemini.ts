@@ -5,19 +5,23 @@ const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
 
 const genAI = new GoogleGenerativeAI(apiKey);
 
-// Using a model that is likely to work. The user requested "gemini 2.5 pro",
-// but standard models are gemini-1.5-pro or gemini-pro.
-// We will try to respect the intent or default to a working one.
-const MODEL_NAME = 'gemini-2.5-pro';
+export const ALLOWED_GEMINI_MODELS = [
+  'gemini-3-flash-preview',
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+] as const;
+
+export type AllowedGeminiModel = (typeof ALLOWED_GEMINI_MODELS)[number];
 
 export async function getGeminiResponse(
   systemPrompt: string,
   messageHistory: { role: 'user' | 'model'; parts: { text: string }[] }[],
-  userMessage: string
+  userMessage: string,
+  modelName: AllowedGeminiModel = 'gemini-2.5-flash'
 ) {
   const model = genAI.getGenerativeModel(
     {
-      model: MODEL_NAME,
+      model: modelName,
       systemInstruction: systemPrompt,
     },
     {

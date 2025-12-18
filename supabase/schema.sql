@@ -9,6 +9,7 @@ create table public.users (
   username text not null,
   age integer,
   gender text,
+  personality text,
   zipcode text,
   phone text,
   bio text,
@@ -18,9 +19,21 @@ create table public.users (
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   deleted_at timestamptz,
-  is_digital_human boolean default false,
-  system_prompt text
+  is_digital_human boolean default false
 );
+
+-- Create SystemPrompts table (versioned system prompt templates per gender + personality)
+create table public."SystemPrompts" (
+  id uuid primary key default uuid_generate_v4(),
+  gender text not null,
+  personality text not null,
+  system_prompt text not null,
+  created_at timestamptz default now()
+);
+
+-- Fast lookup for newest prompt by (gender, personality)
+create index systemprompts_gender_personality_created_at_idx
+on public."SystemPrompts" (gender, personality, created_at desc);
 
 -- Create UserPosts table
 create table public.user_posts (
