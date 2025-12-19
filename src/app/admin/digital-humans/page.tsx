@@ -5,7 +5,6 @@ import Link from "next/link"
 import { ArrowUpDown, Eye, Trash2, Plus, SlidersHorizontal } from "lucide-react"
 import { toast } from "sonner"
 
-import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -109,42 +108,15 @@ export default function ManageDigitalHumans() {
 
   const fetchRows = React.useCallback(async () => {
     setLoading(true)
-    let q = supabase
-      .from("users")
-      .select("userid,username,profession,avatar,gender,created_at,updated_at")
-      .eq("is_digital_human", true)
-      .order("created_at", { ascending: false })
-
-    if (genderFilter !== "all") {
-      q = q.eq("gender", genderFilter === "female" ? "Female" : "Male")
-    }
-
-    const { data, error } = await q
-
-    if (error) {
-      console.error(error)
-      toast.error("Failed to fetch digital humans")
-    } else {
-      const base = ((data as Omit<Row, "postsCount">[]) ?? []).map((r) => ({ ...r, postsCount: 0 }))
-      const ids = base.map((r) => r.userid)
-      if (ids.length) {
-        const { data: postRows, error: postErr } = await supabase
-          .from("user_posts")
-          .select("userid")
-          .in("userid", ids)
-
-        if (postErr) {
-          console.error(postErr)
-        } else {
-          const counts: Record<string, number> = {}
-          for (const p of postRows ?? []) {
-            const id = (p as { userid: string }).userid
-            counts[id] = (counts[id] ?? 0) + 1
-          }
-          for (const r of base) r.postsCount = counts[r.userid] ?? 0
-        }
-      }
-      setRows(base)
+    try {
+      const res = await fetch(`/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}`)
+      const json = (await res.json()) as { data?: Row[]; error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to fetch digital humans")
+      setRows((json.data ?? []) as Row[])
+    } catch (err: unknown) {
+      console.error(err)
+      toast.error(err instanceof Error ? err.message : "Failed to fetch digital humans")
+      setRows([])
     }
     setLoading(false)
   }, [genderFilter])
@@ -154,13 +126,16 @@ export default function ManageDigitalHumans() {
   }, [fetchRows])
 
   const deleteRow = async (userid: string) => {
-    const { error } = await supabase.from("users").delete().eq("userid", userid)
-    if (error) {
-      toast.error("Failed to delete digital human")
-      return
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(userid)}`, { method: "DELETE" })
+      const json = (await res.json()) as { ok?: boolean; error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to delete digital human")
+      toast.success("Digital human deleted")
+      void fetchRows()
+    } catch (err: unknown) {
+      console.error(err)
+      toast.error(err instanceof Error ? err.message : "Failed to delete digital human")
     }
-    toast.success("Digital human deleted")
-    void fetchRows()
   }
 
   return (

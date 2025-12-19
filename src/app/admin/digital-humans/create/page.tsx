@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation"
 import { ArrowLeft, Upload } from "lucide-react"
 import { toast } from "sonner"
 
-import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -192,41 +191,36 @@ export default function CreateDigitalHuman() {
         toast.error("Avatar is required")
         return
       }
-      const { data: userData, error: userError } = await supabase
-        .from("users")
-        .insert({
+      const createRes = await fetch("/api/admin/digital-humans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           username,
           profession,
           age: age ? Number(age) : null,
           gender,
           personality: personality.trim() || null,
           bio: bio.trim(),
-          is_digital_human: true,
-        })
-        .select()
-        .single()
+        }),
+      })
+      const createJson = (await createRes.json()) as { data?: { userid?: string }; error?: string }
+      if (!createRes.ok) throw new Error(createJson.error || "Failed to create digital human")
+      const userId = createJson.data?.userid
+      if (!userId) throw new Error("Missing userid from create response")
 
-      if (userError || !userData) throw userError
-      const userId = userData.userid as string
-
-      // Avatar upload (force avatar.jpg)
+      // Avatar upload
       if (!ACCEPTED_MIME.has(avatarFile.type) || avatarFile.size > MAX_FILE_BYTES) {
         toast.error("Avatar must be a JPG or PNG under 5MB")
         return
       }
-      const idPart =
-        typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now())
-      const filePath = `${userId}/avatar_${idPart}.${avatarExtFor(avatarFile)}`
-      const { error: uploadError } = await supabase.storage
-        .from("images")
-        .upload(filePath, avatarFile, { upsert: true, contentType: avatarFile.type })
-      if (uploadError) throw uploadError
-
-      const { data: pub } = supabase.storage.from("images").getPublicUrl(filePath)
-      await supabase
-        .from("users")
-        .update({ avatar: pub.publicUrl, updated_at: new Date().toISOString() })
-        .eq("userid", userId)
+      const fd = new FormData()
+      fd.set("file", avatarFile)
+      const avatarRes = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/avatar`, {
+        method: "POST",
+        body: fd,
+      })
+      const avatarJson = (await avatarRes.json()) as { avatar?: string; error?: string }
+      if (!avatarRes.ok) throw new Error(avatarJson.error || "Failed to upload avatar")
 
       // Posts (optional): create rows to get ids, then upload into /post_<postId>/<n>.jpg
       const postsToCreate = draftPosts.filter((p) => {
@@ -246,33 +240,32 @@ export default function CreateDigitalHuman() {
         }
         if (pickedFiles.length > 9) toast.error("Max 9 images per post")
 
-        const { data: createdPost, error: postErr } = await supabase
-          .from("user_posts")
-          .insert({
-            userid: userId,
-            photos: [],
+        const postRes = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/posts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
             description: p.description.trim() || null,
             occurred_at: datetimeLocalToIso(p.datetimeLocal) ?? new Date().toISOString(),
             location_name: p.locationName.trim() || null,
             longitude: p.longitude,
             latitude: p.latitude,
-          })
-          .select("id")
-          .single()
-        if (postErr) throw postErr
+          }),
+        })
+        const postJson = (await postRes.json()) as { data?: { id?: string }; error?: string }
+        if (!postRes.ok) throw new Error(postJson.error || "Failed to create post")
+        const postId = postJson.data?.id
+        if (!postId) throw new Error("Missing post id")
 
-        const urls: string[] = []
-        for (let i = 0; i < valid.length; i++) {
-          const f = valid[i]
-          const filePath = `${userId}/post_${createdPost.id}/${i + 1}.jpg`
-          const { error } = await supabase.storage.from("images").upload(filePath, f, { upsert: true, contentType: f.type })
-          if (error) throw error
-          const { data: pub } = supabase.storage.from("images").getPublicUrl(filePath)
-          urls.push(pub.publicUrl)
-        }
-        if (urls.length) {
-          const { error: updErr } = await supabase.from("user_posts").update({ photos: urls }).eq("id", createdPost.id)
-          if (updErr) throw updErr
+        if (valid.length) {
+          const upFd = new FormData()
+          upFd.set("userid", userId)
+          for (const f of valid) upFd.append("files", f)
+          const upRes = await fetch(`/api/admin/posts/${encodeURIComponent(postId)}/photos`, {
+            method: "POST",
+            body: upFd,
+          })
+          const upJson = (await upRes.json()) as { photos?: string[]; error?: string }
+          if (!upRes.ok) throw new Error(upJson.error || "Failed to upload post photos")
         }
       }
 

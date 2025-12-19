@@ -1,26 +1,23 @@
-'use client'
+import { ApiDocsExplorer } from '@/app/admin/api-documents/_components/api-docs-explorer';
+import { discoverApiRoutes } from '@/lib/api-route-discovery';
+import { apiCatalog } from './api-catalog';
+import { iosApiCatalog } from './ios-catalog';
 
-import * as React from "react"
+export default async function ApiDocumentsPage() {
+  const discovered = await discoverApiRoutes();
 
-import { Card } from "@/components/ui/card"
-
-export default function ApiDocumentsPage() {
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">API Documents</h1>
         <p className="text-sm text-muted-foreground">
-          Backend API reference and integration notes.
+          iOS-friendly API reference with copy/paste snippets and a Try-It panel.
         </p>
       </div>
 
-      <Card className="p-6">
-        <div className="text-sm text-muted-foreground">
-          Coming soon.
-        </div>
-      </Card>
+      <ApiDocsExplorer catalog={[...apiCatalog, ...iosApiCatalog]} discovered={discovered} />
     </div>
-  )
+  );
 }
 
 

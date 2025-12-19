@@ -4,7 +4,6 @@ import * as React from "react"
 import { Pencil, Plus, Trash2, X } from "lucide-react"
 import { toast } from "sonner"
 
-import { supabase } from "@/lib/supabase"
 import { FileDropzone } from "@/components/file-dropzone"
 import { LocationAutocomplete } from "@/components/location-autocomplete"
 import { Button } from "@/components/ui/button"
@@ -118,17 +117,15 @@ export function PostsPanel({
 
   const fetchPosts = React.useCallback(async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from("user_posts")
-      .select("*")
-      .eq("userid", userid)
-      .order("occurred_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false })
-    if (error) {
-      console.error(error)
-      toast.error("Failed to fetch posts")
-    } else {
-      setPosts((data as DbPost[]) ?? [])
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(userid)}/posts`)
+      const json = (await res.json()) as { data?: DbPost[]; error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to fetch posts")
+      setPosts((json.data ?? []) as DbPost[])
+    } catch (err: unknown) {
+      console.error(err)
+      toast.error(err instanceof Error ? err.message : "Failed to fetch posts")
+      setPosts([])
     }
     setLoading(false)
   }, [userid])
@@ -169,40 +166,32 @@ export function PostsPanel({
           return
         }
 
-        const existingNumbers = (photos ?? [])
-          .map((u) => {
-            const m = u.match(new RegExp(`/post_${editPost.id}/(\\d+)\\.jpg`, "i"))
-            return m ? Number(m[1]) : null
-          })
-          .filter((n): n is number => typeof n === "number" && Number.isFinite(n))
-        const startIndex = (existingNumbers.length ? Math.max(...existingNumbers) : 0) + 1
-
-        const urls: string[] = []
-        for (let i = 0; i < valid.length; i++) {
-          const f = valid[i]
-          const filePath = `${userid}/post_${editPost.id}/${startIndex + i}.jpg`
-          const { error: uploadError } = await supabase.storage
-            .from("images")
-            .upload(filePath, f, { upsert: true, contentType: f.type })
-          if (uploadError) throw uploadError
-          const { data: pub } = supabase.storage.from("images").getPublicUrl(filePath)
-          urls.push(pub.publicUrl)
-        }
-        photos = [...photos, ...urls]
+        const fd = new FormData()
+        fd.set("userid", userid)
+        for (const f of valid) fd.append("files", f)
+        const upRes = await fetch(`/api/admin/posts/${encodeURIComponent(editPost.id)}/photos`, {
+          method: "POST",
+          body: fd,
+        })
+        const upJson = (await upRes.json()) as { photos?: string[]; error?: string }
+        if (!upRes.ok) throw new Error(upJson.error || "Failed to upload photos")
+        photos = (upJson.photos ?? photos) as string[]
       }
 
-      const { error } = await supabase
-        .from("user_posts")
-        .update({
+      const res = await fetch(`/api/admin/posts/${encodeURIComponent(editPost.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           description: editPostDescription.trim() || null,
           photos,
           occurred_at: datetimeLocalToIso(editPostDatetimeLocal) ?? editPost.occurred_at ?? editPost.created_at,
           location_name: editPostLocationName.trim() || null,
           longitude: editPostLongitude,
           latitude: editPostLatitude,
-        })
-        .eq("id", editPost.id)
-      if (error) throw error
+        }),
+      })
+      const json = (await res.json()) as { data?: DbPost | null; error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to update post")
 
       toast.success("Post updated")
       setPostOpen(false)
@@ -221,8 +210,9 @@ export function PostsPanel({
     if (!editPost) return
     setPostSaving(true)
     try {
-      const { error } = await supabase.from("user_posts").delete().eq("id", editPost.id)
-      if (error) throw error
+      const res = await fetch(`/api/admin/posts/${encodeURIComponent(editPost.id)}`, { method: "DELETE" })
+      const json = (await res.json()) as { ok?: boolean; error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to delete post")
       toast.success("Post deleted")
       setPostOpen(false)
       setEditPost(null)
@@ -241,22 +231,22 @@ export function PostsPanel({
   const createPost = async () => {
     setAddPostSaving(true)
     try {
-      const { data: created, error: createError } = await supabase
-        .from("user_posts")
-        .insert({
-          userid,
-          photos: [],
+      const createRes = await fetch(`/api/admin/users/${encodeURIComponent(userid)}/posts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           description: newPostDescription.trim() || null,
           occurred_at: datetimeLocalToIso(newPostDatetimeLocal) ?? new Date().toISOString(),
           location_name: newPostLocationName.trim() || null,
           longitude: newPostLongitude,
           latitude: newPostLatitude,
-        })
-        .select("id")
-        .single()
-      if (createError) throw createError
+        }),
+      })
+      const createJson = (await createRes.json()) as { data?: DbPost; error?: string }
+      if (!createRes.ok) throw new Error(createJson.error || "Failed to create post")
+      const created = createJson.data
+      if (!created?.id) throw new Error("Failed to create post")
 
-      const urls: string[] = []
       if (newPostFiles.length > 0) {
         const { valid, errors } = validateFiles(newPostFiles.slice(0, 9))
         if (errors.length) {
@@ -264,21 +254,15 @@ export function PostsPanel({
           return
         }
         if (newPostFiles.length > 9) toast.error("Max 9 images per post")
-        for (let i = 0; i < valid.length; i++) {
-          const f = valid[i]
-          const filePath = `${userid}/post_${created.id}/${i + 1}.jpg`
-          const { error: uploadError } = await supabase.storage
-            .from("images")
-            .upload(filePath, f, { upsert: true, contentType: f.type })
-          if (uploadError) throw uploadError
-          const { data: pub } = supabase.storage.from("images").getPublicUrl(filePath)
-          urls.push(pub.publicUrl)
-        }
-      }
-
-      if (urls.length > 0) {
-        const { error: updErr } = await supabase.from("user_posts").update({ photos: urls }).eq("id", created.id)
-        if (updErr) throw updErr
+        const fd = new FormData()
+        fd.set("userid", userid)
+        for (const f of valid) fd.append("files", f)
+        const upRes = await fetch(`/api/admin/posts/${encodeURIComponent(created.id)}/photos`, {
+          method: "POST",
+          body: fd,
+        })
+        const upJson = (await upRes.json()) as { photos?: string[]; error?: string }
+        if (!upRes.ok) throw new Error(upJson.error || "Failed to upload photos")
       }
 
       toast.success("Post created")

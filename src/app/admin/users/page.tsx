@@ -3,7 +3,6 @@
 import * as React from "react"
 import { format, subDays } from "date-fns"
 
-import { supabase } from "@/lib/supabase"
 import { cn } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -93,17 +92,14 @@ export default function ManageUsers() {
 
   const fetchUsers = React.useCallback(async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from("users")
-      .select("userid,username,gender,age,zipcode,avatar,created_at")
-      .eq("is_digital_human", false)
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error(error)
+    try {
+      const res = await fetch("/api/admin/users?mode=list&is_digital_human=false")
+      const json = (await res.json()) as { data?: UserRow[]; error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to fetch users")
+      setUsers((json.data ?? []) as UserRow[])
+    } catch (err: unknown) {
+      console.error(err)
       setUsers([])
-    } else {
-      setUsers((data as UserRow[]) ?? [])
     }
     setLoading(false)
   }, [])
@@ -119,19 +115,23 @@ export default function ManageUsers() {
     // include entire end day
     const endInclusive = new Date(end.getTime() + 24 * 60 * 60 * 1000 - 1)
 
-    const { data, error } = await supabase
-      .from("users")
-      .select("created_at,is_digital_human")
-      .gte("created_at", start.toISOString())
-      .lte("created_at", endInclusive.toISOString())
-      .order("created_at", { ascending: true })
-
-    if (error) {
-      console.error(error)
+    try {
+      const qs = new URLSearchParams({
+        mode: "chart",
+        created_from: start.toISOString(),
+        created_to: endInclusive.toISOString(),
+      })
+      const res = await fetch(`/api/admin/users?${qs.toString()}`)
+      const json = (await res.json()) as {
+        data?: { created_at: string; is_digital_human: boolean }[]
+        error?: string
+      }
+      if (!res.ok) throw new Error(json.error || "Failed to fetch chart rows")
+      setChartRows((json.data ?? []) as { created_at: string; is_digital_human: boolean }[])
+    } catch (err: unknown) {
+      console.error(err)
       setChartRows([])
-      return
     }
-    setChartRows((data as { created_at: string; is_digital_human: boolean }[]) ?? [])
   }, [range])
 
   React.useEffect(() => {
@@ -146,19 +146,23 @@ export default function ManageUsers() {
     const prevEndInclusive = new Date(start.getTime() - 1)
     const prevStart = new Date(start.getTime() - days * 24 * 60 * 60 * 1000)
 
-    const { data, error } = await supabase
-      .from("users")
-      .select("created_at,is_digital_human")
-      .gte("created_at", prevStart.toISOString())
-      .lte("created_at", prevEndInclusive.toISOString())
-      .order("created_at", { ascending: true })
-
-    if (error) {
-      console.error(error)
+    try {
+      const qs = new URLSearchParams({
+        mode: "chart",
+        created_from: prevStart.toISOString(),
+        created_to: prevEndInclusive.toISOString(),
+      })
+      const res = await fetch(`/api/admin/users?${qs.toString()}`)
+      const json = (await res.json()) as {
+        data?: { created_at: string; is_digital_human: boolean }[]
+        error?: string
+      }
+      if (!res.ok) throw new Error(json.error || "Failed to fetch previous chart rows")
+      setPrevChartRows((json.data ?? []) as { created_at: string; is_digital_human: boolean }[])
+    } catch (err: unknown) {
+      console.error(err)
       setPrevChartRows([])
-      return
     }
-    setPrevChartRows((data as { created_at: string; is_digital_human: boolean }[]) ?? [])
   }, [range])
 
   React.useEffect(() => {
@@ -168,16 +172,15 @@ export default function ManageUsers() {
   React.useEffect(() => {
     // Total revenue uses $10 per real user (all time)
     const run = async () => {
-      const { count, error } = await supabase
-        .from("users")
-        .select("userid", { count: "exact", head: true })
-        .eq("is_digital_human", false)
-      if (error) {
-        console.error(error)
+      try {
+        const res = await fetch("/api/admin/users?mode=count&is_digital_human=false")
+        const json = (await res.json()) as { count?: number; error?: string }
+        if (!res.ok) throw new Error(json.error || "Failed to fetch user count")
+        setTotalRealAllTime(json.count ?? 0)
+      } catch (err: unknown) {
+        console.error(err)
         setTotalRealAllTime(0)
-        return
       }
-      setTotalRealAllTime(count ?? 0)
     }
     void run()
   }, [])

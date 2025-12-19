@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BookOpen, Users, Bot, LogOut, GitBranch, ScrollText, Menu, LayoutDashboard } from "lucide-react"
+import { BookOpen, Bot, LogOut, GitBranch, ScrollText, Menu, LayoutDashboard } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"

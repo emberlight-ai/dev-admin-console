@@ -3,7 +3,6 @@
 import * as React from "react"
 import { toast } from "sonner"
 
-import { supabase } from "@/lib/supabase"
 import { FileDropzone } from "@/components/file-dropzone"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -146,19 +145,24 @@ export function ProfileEditSheet({
           toast.error("Avatar must be under 5MB")
           return
         }
-        const idPart =
-          typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now())
-        const filePath = `${user.userid}/avatar_${idPart}.${avatarExtFor(avatarFile)}`
-        const { error: uploadError } = await supabase.storage
-          .from("images")
-          .upload(filePath, avatarFile, { upsert: false, contentType: avatarFile.type })
-        if (uploadError) throw uploadError
-        const { data: pub } = supabase.storage.from("images").getPublicUrl(filePath)
-        updates.avatar = pub.publicUrl
+        const fd = new FormData()
+        fd.set("file", avatarFile)
+        const res = await fetch(`/api/admin/users/${encodeURIComponent(user.userid)}/avatar`, {
+          method: "POST",
+          body: fd,
+        })
+        const json = (await res.json()) as { avatar?: string; error?: string }
+        if (!res.ok) throw new Error(json.error || "Failed to upload avatar")
+        if (json.avatar) updates.avatar = json.avatar
       }
 
-      const { error } = await supabase.from("users").update(updates).eq("userid", user.userid)
-      if (error) throw error
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(user.userid)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      })
+      const json = (await res.json()) as { data?: DbUser | null; error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to update profile")
 
       toast.success("Profile updated")
       onSaved(updates)

@@ -6,7 +6,6 @@ import { useParams } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
 import { toast } from "sonner"
 
-import { supabase } from "@/lib/supabase"
 import { Card } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { composeSystemPromptFromTemplate } from "@/lib/botProfile"
@@ -36,16 +35,16 @@ export default function DigitalHumanDetail() {
   }, [id]);
 
   const fetchUser = async () => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('userid', id)
-      .single();
-
-    if (error) {
-      toast.error("Failed to fetch user details")
-    } else {
-      setUser(data);
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(String(id))}`)
+      const json = (await res.json()) as { data?: DbUser | null; error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to fetch user details")
+      if (!json.data) throw new Error("User not found")
+      setUser(json.data)
+    } catch (err: unknown) {
+      console.error(err)
+      toast.error(err instanceof Error ? err.message : "Failed to fetch user details")
+      setUser(null)
     }
     setLoading(false);
   };
