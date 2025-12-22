@@ -32,6 +32,17 @@ type ReportRow = {
   post: PostLite | null;
 };
 
+type ReportRowRaw = Omit<ReportRow, 'reporter' | 'target_user' | 'post'> & {
+  reporter: UserLite | UserLite[] | null;
+  target_user: UserLite | UserLite[] | null;
+  post: PostLite | PostLite[] | null;
+};
+
+function firstOrNull<T>(v: T | T[] | null | undefined): T | null {
+  if (!v) return null;
+  return Array.isArray(v) ? v[0] ?? null : v;
+}
+
 export async function GET(req: NextRequest) {
   if (!isAdminRequest(req)) return jsonError('Unauthorized', 401);
 
@@ -53,7 +64,13 @@ export async function GET(req: NextRequest) {
 
   if (error) return jsonError(error.message, 500);
 
-  const rows = (data ?? []) as ReportRow[];
+  const rawRows = (data ?? []) as unknown as ReportRowRaw[];
+  const rows: ReportRow[] = rawRows.map((r) => ({
+    ...r,
+    reporter: firstOrNull(r.reporter),
+    target_user: firstOrNull(r.target_user),
+    post: firstOrNull(r.post),
+  }));
   const userReports = rows.filter((r) => !r.target_post_id);
   const postReports = rows.filter((r) => !!r.target_post_id);
   return NextResponse.json({ userReports, postReports });
