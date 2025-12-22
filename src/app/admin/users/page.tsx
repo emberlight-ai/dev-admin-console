@@ -1,9 +1,12 @@
 'use client'
 
 import * as React from "react"
+import Link from "next/link"
 import { format, subDays } from "date-fns"
+import { Eye } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -366,18 +369,19 @@ export default function ManageUsers() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Avatar</TableHead>
+                  <TableHead className="pl-4">Avatar</TableHead>
                   <TableHead>Username</TableHead>
                   <TableHead>Gender</TableHead>
                   <TableHead>Age</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Joined</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {users.map((u) => (
                   <TableRow key={u.userid}>
-                    <TableCell>
+                    <TableCell className="pl-4">
                       <Avatar className="h-9 w-9">
                         <AvatarImage src={`/api/avatar/${u.userid}`} alt={u.username} />
                         <AvatarFallback>{u.username.slice(0, 2).toUpperCase()}</AvatarFallback>
@@ -389,6 +393,14 @@ export default function ManageUsers() {
                     <TableCell className="text-muted-foreground">{u.zipcode ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(u.created_at).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button asChild variant="outline" size="sm">
+                        <Link href={`/admin/users/${u.userid}`} className="gap-2">
+                          <Eye className="h-4 w-4" />
+                          View
+                        </Link>
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}

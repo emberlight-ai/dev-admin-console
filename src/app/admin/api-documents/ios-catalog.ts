@@ -1,6 +1,7 @@
 import type { ApiEndpointDoc } from './api-catalog';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? '';
 
 // Default headers iOS will send to Supabase REST/RPC.
 // - apikey: your anon key
@@ -30,6 +31,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       type: 'bearer',
       notes: 'Send the Supabase Access Token in Authorization header.',
     },
+    baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
   },
   {
@@ -41,8 +43,14 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     description:
       'Update fields for the authenticated user. <userid> must match the token subject.',
     auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
-    requestExample: { username: 'Alice', profession: 'iOS Engineer' },
+    requestExample: {
+      username: 'Alice',
+      profession: 'iOS Engineer',
+      zipcode: '90210',
+      avatar: 'https://example.com/my-new-avatar.jpg',
+    },
   },
   {
     id: 'ios.users.delete.soft',
@@ -52,6 +60,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     summary: 'Soft delete my account',
     description: 'Marks the authenticated user account as deleted.',
     auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
     requestExample: {},
   },
@@ -64,6 +73,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     description:
       'Create a new post. User ID is inferred from the token or can be passed.',
     auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
     requestExample: {
       description: 'Visited Kyoto',
@@ -82,6 +92,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     summary: 'List user posts',
     description: 'Fetch posts for a user with pagination.',
     auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
     params: [
       {
@@ -112,6 +123,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     summary: 'Get Earth points',
     description: 'Fetch lightweight location data for 3D Earth view.',
     auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
     params: [
       {
