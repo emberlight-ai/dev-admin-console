@@ -35,6 +35,7 @@ create table public.users (
   is_digital_human boolean default false
 );
 
+drop trigger if exists users_set_updated_at on public.users;
 create trigger users_set_updated_at
 before update on public.users
 for each row
@@ -93,7 +94,7 @@ create table public."SystemPrompts" (
 );
 
 -- Fast lookup for newest prompt by (gender, personality)
-create index systemprompts_gender_personality_created_at_idx
+create index if not exists systemprompts_gender_personality_created_at_idx
 on public."SystemPrompts" (gender, personality, created_at desc);
 
 -- Create UserPosts table
@@ -112,6 +113,7 @@ create table public.user_posts (
   deleted_at timestamptz
 );
 
+drop trigger if exists user_posts_set_updated_at on public.user_posts;
 create trigger user_posts_set_updated_at
 before update on public.user_posts
 for each row
@@ -186,7 +188,7 @@ using (userid = auth.uid());
 
 -- Geospatial point for indexing (generated from longitude/latitude)
 alter table public.user_posts
-  add column geom geometry(Point, 4326)
+  add column if not exists geom geometry(Point, 4326)
   generated always as (
     case
       when longitude is null or latitude is null then null
@@ -195,15 +197,38 @@ alter table public.user_posts
   ) stored;
 
 -- Basic coordinate validation (allows NULL when no location set)
-alter table public.user_posts
-  add constraint user_posts_longitude_range check (longitude is null or (longitude >= -180 and longitude <= 180));
-alter table public.user_posts
-  add constraint user_posts_latitude_range check (latitude is null or (latitude >= -90 and latitude <= 90));
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'user_posts_longitude_range'
+      and conrelid = 'public.user_posts'::regclass
+  ) then
+    alter table public.user_posts
+      add constraint user_posts_longitude_range
+      check (longitude is null or (longitude >= -180 and longitude <= 180));
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'user_posts_latitude_range'
+      and conrelid = 'public.user_posts'::regclass
+  ) then
+    alter table public.user_posts
+      add constraint user_posts_latitude_range
+      check (latitude is null or (latitude >= -90 and latitude <= 90));
+  end if;
+end $$;
 
 -- Fast bounding-box and spatial queries
-create index user_posts_geom_gix on public.user_posts using gist (geom);
+create index if not exists user_posts_geom_gix on public.user_posts using gist (geom);
 -- Common sorting / filtering by time
-create index user_posts_occurred_at_idx on public.user_posts (occurred_at);
+create index if not exists user_posts_occurred_at_idx on public.user_posts (occurred_at);
 
 -- ---------------------------------------------------------------------------
 -- RPCs for efficient pagination + 3D Earth rendering
@@ -268,13 +293,27 @@ $$;
 create or replace function public.rpc_request_delete_user()
 returns void
 language plpgsql
-security invoker
+security definer
+set search_path = public
 as $$
 begin
   update public.users
   set deleted_at = now()
   where userid = auth.uid()
     and deleted_at is null;
+
+  -- Cleanup: remove the user's presence from matching/safety tables.
+  delete from public.match_requests
+  where from_user_id = auth.uid() or to_user_id = auth.uid();
+
+  delete from public.user_matches
+  where user_a = auth.uid() or user_b = auth.uid();
+
+  delete from public.blocks
+  where blocker_id = auth.uid() or blocked_id = auth.uid();
+
+  delete from public.reports
+  where reporter_id = auth.uid() or target_user_id = auth.uid();
 end;
 $$;
 
@@ -282,26 +321,34 @@ $$;
 -- Matching (mutual agreement) + safety controls (blocks/reports)
 -- ---------------------------------------------------------------------------
 
-do $$
-begin
-  if not exists (select 1 from pg_type where typname = 'match_request_status') then
-    create type public.match_request_status as enum ('pending', 'accepted', 'declined', 'cancelled');
-  end if;
-end $$;
-
+-- Match requests are minimal: row exists == request exists.
+-- - A sends -> INSERT
+-- - A cancels -> DELETE
+-- - B accepts -> DELETE request + INSERT into user_matches
 create table if not exists public.match_requests (
   id uuid primary key default uuid_generate_v4(),
   from_user_id uuid references public.users(userid) on delete cascade not null,
   to_user_id uuid references public.users(userid) on delete cascade not null,
-  status public.match_request_status not null default 'pending',
   created_at timestamptz default now(),
-  responded_at timestamptz
+  check (from_user_id <> to_user_id)
 );
+
+-- If this project previously used status/enum, keep it compatible (safe no-op when absent)
+alter table public.match_requests drop column if exists status;
+alter table public.match_requests drop column if exists responded_at;
 
 create unique index if not exists match_requests_from_to_unique
 on public.match_requests (from_user_id, to_user_id);
 
-create table if not exists public.matches (
+-- Migrate legacy table name `matches` -> `user_matches` (your Supabase screenshot shows `matches`)
+do $$
+begin
+  if to_regclass('public.user_matches') is null and to_regclass('public.matches') is not null then
+    alter table public.matches rename to user_matches;
+  end if;
+end $$;
+
+create table if not exists public.user_matches (
   id uuid primary key default uuid_generate_v4(),
   user_a uuid references public.users(userid) on delete cascade not null,
   user_b uuid references public.users(userid) on delete cascade not null,
@@ -309,8 +356,9 @@ create table if not exists public.matches (
   check (user_a < user_b)
 );
 
+-- Keep original index name to avoid duplicates even after rename.
 create unique index if not exists matches_pair_unique
-on public.matches (user_a, user_b);
+on public.user_matches (user_a, user_b);
 
 create table if not exists public.blocks (
   id uuid primary key default uuid_generate_v4(),
@@ -326,14 +374,17 @@ on public.blocks (blocker_id, blocked_id);
 create table if not exists public.reports (
   id uuid primary key default uuid_generate_v4(),
   reporter_id uuid references public.users(userid) on delete cascade not null,
-  target_user_id uuid references public.users(userid) on delete set null,
-  target_post_id uuid references public.user_posts(id) on delete set null,
+  -- Always set:
+  -- - reporting a user: target_user_id set, target_post_id NULL
+  -- - reporting a post: target_user_id set, target_post_id set
+  target_user_id uuid references public.users(userid) on delete cascade not null,
+  target_post_id uuid references public.user_posts(id) on delete cascade,
   reason text,
   created_at timestamptz default now()
 );
 
 alter table public.match_requests enable row level security;
-alter table public.matches enable row level security;
+alter table public.user_matches enable row level security;
 alter table public.blocks enable row level security;
 alter table public.reports enable row level security;
 
@@ -352,17 +403,37 @@ for insert
 to authenticated
 with check (from_user_id = auth.uid() and from_user_id <> to_user_id);
 
--- Participants-only for matches
-drop policy if exists matches_select_participants on public.matches;
-create policy matches_select_participants
-on public.matches
+-- Delete-based workflow needs delete privileges (cancel/accept/decline)
+drop policy if exists match_requests_update_participants on public.match_requests;
+drop policy if exists match_requests_delete_participants on public.match_requests;
+create policy match_requests_delete_participants
+on public.match_requests
+for delete
+to authenticated
+using (from_user_id = auth.uid() or to_user_id = auth.uid());
+
+-- Participants-only for user_matches
+drop policy if exists matches_select_participants on public.user_matches;
+drop policy if exists matches_insert_participants on public.user_matches;
+drop policy if exists matches_delete_participants on public.user_matches;
+drop policy if exists user_matches_select_participants on public.user_matches;
+create policy user_matches_select_participants
+on public.user_matches
 for select
 to authenticated
 using (user_a = auth.uid() or user_b = auth.uid());
 
-drop policy if exists matches_delete_participants on public.matches;
-create policy matches_delete_participants
-on public.matches
+-- Needed for rpc_accept_match_request (INSERT INTO user_matches)
+drop policy if exists user_matches_insert_participants on public.user_matches;
+create policy user_matches_insert_participants
+on public.user_matches
+for insert
+to authenticated
+with check (user_a = auth.uid() or user_b = auth.uid());
+
+drop policy if exists user_matches_delete_participants on public.user_matches;
+create policy user_matches_delete_participants
+on public.user_matches
 for delete
 to authenticated
 using (user_a = auth.uid() or user_b = auth.uid());
@@ -422,11 +493,16 @@ begin
     raise exception 'cannot match with self';
   end if;
 
-  insert into public.match_requests (from_user_id, to_user_id, status)
-  values (auth.uid(), target_user_id, 'pending')
-  on conflict (from_user_id, to_user_id)
-  do update set status = 'pending', created_at = now(), responded_at = null
+  insert into public.match_requests (from_user_id, to_user_id)
+  values (auth.uid(), target_user_id)
+  on conflict (from_user_id, to_user_id) do nothing
   returning id into req_id;
+
+  if req_id is null then
+    select id into req_id
+    from public.match_requests
+    where from_user_id = auth.uid() and to_user_id = target_user_id;
+  end if;
 
   return req_id;
 end;
@@ -473,22 +549,20 @@ begin
   if r.to_user_id <> auth.uid() then
     raise exception 'only recipient can accept';
   end if;
-  if r.status <> 'pending' then
-    return;
-  end if;
 
-  update public.match_requests
-  set status = 'accepted', responded_at = now()
+  -- Accept == delete request and create match
+  delete from public.match_requests
   where id = request_id;
 
   a := least(r.from_user_id, r.to_user_id);
   b := greatest(r.from_user_id, r.to_user_id);
-  insert into public.matches (user_a, user_b)
+  insert into public.user_matches (user_a, user_b)
   values (a, b)
   on conflict (user_a, user_b) do nothing;
 end;
 $$;
 
+-- Decline == delete request (recipient-only)
 create or replace function public.rpc_decline_match_request(request_id uuid)
 returns void
 language plpgsql
@@ -497,24 +571,22 @@ as $$
 declare
   r public.match_requests%rowtype;
 begin
-  select * into r
-  from public.match_requests
+  delete from public.match_requests
   where id = request_id
-  for update;
+    and to_user_id = auth.uid();
+end;
+$$;
 
-  if not found then
-    raise exception 'match request not found';
-  end if;
-  if r.to_user_id <> auth.uid() then
-    raise exception 'only recipient can decline';
-  end if;
-  if r.status <> 'pending' then
-    return;
-  end if;
-
-  update public.match_requests
-  set status = 'declined', responded_at = now()
-  where id = request_id;
+-- Cancel == delete request (sender-only)
+create or replace function public.rpc_cancel_match_request(request_id uuid)
+returns void
+language plpgsql
+security invoker
+as $$
+begin
+  delete from public.match_requests
+  where id = request_id
+    and from_user_id = auth.uid();
 end;
 $$;
 
@@ -522,12 +594,12 @@ create or replace function public.rpc_list_matches(
   start_index integer default 0,
   limit_count integer default 50
 )
-returns setof public.matches
+returns setof public.user_matches
 language sql
 security invoker
 as $$
   select *
-  from public.matches
+  from public.user_matches
   where user_a = auth.uid() or user_b = auth.uid()
   order by created_at desc
   offset greatest(start_index, 0)
@@ -540,9 +612,66 @@ language plpgsql
 security invoker
 as $$
 begin
-  delete from public.matches
+  delete from public.user_matches
   where id = match_id
     and (user_a = auth.uid() or user_b = auth.uid());
+end;
+$$;
+
+-- Reports RPCs (two entrypoints; both require target_user_id)
+create or replace function public.rpc_report_user(
+  target_user_id uuid,
+  reason text default null
+)
+returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  rid uuid;
+begin
+  if target_user_id is null then
+    raise exception 'target_user_id is required';
+  end if;
+  if target_user_id = auth.uid() then
+    raise exception 'cannot report self';
+  end if;
+
+  insert into public.reports (reporter_id, target_user_id, target_post_id, reason)
+  values (auth.uid(), target_user_id, null, reason)
+  returning id into rid;
+
+  return rid;
+end;
+$$;
+
+create or replace function public.rpc_report_post(
+  target_user_id uuid,
+  target_post_id uuid,
+  reason text default null
+)
+returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  rid uuid;
+begin
+  if target_user_id is null then
+    raise exception 'target_user_id is required';
+  end if;
+  if target_post_id is null then
+    raise exception 'target_post_id is required';
+  end if;
+  if target_user_id = auth.uid() then
+    raise exception 'cannot report self';
+  end if;
+
+  insert into public.reports (reporter_id, target_user_id, target_post_id, reason)
+  values (auth.uid(), target_user_id, target_post_id, reason)
+  returning id into rid;
+
+  return rid;
 end;
 $$;
 -- Create Storage Bucket for images
@@ -552,6 +681,7 @@ on conflict (id) do nothing;
 
 -- Storage Policies (Allow public read, authenticated insert/update/delete)
 -- Note: In a real app, you'd want stricter policies.
+drop policy if exists "Public Access" on storage.objects;
 create policy "Public Access"
 on storage.objects for select
 using ( bucket_id = 'images' );

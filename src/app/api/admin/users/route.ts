@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
       return jsonError('Missing required query params: created_from, created_to', 400);
     }
 
-    let q = supabaseAdmin
+    const q = supabaseAdmin
       .from('users')
       .select('created_at,is_digital_human')
       .gte('created_at', createdFrom)

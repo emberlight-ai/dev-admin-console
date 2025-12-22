@@ -30,7 +30,7 @@ const THEME_COLORS: { value: ThemeColor; label: string }[] = [
   { value: "poison", label: "Poison" },
   { value: "blood", label: "Blood" },
   { value: "dark", label: "Dark" },
-  { value: "quality", label: "Quality" },
+  { value: "quality", label: "Sekura" },
 ]
 
 const COLOR_SWATCH: Record<ThemeColor, string> = {
@@ -42,7 +42,7 @@ const COLOR_SWATCH: Record<ThemeColor, string> = {
   poison: "#5da500",           // vibrant poison green
   blood: "hsl(356 88% 52%)",   // vivid crimson
   dark: "hsl(268, 51%, 38%)",  // deeper violet
-  quality: "hsl(215 22% 52%)", // cleaner steel
+  quality: "#ec4899",          // Sekura (sakura pink)
 }
 
 const STORAGE_KEY = "theme-color"

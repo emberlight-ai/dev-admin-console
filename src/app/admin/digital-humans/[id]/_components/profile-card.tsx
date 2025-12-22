@@ -8,9 +8,10 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Pencil } from "lucide-react"
+import { Copy, Pencil } from "lucide-react"
 
 import type { DbUser } from "./types"
+import { toast } from "sonner"
 
 export function ProfileCard({
   user,
@@ -79,6 +80,18 @@ export function ProfileCard({
           <div className="flex items-center justify-between gap-4">
             <dt className="text-muted-foreground">Location</dt>
             <dd>{user.zipcode ?? "—"}</dd>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-muted-foreground">User ID</dt>
+            <dd>
+              <Button variant="ghost" size="sm" onClick={() => {
+                navigator.clipboard.writeText(user.userid)
+                toast.success("User ID copied to clipboard")
+              }}>
+                <Copy className="h-4 w-4" />
+                Copy
+              </Button>
+            </dd>
           </div>
           <div className="space-y-1">
             <dt className="text-muted-foreground">Bio</dt>

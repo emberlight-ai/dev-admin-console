@@ -27,7 +27,7 @@ export async function GET(
     // If requesting own profile, standard query.
     // If requesting other profile, use the public view or just the table if RLS permits.
     // The previous schema update allows any auth user to read 'users' table by id.
-    
+
     // We can just query 'users' table directly.
     const { data, error } = await supabase
       .from('users')
@@ -43,10 +43,12 @@ export async function GET(
     }
 
     return NextResponse.json(data);
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : 'Internal Server Error';
     return NextResponse.json(
-      { error: err.message || 'Internal Server Error' },
-      { status: err.message === 'Missing Authorization header' ? 401 : 500 }
+      { error: message },
+      { status: message === 'Missing Authorization header' ? 401 : 500 }
     );
   }
 }
@@ -74,11 +76,12 @@ export async function PATCH(
     }
 
     return NextResponse.json(data);
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : 'Internal Server Error';
     return NextResponse.json(
-      { error: err.message || 'Internal Server Error' },
-      { status: err.message === 'Missing Authorization header' ? 401 : 500 }
+      { error: message },
+      { status: message === 'Missing Authorization header' ? 401 : 500 }
     );
   }
 }
-

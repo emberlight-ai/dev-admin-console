@@ -187,6 +187,19 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     requestExample: { request_id: '<request_uuid>' },
   },
   {
+    id: 'ios.match.cancel',
+    audience: 'ios',
+    method: 'POST',
+    path: '/rest/v1/rpc/rpc_cancel_match_request',
+    summary: 'Cancel match request',
+    description:
+      'Sender cancels an outbound match request (deletes the request row).',
+    auth: { type: 'bearer' },
+    baseUrlOverride: SUPABASE_URL,
+    defaultHeaders: supabaseAuthHeaders,
+    requestExample: { request_id: '<request_uuid>' },
+  },
+  {
     id: 'ios.match.list',
     audience: 'ios',
     method: 'POST',
@@ -207,6 +220,68 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: supabaseAuthHeaders,
     requestExample: { match_id: '<match_uuid>' },
+  },
+  {
+    id: 'ios.reports.user',
+    audience: 'ios',
+    method: 'POST',
+    path: '/rest/v1/rpc/rpc_report_user',
+    summary: 'Report a user',
+    description:
+      'Creates a report row with target_user_id set and target_post_id = null.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: SUPABASE_URL,
+    defaultHeaders: supabaseAuthHeaders,
+    requestExample: { target_user_id: '<other_user_uuid>', reason: 'Spam' },
+  },
+  {
+    id: 'ios.reports.post',
+    audience: 'ios',
+    method: 'POST',
+    path: '/rest/v1/rpc/rpc_report_post',
+    summary: 'Report a post',
+    description:
+      'Creates a report row with both target_user_id and target_post_id set.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: SUPABASE_URL,
+    defaultHeaders: supabaseAuthHeaders,
+    requestExample: {
+      target_user_id: '<post_owner_user_uuid>',
+      target_post_id: '<post_uuid>',
+      reason: 'Inappropriate content',
+    },
+  },
+  {
+    id: 'ios.matchings.feed',
+    audience: 'ios',
+    method: 'POST',
+    path: '/api/ios/getMatchings',
+    summary: 'Get matchings feed (swipe cards)',
+    description:
+      'Returns a swipe-card-ready list of candidate users for the authenticated user (userid derived from JWT). Avatar is used as the first image; postImages are taken from the user_posts photos arrays in order until imageCount is reached.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
+    defaultHeaders: nextApiHeaders,
+    requestExample: {
+      visitedUserIds: [],
+      count: 20,
+      imageCount: 7,
+    },
+    responseExample: [
+      {
+        userId: '<candidate_uuid>',
+        avatar: 'https://example.com/avatar.jpg',
+        username: 'Alice',
+        age: 28,
+        gender: 'Female',
+        bio: 'Hello',
+        profession: 'Designer',
+        postImages: [
+          'https://example.com/p1.jpg',
+          'https://example.com/p2.jpg',
+        ],
+      },
+    ],
   },
   {
     id: 'ios.storage.avatar.note',

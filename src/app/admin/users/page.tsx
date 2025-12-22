@@ -375,7 +375,7 @@ export default function ManageUsers() {
                   <TableHead>Age</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Joined</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -394,7 +394,7 @@ export default function ManageUsers() {
                     <TableCell className="text-muted-foreground">
                       {new Date(u.created_at).toLocaleDateString()}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-left">
                       <Button asChild variant="outline" size="sm">
                         <Link href={`/admin/users/${u.userid}`} className="gap-2">
                           <Eye className="h-4 w-4" />

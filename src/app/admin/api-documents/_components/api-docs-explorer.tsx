@@ -370,6 +370,31 @@ export function ApiDocsExplorer({ catalog, discovered }: Props) {
 
   const effectiveMethod = selected?.method ?? 'GET';
 
+  function normalizeBaseUrl(input: string) {
+    const raw = (input ?? '').trim();
+    if (!raw) return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+
+    // Allow relative baseUrl like "/"
+    if (raw.startsWith('/')) {
+      return typeof window !== 'undefined'
+        ? `${window.location.origin}${raw === '/' ? '' : raw}`
+        : `http://localhost:3000${raw === '/' ? '' : raw}`;
+    }
+
+    // Already absolute (http/https)
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw)) return raw;
+
+    // Protocol-relative URL like //example.com
+    if (raw.startsWith('//')) {
+      const proto = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+      return `${proto}${raw}`;
+    }
+
+    // Host[:port] without scheme (e.g. localhost:3000, example.com)
+    const proto = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+    return `${proto}//${raw}`;
+  }
+
   function replacePathParams(p: string, params: Record<string, unknown>) {
     return p.replace(/\{([^}]+)\}/g, (_, name) => {
       const v = params[name];
@@ -389,7 +414,10 @@ export function ApiDocsExplorer({ catalog, discovered }: Props) {
       const queryObj = JSON.parse(queryText || '{}');
       const pathParamNames = Array.from(pathText.matchAll(/\{([^}]+)\}/g)).map((m) => m[1]);
       const resolvedPath = replacePathParams(pathText, queryObj);
-      const url = new URL(`${baseUrl.replace(/\/$/, '')}${resolvedPath.startsWith('/') ? '' : '/'}${resolvedPath}`);
+      const safeBaseUrl = normalizeBaseUrl(baseUrl);
+      const url = new URL(
+        `${safeBaseUrl.replace(/\/$/, '')}${resolvedPath.startsWith('/') ? '' : '/'}${resolvedPath}`
+      );
       for (const [k, v] of Object.entries(queryObj)) {
         if (pathParamNames.includes(k) || v == null || typeof v === 'object') continue;
         url.searchParams.set(k, String(v));
@@ -419,14 +447,14 @@ export function ApiDocsExplorer({ catalog, discovered }: Props) {
   const curlSnippet = React.useMemo(() => {
     try {
       const h = JSON.parse(headersText || '{}');
-      return buildCurl(baseUrl, effectiveMethod, pathText, h, bodyText);
+      return buildCurl(normalizeBaseUrl(baseUrl), effectiveMethod, pathText, h, bodyText);
     } catch { return 'Invalid JSON configuration'; }
   }, [baseUrl, effectiveMethod, pathText, headersText, bodyText]);
 
   const alamofireSnippet = React.useMemo(() => {
     try {
       const h = JSON.parse(headersText || '{}');
-      return buildAlamofire(baseUrl, effectiveMethod, pathText, h, queryText, bodyText);
+      return buildAlamofire(normalizeBaseUrl(baseUrl), effectiveMethod, pathText, h, queryText, bodyText);
     } catch { return 'Invalid JSON configuration'; }
   }, [baseUrl, effectiveMethod, pathText, headersText, queryText, bodyText]);
 

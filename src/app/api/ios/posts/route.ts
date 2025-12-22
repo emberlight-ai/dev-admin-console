@@ -48,10 +48,11 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(data);
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Internal Server Error';
     return NextResponse.json(
-      { error: err.message || 'Internal Server Error' },
-      { status: err.message === 'Missing Authorization header' ? 401 : 500 }
+      { error: message },
+      { status: message === 'Missing Authorization header' ? 401 : 500 }
     );
   }
 }

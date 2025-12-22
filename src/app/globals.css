@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @plugin "tailwindcss-animate";
+@import "@xyflow/react/dist/style.css";
 /* Tailwind v4 directives are supported at build time; some CSS linters flag them. */
 @custom-variant dark (&:is(.dark *));
 
@@ -164,10 +165,10 @@
   --sidebar-primary-foreground: hsl(0 0% 100%);
 }
 [data-color="quality"] {
-  --primary: hsl(215 22% 52%); /* cleaner steel */
+  --primary: #ec4899; /* Sekura (sakura pink) */
   --primary-foreground: hsl(0 0% 100%);
-  --ring: hsl(215 22% 52% / 0.35);
-  --sidebar-primary: hsl(215 22% 52%);
+  --ring: color-mix(in oklab, #ec4899 35%, transparent);
+  --sidebar-primary: #ec4899;
   --sidebar-primary-foreground: hsl(0 0% 100%);
 }
 
@@ -183,4 +184,59 @@
 /* Sidebar active item tint (very light, derived from current theme ring) */
 .sidebar-active {
   background-color: color-mix(in oklab, var(--ring) 12%, transparent);
+}
+
+/* -------------------------------------------------------------------------- */
+/* React Flow: Dark mode tuning (scoped to Matching graph)                     */
+/* -------------------------------------------------------------------------- */
+
+.matching-flow {
+  /* keep node focus rings / selections consistent with app theme */
+  --xy-selection: var(--ring);
+}
+
+.dark .matching-flow .react-flow__minimap {
+  background: color-mix(in oklab, var(--card) 92%, transparent);
+  border: 1px solid var(--border);
+}
+
+.dark .matching-flow .react-flow__minimap svg {
+  background: transparent;
+}
+
+.dark .matching-flow .react-flow__minimap-mask {
+  fill: color-mix(in oklab, var(--background) 70%, transparent);
+}
+
+.dark .matching-flow .react-flow__minimap-node {
+  fill: color-mix(in oklab, var(--muted-foreground) 18%, transparent);
+  stroke: color-mix(in oklab, var(--border) 85%, transparent);
+}
+
+.dark .matching-flow .react-flow__controls {
+  background: transparent;
+  box-shadow: none;
+}
+
+.dark .matching-flow .react-flow__controls button {
+  background: color-mix(in oklab, var(--card) 92%, transparent);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+}
+
+.dark .matching-flow .react-flow__controls button:hover {
+  background: color-mix(in oklab, var(--accent) 35%, var(--card));
+}
+
+.dark .matching-flow .react-flow__controls button:active {
+  background: color-mix(in oklab, var(--accent) 45%, var(--card));
+}
+
+.dark .matching-flow .react-flow__controls button svg {
+  fill: currentColor;
+}
+
+/* Background dots: slightly dimmer in dark mode for less noise */
+.dark .matching-flow .react-flow__background pattern circle {
+  fill: color-mix(in oklab, var(--muted-foreground) 22%, transparent);
 }

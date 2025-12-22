@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
-import { ArrowLeft, Pencil, Trash2 } from "lucide-react"
+import { ArrowLeft, Copy, Pencil, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDistanceToNow } from "date-fns"
 
@@ -28,6 +28,7 @@ import {
 import { ImageZoomDialog } from "@/app/admin/digital-humans/[id]/_components/image-zoom-dialog"
 import { ProfileEditSheet } from "@/app/admin/digital-humans/[id]/_components/profile-edit-sheet"
 import { PostsPanel } from "@/app/admin/digital-humans/[id]/_components/posts-panel"
+import { RelationshipGraph } from "@/components/matching/relationship-graph"
 import type { DbUser } from "@/app/admin/digital-humans/[id]/_components/types"
 
 export default function UserDetail() {
@@ -169,6 +170,18 @@ export default function UserDetail() {
                   <dt className="text-muted-foreground">Location</dt>
                   <dd>{user.zipcode ?? "—"}</dd>
                 </div>
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">User ID</dt>
+                  <dd>
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      navigator.clipboard.writeText(user.userid)
+                      toast.success("User ID copied to clipboard")
+                    }}>
+                      <Copy className="h-4 w-4" />
+                      Copy
+                    </Button>
+                  </dd>
+                </div>
                 <div className="space-y-1">
                   <dt className="text-muted-foreground">Bio</dt>
                   <dd className="text-sm">{user.bio ?? "—"}</dd>
@@ -189,6 +202,19 @@ export default function UserDetail() {
 
               <TabsContent value="posts" className="mt-4">
                 <PostsPanel userid={user.userid} onZoom={(src) => setZoomSrc(src)} />
+
+                <div className="mt-6">
+                  <div className="text-sm font-medium">Matchings</div>
+                  <div className="mt-3">
+                    <Card className="p-4">
+                      <RelationshipGraph
+                        initialRootUserId={user.userid}
+                        showPicker={false}
+                        heightClassName="h-[420px]"
+                      />
+                    </Card>
+                  </div>
+                </div>
               </TabsContent>
 
               <TabsContent value="management" className="mt-4 space-y-6">
@@ -211,6 +237,17 @@ export default function UserDetail() {
                 </div>
 
                 <Separator />
+
+                <div className="space-y-4">
+                  <div className="text-sm font-medium">Matchings</div>
+                  <Card className="p-4">
+                    <RelationshipGraph
+                      initialRootUserId={user.userid}
+                      showPicker={false}
+                      heightClassName="h-[420px]"
+                    />
+                  </Card>
+                </div>
 
                 <div className="space-y-4">
                   <div className="text-sm font-medium text-destructive">Danger Zone</div>

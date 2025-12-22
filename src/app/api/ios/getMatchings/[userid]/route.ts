@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+import { buildMatchingsFeed } from '@/app/api/ios/getMatchings/_shared';
+
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
@@ -15,29 +17,34 @@ const getUserSupabase = (req: NextRequest) => {
   );
 };
 
-export async function GET(
+export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ userid: string }> }
 ) {
   try {
-    const { userid } = await params;
-    const { searchParams } = new URL(req.url);
-    const startIndex = parseInt(searchParams.get('startIndex') || '0', 10);
-    const limit = parseInt(searchParams.get('limit') || '200', 10);
-
+    // Backwards compatible route: ignore the path param and derive userid from JWT.
+    await params;
     const supabase = getUserSupabase(req);
 
-    const { data, error } = await supabase.rpc('rpc_get_user_locations', {
-      target_user_id: userid,
-      start_index: startIndex,
-      limit_count: limit,
-    });
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    return NextResponse.json(data);
+    let body: unknown = {};
+    try {
+      body = await req.json();
+    } catch {
+      body = {};
+    }
+
+    const cards = await buildMatchingsFeed({
+      supabase,
+      viewerUserId: authData.user.id,
+      body: (body && typeof body === 'object' ? body : {}) as Record<string, unknown>,
+    });
+
+    return NextResponse.json(cards);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal Server Error';
     return NextResponse.json(
@@ -46,4 +53,5 @@ export async function GET(
     );
   }
 }
+
 
