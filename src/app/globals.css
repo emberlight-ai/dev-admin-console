@@ -130,9 +130,9 @@
   --sidebar-primary-foreground: hsl(222 47% 11%);
 }
 [data-color="fire"] {
-  --primary: hsl(22 95% 55%); /* hotter orange */
+  --primary: #FF5C00; /* hotter orange */
   --primary-foreground: hsl(0 0% 100%);
-  --ring: hsl(22 95% 55% / 0.35);
+  --ring: #FF9D00;
   --sidebar-primary: hsl(22 95% 55%);
   --sidebar-primary-foreground: hsl(0 0% 100%);
 }

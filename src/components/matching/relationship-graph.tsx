@@ -276,12 +276,6 @@ export function RelationshipGraph({
             source: e.a,
             target: e.b,
             type: 'straight',
-            label: 'Matched',
-            labelShowBg: true,
-            labelBgPadding: [8, 4],
-            labelBgBorderRadius: 999,
-            labelBgStyle: { fill: 'rgba(236, 72, 153, 0.12)' },
-            labelStyle: { fill: '#ec4899', fontSize: 12, fontWeight: 600 },
             style: { stroke: '#ec4899', strokeWidth: 2.5 },
           };
         }
@@ -291,12 +285,6 @@ export function RelationshipGraph({
             source: e.from,
             target: e.to,
             type: 'straight',
-            label: 'Blocked',
-            labelShowBg: true,
-            labelBgPadding: [8, 4],
-            labelBgBorderRadius: 999,
-            labelBgStyle: { fill: 'rgba(185, 28, 28, 0.12)' },
-            labelStyle: { fill: '#b91c1c', fontSize: 12, fontWeight: 600 },
             style: { stroke: '#b91c1c', strokeWidth: 2.5 },
           };
         }

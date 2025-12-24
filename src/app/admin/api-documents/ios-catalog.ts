@@ -1,13 +1,14 @@
 import type { ApiEndpointDoc } from './api-catalog';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? '';
 
 // Default headers iOS will send to Supabase REST/RPC.
 // - apikey: your anon key
 // - Authorization: Bearer <access_token> (user session)
 const supabaseAuthHeaders = {
-  apikey: '<SUPABASE_ANON_KEY>',
+  apikey: SUPABASE_ANON_KEY,
   Authorization: 'Bearer <SUPABASE_ACCESS_TOKEN>',
   'Content-Type': 'application/json',
 };
@@ -298,7 +299,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     },
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: {
-      apikey: '<SUPABASE_ANON_KEY>',
+      apikey: SUPABASE_ANON_KEY,
       Authorization: 'Bearer <SUPABASE_ACCESS_TOKEN>',
       'Content-Type': 'image/jpeg',
     },

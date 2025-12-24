@@ -485,6 +485,10 @@ security invoker
 as $$
 declare
   req_id uuid;
+  match_id uuid;
+  a uuid;
+  b uuid;
+  reciprocal_id uuid;
 begin
   if target_user_id is null then
     raise exception 'target_user_id is required';
@@ -493,6 +497,39 @@ begin
     raise exception 'cannot match with self';
   end if;
 
+  -- If already matched, return existing match id.
+  a := least(auth.uid(), target_user_id);
+  b := greatest(auth.uid(), target_user_id);
+  select id into match_id
+  from public.user_matches
+  where user_a = a and user_b = b
+  limit 1;
+  if match_id is not null then
+    return match_id;
+  end if;
+
+  -- If the other user has already invited me, auto-match:
+  -- delete both pending requests and insert into user_matches.
+  select id into reciprocal_id
+  from public.match_requests
+  where from_user_id = target_user_id
+    and to_user_id = auth.uid()
+  limit 1;
+
+  if reciprocal_id is not null then
+    delete from public.match_requests
+    where (from_user_id = auth.uid() and to_user_id = target_user_id)
+       or (from_user_id = target_user_id and to_user_id = auth.uid());
+
+    insert into public.user_matches (user_a, user_b)
+    values (a, b)
+    on conflict (user_a, user_b) do update set created_at = public.user_matches.created_at
+    returning id into match_id;
+
+    return match_id;
+  end if;
+
+  -- Normal path: create (or return existing) outbound request.
   insert into public.match_requests (from_user_id, to_user_id)
   values (auth.uid(), target_user_id)
   on conflict (from_user_id, to_user_id) do nothing
