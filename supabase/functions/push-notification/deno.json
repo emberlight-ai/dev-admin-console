@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "push-notification": {
+      "noVerifyJwt": true
+    }
+  }
+}
+
