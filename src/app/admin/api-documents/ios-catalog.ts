@@ -342,23 +342,6 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     },
   },
   {
-    id: 'ios.chat.realtime.note',
-    audience: 'ios',
-    method: 'WS',
-    path: 'wss://<project>.supabase.co/realtime/v1',
-    summary: 'Realtime Chat Subscriptions',
-    description: 'Listen for new messages in a match using Supabase Realtime.',
-    auth: { type: 'bearer' },
-    baseUrlOverride: 'wss://...',
-    defaultHeaders: {},
-    notes: [
-      'Channel: "chat:<match_id>" or "room1"',
-      'Event: "INSERT" on table "messages"',
-      'Filter: "match_id=eq.<match_id>"',
-      'Swift: use supabase.channel("chat:<id>").on("postgres_changes", ...)',
-    ],
-  },
-  {
     id: 'ios.push.tokens.register',
     audience: 'ios',
     method: 'POST',
@@ -375,3 +358,4 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     },
   },
 ];
+
