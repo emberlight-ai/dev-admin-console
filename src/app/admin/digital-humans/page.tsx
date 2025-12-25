@@ -4,6 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { ArrowUpDown, Eye, Plus, SlidersHorizontal } from "lucide-react"
 import { toast } from "sonner"
+import { useRouter, useSearchParams, usePathname } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -33,12 +34,17 @@ type Row = {
   profession?: string | null
   avatar?: string | null
   gender?: string | null
+  personality?: string | null
   created_at: string
   updated_at: string
   postsCount: number
 }
 
 export default function ManageDigitalHumans() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+
   const [rows, setRows] = React.useState<Row[]>([])
   const [loading, setLoading] = React.useState(true)
   const [loadingMore, setLoadingMore] = React.useState(false)
@@ -46,8 +52,13 @@ export default function ManageDigitalHumans() {
   const [offset, setOffset] = React.useState(0)
   const LIMIT = 50
 
-  type GenderFilter = "all" | "female" | "male"
-  const [genderFilter, setGenderFilter] = React.useState<GenderFilter>("all")
+  // Derived state from URL params
+  const genderFilter = (searchParams.get("gender") as "all" | "female" | "male") || "all"
+  const personalityFilter = searchParams.get("personality") || "All"
+
+  // Fetched personalities based on gender filter
+  const [personalities, setPersonalities] = React.useState<string[]>([])
+
   type SortKey = "name" | "created" | "posts"
   type SortDir = "asc" | "desc"
   const [sortKey, setSortKey] = React.useState<SortKey>("created")
@@ -56,9 +67,24 @@ export default function ManageDigitalHumans() {
   const [columns, setColumns] = React.useState({
     avatar: true,
     profession: true,
-    posts: false,
+    personality: true,
+    posts: true,
     created: false,
   })
+
+  // Helper to update URL params
+  const updateFilters = React.useCallback((updates: Record<string, string | null>) => {
+    const params = new URLSearchParams(searchParams.toString())
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === null) {
+        params.delete(key)
+      } else {
+        params.set(key, value)
+      }
+    }
+    // Always reset pagination when filters change
+    router.replace(`${pathname}?${params.toString()}`)
+  }, [searchParams, pathname, router])
 
   const visibleColumnCount = React.useMemo(() => {
     // name + actions are always visible
@@ -66,6 +92,7 @@ export default function ManageDigitalHumans() {
       (columns.avatar ? 1 : 0) +
       1 +
       (columns.profession ? 1 : 0) +
+      (columns.personality ? 1 : 0) +
       (columns.posts ? 1 : 0) +
       (columns.created ? 1 : 0) +
       1
@@ -100,14 +127,43 @@ export default function ManageDigitalHumans() {
     return out
   }, [rows, sortKey, sortDir])
 
+  // Fetch Personalities Effect
+  React.useEffect(() => {
+    let cancelled = false;
+    const fetchPersonalities = async () => {
+        const gendersToFetch = genderFilter === 'all' ? ['Male', 'Female'] : [genderFilter === 'female' ? 'Female' : 'Male'];
+        const allPersonalities = new Set<string>();
+        
+        try {
+            for (const g of gendersToFetch) {
+                const res = await fetch(`/api/system-prompts/personalities?gender=${encodeURIComponent(g)}`);
+                if (res.ok) {
+                    const json = await res.json();
+                    (json.data || []).forEach((p: string) => allPersonalities.add(p));
+                }
+            }
+            if (!cancelled) {
+                setPersonalities(Array.from(allPersonalities).sort());
+            }
+        } catch (err) {
+            console.error("Failed to fetch personalities", err);
+        }
+    };
+
+    fetchPersonalities();
+    return () => { cancelled = true; };
+  }, [genderFilter]);
+
   const fetchRows = React.useCallback(async (isLoadMore = false) => {
     if (isLoadMore) setLoadingMore(true)
     else setLoading(true)
 
     try {
+      // Use offset state for pagination, but props from URL for filtering
       const currentOffset = isLoadMore ? offset : 0
+      
       const res = await fetch(
-        `/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}&offset=${currentOffset}&limit=${LIMIT}`
+        `/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}&personality=${encodeURIComponent(personalityFilter === 'All' || personalityFilter === null ? 'all' : personalityFilter)}&offset=${currentOffset}&limit=${LIMIT}`
       )
       const json = (await res.json()) as { data?: Row[]; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to fetch digital humans")
@@ -135,14 +191,29 @@ export default function ManageDigitalHumans() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [genderFilter, offset])
+  }, [genderFilter, personalityFilter, offset])
 
-  // Reset when filter changes
+  // Reset offset and fetch when filters change (detected via URL change)
+  // We use a ref to track if this is the initial mount or a filter change
+  const isFirstRun = React.useRef(true);
+  const prevFilters = React.useRef({ genderFilter, personalityFilter });
+
   React.useEffect(() => {
-    setOffset(0)
-    setHasMore(true)
-    void fetchRows(false)
-  }, [genderFilter])
+    const filtersChanged = 
+      prevFilters.current.genderFilter !== genderFilter || 
+      prevFilters.current.personalityFilter !== personalityFilter;
+
+    if (filtersChanged) {
+       setOffset(0);
+       setHasMore(true);
+       prevFilters.current = { genderFilter, personalityFilter };
+       void fetchRows(false);
+    } else if (isFirstRun.current) {
+       void fetchRows(false);
+       isFirstRun.current = false;
+    }
+  }, [genderFilter, personalityFilter, fetchRows])
+
 
   // Infinite scroll
   const observerTarget = React.useRef(null)
@@ -209,6 +280,15 @@ export default function ManageDigitalHumans() {
                   <input
                     type="checkbox"
                     className="h-4 w-4 rounded border-input bg-background"
+                    checked={columns.personality}
+                    onChange={(e) => setColumns((c) => ({ ...c, personality: e.target.checked }))}
+                  />
+                  Personality
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-input bg-background"
                     checked={columns.posts}
                     onChange={(e) => setColumns((c) => ({ ...c, posts: e.target.checked }))}
                   />
@@ -231,6 +311,7 @@ export default function ManageDigitalHumans() {
                     setColumns({
                       avatar: true,
                       profession: true,
+                      personality: true,
                       posts: true,
                       created: true,
                     })
@@ -252,19 +333,36 @@ export default function ManageDigitalHumans() {
 
       <div className="rounded-lg border bg-card">
         <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-3">
-          <div className="text-sm font-medium text-muted-foreground">All digital humans</div>
-          <Tabs
-            value={genderFilter}
-            onValueChange={(v) => {
-              if (v === "all" || v === "female" || v === "male") setGenderFilter(v)
-            }}
-          >
-            <TabsList>
-              <TabsTrigger value="all">All</TabsTrigger>
-              <TabsTrigger value="female">Female</TabsTrigger>
-              <TabsTrigger value="male">Male</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <div className="flex items-center gap-4">
+            <div className="text-sm font-medium text-muted-foreground">All digital humans</div>
+            
+            <div className="flex items-center gap-2">
+              <select 
+                className="h-9 w-[150px] rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={personalityFilter}
+                onChange={(e) => updateFilters({ personality: e.target.value })}
+              >
+                <option value="All">All Personalities</option>
+                {personalities.map(p => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+
+              <Tabs
+                value={genderFilter}
+                onValueChange={(v) => {
+                  // Reset personality to All when changing gender to avoid mismatch
+                  updateFilters({ gender: v, personality: 'All' })
+                }}
+              >
+                <TabsList>
+                  <TabsTrigger value="all">All</TabsTrigger>
+                  <TabsTrigger value="female">Female</TabsTrigger>
+                  <TabsTrigger value="male">Male</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          </div>
         </div>
         <Table>
           <TableHeader>
@@ -280,6 +378,7 @@ export default function ManageDigitalHumans() {
                 </button>
               </TableHead>
               {columns.profession ? <TableHead>Profession</TableHead> : null}
+              {columns.personality ? <TableHead>Personality</TableHead> : null}
               {columns.posts ? (
                 <TableHead>
                   <button
@@ -336,6 +435,9 @@ export default function ManageDigitalHumans() {
                     <TableCell className="font-medium">{r.username}</TableCell>
                     {columns.profession ? (
                       <TableCell className="text-muted-foreground">{r.profession ?? "—"}</TableCell>
+                    ) : null}
+                    {columns.personality ? (
+                      <TableCell className="text-muted-foreground">{r.personality ?? "—"}</TableCell>
                     ) : null}
                     {columns.posts ? <TableCell className="text-muted-foreground">{r.postsCount}</TableCell> : null}
                     {columns.created ? (

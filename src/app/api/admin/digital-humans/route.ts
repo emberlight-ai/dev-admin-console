@@ -15,6 +15,7 @@ type DhRow = {
   profession?: string | null;
   avatar?: string | null;
   gender?: string | null;
+  personality?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -24,12 +25,15 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const gender = (url.searchParams.get('gender') ?? 'all').toLowerCase();
+  const personality = url.searchParams.get('personality') ?? 'all';
   const offset = parseInt(url.searchParams.get('offset') ?? '0') || 0;
   const limit = parseInt(url.searchParams.get('limit') ?? '20') || 20;
 
   let q = supabaseAdmin
     .from('users')
-    .select('userid,username,profession,avatar,gender,created_at,updated_at')
+    .select(
+      'userid,username,profession,avatar,gender,personality,created_at,updated_at'
+    )
     .eq('is_digital_human', true)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
@@ -37,6 +41,7 @@ export async function GET(req: NextRequest) {
 
   if (gender === 'female') q = q.eq('gender', 'Female');
   if (gender === 'male') q = q.eq('gender', 'Male');
+  if (personality !== 'all') q = q.eq('personality', personality);
 
   const { data, error } = await q;
   if (error) return jsonError(error.message, 500);
@@ -73,7 +78,8 @@ export async function POST(req: NextRequest) {
   } catch {
     return jsonError('Invalid JSON body', 400);
   }
-  if (!body || typeof body !== 'object') return jsonError('Invalid JSON body', 400);
+  if (!body || typeof body !== 'object')
+    return jsonError('Invalid JSON body', 400);
   const b = body as Record<string, unknown>;
 
   const username = typeof b.username === 'string' ? b.username.trim() : '';
@@ -91,22 +97,25 @@ export async function POST(req: NextRequest) {
       ? crypto.randomUUID()
       : `pw_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-  const { data: createdAuth, error: authErr } = await supabaseAdmin.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { username },
-  });
+  const { data: createdAuth, error: authErr } =
+    await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { username },
+    });
   if (authErr) return jsonError(authErr.message, 500);
   const userId = createdAuth.user?.id;
   if (!userId) return jsonError('Failed to create auth user', 500);
 
   const updates = {
     username,
-    profession: typeof b.profession === 'string' ? b.profession.trim() || null : null,
+    profession:
+      typeof b.profession === 'string' ? b.profession.trim() || null : null,
     age: typeof b.age === 'number' ? b.age : null,
     gender: typeof b.gender === 'string' ? b.gender.trim() || null : null,
-    personality: typeof b.personality === 'string' ? b.personality.trim() || null : null,
+    personality:
+      typeof b.personality === 'string' ? b.personality.trim() || null : null,
     bio: typeof b.bio === 'string' ? b.bio.trim() || null : null,
     is_digital_human: true,
     updated_at: new Date().toISOString(),
@@ -127,5 +136,3 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ data: data ?? null });
 }
-
-

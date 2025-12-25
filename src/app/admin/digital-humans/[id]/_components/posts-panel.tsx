@@ -342,109 +342,83 @@ export function PostsPanel({
 
       {/* Post Edit Sheet */}
       <Sheet open={postOpen} onOpenChange={setPostOpen}>
-        <SheetContent className="sm:max-w-lg">
-          <SheetHeader>
+        <SheetContent className="sm:max-w-lg flex flex-col h-full">
+          <SheetHeader className="flex-none">
             <SheetTitle>Edit post</SheetTitle>
             <SheetDescription>Edit time, location, description and photos.</SheetDescription>
           </SheetHeader>
 
-          <div className="space-y-4 px-4">
-            <div className="space-y-2">
-              <Label>Post time</Label>
-              <Input
-                type="datetime-local"
-                value={editPostDatetimeLocal}
-                onChange={(e) => setEditPostDatetimeLocal(e.target.value)}
-              />
-            </div>
-
-            <LocationAutocomplete
-              value={editPostLocationName}
-              onValueChange={(v) => {
-                setEditPostLocationName(v)
-                setEditPostLongitude(null)
-                setEditPostLatitude(null)
-              }}
-              onSelect={(sel) => {
-                setEditPostLocationName(sel.name)
-                setEditPostLongitude(sel.longitude)
-                setEditPostLatitude(sel.latitude)
-              }}
-              onClear={() => {
-                setEditPostLocationName("")
-                setEditPostLongitude(null)
-                setEditPostLatitude(null)
-              }}
-              placeholder="Search location (e.g. Prague, Czech Republic)"
-            />
-
-            {editPostLongitude != null && editPostLatitude != null ? (
-              <div className="text-xs text-muted-foreground">
-                Selected: lon {editPostLongitude.toFixed(4)} · lat {editPostLatitude.toFixed(4)}
+          <div className="flex-1 overflow-y-auto py-4 px-1">
+            <div className="space-y-4 px-3">
+              <div className="space-y-2">
+                <Label>Post time</Label>
+                <Input
+                  type="datetime-local"
+                  value={editPostDatetimeLocal}
+                  onChange={(e) => setEditPostDatetimeLocal(e.target.value)}
+                />
               </div>
-            ) : null}
 
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Textarea rows={4} value={editPostDescription} onChange={(e) => setEditPostDescription(e.target.value)} />
-            </div>
+              <LocationAutocomplete
+                value={editPostLocationName}
+                onValueChange={(v) => {
+                  setEditPostLocationName(v)
+                  setEditPostLongitude(null)
+                  setEditPostLatitude(null)
+                }}
+                onSelect={(sel) => {
+                  setEditPostLocationName(sel.name)
+                  setEditPostLongitude(sel.longitude)
+                  setEditPostLatitude(sel.latitude)
+                }}
+                onClear={() => {
+                  setEditPostLocationName("")
+                  setEditPostLongitude(null)
+                  setEditPostLatitude(null)
+                }}
+                placeholder="Search location (e.g. Prague, Czech Republic)"
+              />
 
-            <FileDropzone
-              label="Add photos"
-              helper="JPG/PNG only, max 5MB each, up to 9 images total. Adds to this post (does not replace existing)."
-              accept={ACCEPT_ATTR}
-              multiple
-              filesCount={editPostFiles.length}
-              onPickFiles={(files) => {
-                const remaining = Math.max(0, 9 - editPostPhotos.length - editPostFiles.length)
-                if (remaining === 0) {
-                  toast.error("Max 9 images per post")
-                  return
-                }
-                if (files.length > remaining) toast.error("Max 9 images per post")
-                const { valid, errors } = validateFiles(files.slice(0, remaining))
-                if (errors.length) toast.error(errors[0])
-                setEditPostFiles((prev) => [...prev, ...valid])
-              }}
-              onClear={editPostFiles.length ? () => setEditPostFiles([]) : undefined}
-              preview={
-                editPostPhotos.length || editPostFiles.length ? (
-                  <div className="grid grid-cols-3 gap-2">
-                    {editPostPhotos.slice(0, 9).map((url) => (
-                      <div key={url} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={url}
-                          alt="existing"
-                          className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
-                          onClick={() => onZoom(url)}
-                        />
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="secondary"
-                          className="absolute right-1 top-1 h-7 w-7"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditPostPhotos((prev) => prev.filter((u) => u !== url))
-                          }}
-                          title="Remove image"
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
+              {editPostLongitude != null && editPostLatitude != null ? (
+                <div className="text-xs text-muted-foreground">
+                  Selected: lon {editPostLongitude.toFixed(4)} · lat {editPostLatitude.toFixed(4)}
+                </div>
+              ) : null}
 
-                    {editPostPreviewUrls
-                      .slice(0, Math.max(0, 9 - editPostPhotos.length))
-                      .map((p) => (
-                        <div key={p.url} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Textarea rows={4} value={editPostDescription} onChange={(e) => setEditPostDescription(e.target.value)} />
+              </div>
+
+              <FileDropzone
+                label="Add photos"
+                helper="JPG/PNG only, max 5MB each, up to 9 images total. Adds to this post (does not replace existing)."
+                accept={ACCEPT_ATTR}
+                multiple
+                filesCount={editPostFiles.length}
+                onPickFiles={(files) => {
+                  const remaining = Math.max(0, 9 - editPostPhotos.length - editPostFiles.length)
+                  if (remaining === 0) {
+                    toast.error("Max 9 images per post")
+                    return
+                  }
+                  if (files.length > remaining) toast.error("Max 9 images per post")
+                  const { valid, errors } = validateFiles(files.slice(0, remaining))
+                  if (errors.length) toast.error(errors[0])
+                  setEditPostFiles((prev) => [...prev, ...valid])
+                }}
+                onClear={editPostFiles.length ? () => setEditPostFiles([]) : undefined}
+                preview={
+                  editPostPhotos.length || editPostFiles.length ? (
+                    <div className="grid grid-cols-3 gap-2">
+                      {editPostPhotos.slice(0, 9).map((url) => (
+                        <div key={url} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={p.url}
-                            alt={p.file.name}
+                            src={url}
+                            alt="existing"
                             className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
-                            onClick={() => onZoom(p.url)}
+                            onClick={() => onZoom(url)}
                           />
                           <Button
                             type="button"
@@ -453,21 +427,49 @@ export function PostsPanel({
                             className="absolute right-1 top-1 h-7 w-7"
                             onClick={(e) => {
                               e.stopPropagation()
-                              setEditPostFiles((prev) => prev.filter((f) => f !== p.file))
+                              setEditPostPhotos((prev) => prev.filter((u) => u !== url))
                             }}
-                            title="Remove pending upload"
+                            title="Remove image"
                           >
                             <X className="h-4 w-4" />
                           </Button>
                         </div>
                       ))}
-                  </div>
-                ) : null
-              }
-            />
+
+                      {editPostPreviewUrls
+                        .slice(0, Math.max(0, 9 - editPostPhotos.length))
+                        .map((p) => (
+                          <div key={p.url} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={p.url}
+                              alt={p.file.name}
+                              className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
+                              onClick={() => onZoom(p.url)}
+                            />
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="secondary"
+                              className="absolute right-1 top-1 h-7 w-7"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setEditPostFiles((prev) => prev.filter((f) => f !== p.file))
+                              }}
+                              title="Remove pending upload"
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                    </div>
+                  ) : null
+                }
+              />
+            </div>
           </div>
 
-          <SheetFooter>
+          <SheetFooter className="flex-none pt-2">
             <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
               <AlertDialog>
                 <AlertDialogTrigger asChild>
@@ -505,92 +507,94 @@ export function PostsPanel({
 
       {/* Add Post Sheet */}
       <Sheet open={addPostOpen} onOpenChange={setAddPostOpen}>
-        <SheetContent className="sm:max-w-lg">
-          <SheetHeader>
+        <SheetContent className="sm:max-w-lg flex flex-col h-full">
+          <SheetHeader className="flex-none">
             <SheetTitle>Add post</SheetTitle>
             <SheetDescription>Create a new post with time, location, and photos.</SheetDescription>
           </SheetHeader>
 
-          <div className="space-y-4 px-4">
-            <div className="space-y-2">
-              <Label>Post time</Label>
-              <Input
-                type="datetime-local"
-                value={newPostDatetimeLocal}
-                onChange={(e) => setNewPostDatetimeLocal(e.target.value)}
-              />
-            </div>
-
-            <LocationAutocomplete
-              value={newPostLocationName}
-              onValueChange={(v) => {
-                setNewPostLocationName(v)
-                setNewPostLongitude(null)
-                setNewPostLatitude(null)
-              }}
-              onSelect={(sel) => {
-                setNewPostLocationName(sel.name)
-                setNewPostLongitude(sel.longitude)
-                setNewPostLatitude(sel.latitude)
-              }}
-              onClear={() => {
-                setNewPostLocationName("")
-                setNewPostLongitude(null)
-                setNewPostLatitude(null)
-              }}
-              placeholder="Search location (e.g. Prague, Czech Republic)"
-            />
-
-            {newPostLongitude != null && newPostLatitude != null ? (
-              <div className="text-xs text-muted-foreground">
-                Selected: lon {newPostLongitude.toFixed(4)} · lat {newPostLatitude.toFixed(4)}
+          <div className="flex-1 overflow-y-auto py-4 px-1">
+            <div className="space-y-4 px-3">
+              <div className="space-y-2">
+                <Label>Post time</Label>
+                <Input
+                  type="datetime-local"
+                  value={newPostDatetimeLocal}
+                  onChange={(e) => setNewPostDatetimeLocal(e.target.value)}
+                />
               </div>
-            ) : null}
 
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Textarea
-                rows={4}
-                value={newPostDescription}
-                onChange={(e) => setNewPostDescription(e.target.value)}
-                placeholder="Write something..."
+              <LocationAutocomplete
+                value={newPostLocationName}
+                onValueChange={(v) => {
+                  setNewPostLocationName(v)
+                  setNewPostLongitude(null)
+                  setNewPostLatitude(null)
+                }}
+                onSelect={(sel) => {
+                  setNewPostLocationName(sel.name)
+                  setNewPostLongitude(sel.longitude)
+                  setNewPostLatitude(sel.latitude)
+                }}
+                onClear={() => {
+                  setNewPostLocationName("")
+                  setNewPostLongitude(null)
+                  setNewPostLatitude(null)
+                }}
+                placeholder="Search location (e.g. Prague, Czech Republic)"
+              />
+
+              {newPostLongitude != null && newPostLatitude != null ? (
+                <div className="text-xs text-muted-foreground">
+                  Selected: lon {newPostLongitude.toFixed(4)} · lat {newPostLatitude.toFixed(4)}
+                </div>
+              ) : null}
+
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Textarea
+                  rows={4}
+                  value={newPostDescription}
+                  onChange={(e) => setNewPostDescription(e.target.value)}
+                  placeholder="Write something..."
+                />
+              </div>
+
+              <FileDropzone
+                label="Photos"
+                helper="JPG/PNG only, max 5MB each, up to 9 images."
+                accept={ACCEPT_ATTR}
+                multiple
+                filesCount={newPostFiles.length}
+                onPickFiles={(files) => {
+                  if (files.length > 9) toast.error("Max 9 images per post")
+                  const { valid, errors } = validateFiles(files.slice(0, 9))
+                  if (errors.length) toast.error(errors[0])
+                  setNewPostFiles(valid)
+                }}
+                onClear={newPostFiles.length ? () => setNewPostFiles([]) : undefined}
+                preview={
+                  newPostFiles.length ? (
+                    <div className="grid grid-cols-3 gap-2">
+                      {newPostPreviewUrls.slice(0, 9).map((p) => (
+                        <div key={p.url} className="aspect-square overflow-hidden rounded-md border bg-muted">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={p.url}
+                            alt={p.file.name}
+                            className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
+                            onClick={() => onZoom(p.url)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : null
+                }
               />
             </div>
-
-            <FileDropzone
-              label="Photos"
-              helper="JPG/PNG only, max 5MB each, up to 9 images."
-              accept={ACCEPT_ATTR}
-              multiple
-              filesCount={newPostFiles.length}
-              onPickFiles={(files) => {
-                if (files.length > 9) toast.error("Max 9 images per post")
-                const { valid, errors } = validateFiles(files.slice(0, 9))
-                if (errors.length) toast.error(errors[0])
-                setNewPostFiles(valid)
-              }}
-              onClear={newPostFiles.length ? () => setNewPostFiles([]) : undefined}
-              preview={
-                newPostFiles.length ? (
-                  <div className="grid grid-cols-3 gap-2">
-                    {newPostPreviewUrls.slice(0, 9).map((p) => (
-                      <div key={p.url} className="aspect-square overflow-hidden rounded-md border bg-muted">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={p.url}
-                          alt={p.file.name}
-                          className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
-                          onClick={() => onZoom(p.url)}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                ) : null
-              }
-            />
           </div>
 
-          <SheetFooter>
+          <SheetFooter className="flex-none pt-2">
             <Button variant="outline" onClick={() => setAddPostOpen(false)} disabled={addPostSaving}>
               Cancel
             </Button>
