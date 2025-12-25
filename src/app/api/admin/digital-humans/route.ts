@@ -24,13 +24,16 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const gender = (url.searchParams.get('gender') ?? 'all').toLowerCase();
+  const offset = parseInt(url.searchParams.get('offset') ?? '0') || 0;
+  const limit = parseInt(url.searchParams.get('limit') ?? '20') || 20;
 
   let q = supabaseAdmin
     .from('users')
     .select('userid,username,profession,avatar,gender,created_at,updated_at')
     .eq('is_digital_human', true)
     .is('deleted_at', null)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
 
   if (gender === 'female') q = q.eq('gender', 'Female');
   if (gender === 'male') q = q.eq('gender', 'Male');

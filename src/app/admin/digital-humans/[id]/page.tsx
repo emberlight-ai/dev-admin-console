@@ -13,6 +13,7 @@ import { composeSystemPromptFromTemplate } from "@/lib/botProfile"
 import { ImageZoomDialog } from "./_components/image-zoom-dialog"
 import { ProfileCard } from "./_components/profile-card"
 import { ProfileEditSheet } from "./_components/profile-edit-sheet"
+import { ChatHistory } from "@/components/matching/chat-history"
 import { ChatPanel } from "./_components/chat-panel"
 import { PostsPanel } from "./_components/posts-panel"
 import type { DbUser } from "./_components/types"
@@ -132,6 +133,7 @@ export default function DigitalHumanDetail() {
               <TabsList>
               <TabsTrigger value="posts">Post History</TabsTrigger>
                 <TabsTrigger value="chat">Chat &amp; Tuning</TabsTrigger>
+                <TabsTrigger value="history">Chat History</TabsTrigger>
               </TabsList>
 
               <TabsContent value="chat">
@@ -139,6 +141,10 @@ export default function DigitalHumanDetail() {
                   systemPrompt={computedSystemPrompt}
                   onEffectiveSystemPromptChange={(p) => setEffectiveSystemPrompt(p || null)}
                 />
+              </TabsContent>
+
+              <TabsContent value="history">
+                 <ChatHistory currentUserId={user.userid} />
               </TabsContent>
 
               <TabsContent value="posts" className="mt-4">

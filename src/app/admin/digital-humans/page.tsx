@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { ArrowUpDown, Eye, Trash2, Plus, SlidersHorizontal } from "lucide-react"
+import { ArrowUpDown, Eye, Plus, SlidersHorizontal } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -26,17 +26,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
 
 type Row = {
   userid: string
@@ -52,6 +41,11 @@ type Row = {
 export default function ManageDigitalHumans() {
   const [rows, setRows] = React.useState<Row[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [loadingMore, setLoadingMore] = React.useState(false)
+  const [hasMore, setHasMore] = React.useState(true)
+  const [offset, setOffset] = React.useState(0)
+  const LIMIT = 50
+
   type GenderFilter = "all" | "female" | "male"
   const [genderFilter, setGenderFilter] = React.useState<GenderFilter>("all")
   type SortKey = "name" | "created" | "posts"
@@ -106,37 +100,69 @@ export default function ManageDigitalHumans() {
     return out
   }, [rows, sortKey, sortDir])
 
-  const fetchRows = React.useCallback(async () => {
-    setLoading(true)
+  const fetchRows = React.useCallback(async (isLoadMore = false) => {
+    if (isLoadMore) setLoadingMore(true)
+    else setLoading(true)
+
     try {
-      const res = await fetch(`/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}`)
+      const currentOffset = isLoadMore ? offset : 0
+      const res = await fetch(
+        `/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}&offset=${currentOffset}&limit=${LIMIT}`
+      )
       const json = (await res.json()) as { data?: Row[]; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to fetch digital humans")
-      setRows((json.data ?? []) as Row[])
+      
+      const newRows = (json.data ?? []) as Row[]
+      
+      if (newRows.length < LIMIT) {
+        setHasMore(false)
+      } else {
+        setHasMore(true)
+      }
+
+      if (isLoadMore) {
+        setRows(prev => [...prev, ...newRows])
+        setOffset(prev => prev + LIMIT)
+      } else {
+        setRows(newRows)
+        setOffset(LIMIT)
+      }
     } catch (err: unknown) {
       console.error(err)
       toast.error(err instanceof Error ? err.message : "Failed to fetch digital humans")
-      setRows([])
+      if (!isLoadMore) setRows([])
+    } finally {
+      setLoading(false)
+      setLoadingMore(false)
     }
-    setLoading(false)
+  }, [genderFilter, offset])
+
+  // Reset when filter changes
+  React.useEffect(() => {
+    setOffset(0)
+    setHasMore(true)
+    void fetchRows(false)
   }, [genderFilter])
 
-  React.useEffect(() => {
-    void fetchRows()
-  }, [fetchRows])
+  // Infinite scroll
+  const observerTarget = React.useRef(null)
 
-  const deleteRow = async (userid: string) => {
-    try {
-      const res = await fetch(`/api/admin/users/${encodeURIComponent(userid)}`, { method: "DELETE" })
-      const json = (await res.json()) as { ok?: boolean; error?: string }
-      if (!res.ok) throw new Error(json.error || "Failed to delete digital human")
-      toast.success("Digital human deleted")
-      void fetchRows()
-    } catch (err: unknown) {
-      console.error(err)
-      toast.error(err instanceof Error ? err.message : "Failed to delete digital human")
+  React.useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loading && !loadingMore) {
+          void fetchRows(true)
+        }
+      },
+      { threshold: 0.1 }
+    )
+
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current)
     }
-  }
+
+    return () => observer.disconnect()
+  }, [hasMore, loading, loadingMore, fetchRows])
 
   return (
     <div className="space-y-6">
@@ -293,63 +319,56 @@ export default function ManageDigitalHumans() {
                 </TableCell>
               </TableRow>
             ) : (
-              sortedRows.map((r) => (
-                <TableRow key={r.userid} className="hover:bg-muted/20">
-                  {columns.avatar ? (
-                    <TableCell className="pl-4">
-                      <Avatar className="h-9 w-9">
-                        <AvatarImage
-                          src={`/api/avatar/${r.userid}?v=${encodeURIComponent(r.updated_at || r.created_at)}`}
-                          alt={r.username}
-                        />
-                        <AvatarFallback>{r.username?.slice(0, 2)?.toUpperCase()}</AvatarFallback>
-                      </Avatar>
+              <>
+                {sortedRows.map((r) => (
+                  <TableRow key={r.userid} className="hover:bg-muted/20">
+                    {columns.avatar ? (
+                      <TableCell className="pl-4">
+                        <Avatar className="h-9 w-9">
+                          <AvatarImage
+                            src={`/api/avatar/${r.userid}?v=${encodeURIComponent(r.updated_at || r.created_at)}`}
+                            alt={r.username}
+                          />
+                          <AvatarFallback>{r.username?.slice(0, 2)?.toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                      </TableCell>
+                    ) : null}
+                    <TableCell className="font-medium">{r.username}</TableCell>
+                    {columns.profession ? (
+                      <TableCell className="text-muted-foreground">{r.profession ?? "—"}</TableCell>
+                    ) : null}
+                    {columns.posts ? <TableCell className="text-muted-foreground">{r.postsCount}</TableCell> : null}
+                    {columns.created ? (
+                      <TableCell className="text-muted-foreground">
+                        {new Date(r.created_at).toLocaleDateString()}
+                      </TableCell>
+                    ) : null}
+                    <TableCell className="text-right">
+                      <div className="inline-flex items-center gap-2">
+                        <Button asChild variant="outline" size="sm">
+                          <Link href={`/admin/digital-humans/${r.userid}`} className="gap-2">
+                            <Eye className="h-4 w-4" />
+                            Details
+                          </Link>
+                        </Button>
+                      </div>
                     </TableCell>
-                  ) : null}
-                  <TableCell className="font-medium">{r.username}</TableCell>
-                  {columns.profession ? (
-                    <TableCell className="text-muted-foreground">{r.profession ?? "—"}</TableCell>
-                  ) : null}
-                  {columns.posts ? <TableCell className="text-muted-foreground">{r.postsCount}</TableCell> : null}
-                  {columns.created ? (
-                    <TableCell className="text-muted-foreground">
-                      {new Date(r.created_at).toLocaleDateString()}
-                    </TableCell>
-                  ) : null}
-                  <TableCell className="text-right">
-                    <div className="inline-flex items-center gap-2">
-                      <Button asChild variant="outline" size="sm">
-                        <Link href={`/admin/digital-humans/${r.userid}`} className="gap-2">
-                          <Eye className="h-4 w-4" />
-                          Details
-                        </Link>
-                      </Button>
-
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="destructive" size="sm" className="gap-2">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Delete digital human?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              This will permanently delete the user and related posts.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => deleteRow(r.userid)}>
-                              Delete
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
+                  </TableRow>
+                ))}
+                {/* Sentinel for infinite scroll */}
+                <TableRow>
+                  <TableCell colSpan={visibleColumnCount} className="p-0 border-0">
+                    <div ref={observerTarget} className="h-4 w-full" />
                   </TableCell>
                 </TableRow>
-              ))
+                {loadingMore && (
+                  <TableRow>
+                    <TableCell colSpan={visibleColumnCount} className="text-center py-4 text-muted-foreground">
+                      Loading more...
+                    </TableCell>
+                  </TableRow>
+                )}
+              </>
             )}
           </TableBody>
         </Table>

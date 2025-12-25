@@ -29,6 +29,7 @@ import { ImageZoomDialog } from "@/app/admin/digital-humans/[id]/_components/ima
 import { ProfileEditSheet } from "@/app/admin/digital-humans/[id]/_components/profile-edit-sheet"
 import { PostsPanel } from "@/app/admin/digital-humans/[id]/_components/posts-panel"
 import { RelationshipGraph } from "@/components/matching/relationship-graph"
+import { ChatHistory } from "@/components/matching/chat-history"
 import type { DbUser } from "@/app/admin/digital-humans/[id]/_components/types"
 
 export default function UserDetail() {
@@ -197,8 +198,13 @@ export default function UserDetail() {
             <Tabs defaultValue="posts" className="w-full">
               <TabsList>
                 <TabsTrigger value="posts">Post History</TabsTrigger>
+                <TabsTrigger value="history">Chat History</TabsTrigger>
                 <TabsTrigger value="management">User Management</TabsTrigger>
               </TabsList>
+
+              <TabsContent value="history" className="mt-4">
+                 <ChatHistory currentUserId={user.userid} />
+              </TabsContent>
 
               <TabsContent value="posts" className="mt-4">
                 <PostsPanel userid={user.userid} onZoom={(src) => setZoomSrc(src)} />
@@ -237,17 +243,6 @@ export default function UserDetail() {
                 </div>
 
                 <Separator />
-
-                <div className="space-y-4">
-                  <div className="text-sm font-medium">Matchings</div>
-                  <Card className="p-4">
-                    <RelationshipGraph
-                      initialRootUserId={user.userid}
-                      showPicker={false}
-                      heightClassName="h-[420px]"
-                    />
-                  </Card>
-                </div>
 
                 <div className="space-y-4">
                   <div className="text-sm font-medium text-destructive">Danger Zone</div>

@@ -42,7 +42,7 @@ function ChatInterface({ matchId, userA, userB, currentUser, onSwitchUser }: Cha
   const [sending, setSending] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
-  // Fetch initial messages
+  // Fetch initial 
   React.useEffect(() => {
     const fetchMessages = async () => {
       setLoading(true);
@@ -81,7 +81,12 @@ function ChatInterface({ matchId, userA, userB, currentUser, onSwitchUser }: Cha
         },
         (payload) => {
           const newMsg = payload.new as Message;
-          setMessages((prev) => [...prev, newMsg]);
+          setMessages((prev) => {
+            if (prev.some((msg) => msg.id === newMsg.id)) {
+              return prev;
+            }
+            return [...prev, newMsg];
+          });
         }
       )
       .subscribe();
@@ -153,8 +158,8 @@ function ChatInterface({ matchId, userA, userB, currentUser, onSwitchUser }: Cha
         <span className="text-xs text-muted-foreground">Match ID: {matchId.slice(0, 8)}...</span>
       </div>
       
-      <ScrollArea className="flex-1 p-4">
-        <div className="space-y-4">
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="space-y-4 p-4">
           {loading ? (
             <div className="flex justify-center p-4">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -176,7 +181,7 @@ function ChatInterface({ matchId, userA, userB, currentUser, onSwitchUser }: Cha
                 >
                   <div
                     className={cn(
-                      'max-w-[80%] rounded-lg px-3 py-2 text-sm',
+                      'max-w-[80%] rounded-lg px-3 py-2 text-sm break-words',
                       isMe
                         ? 'bg-primary text-primary-foreground'
                         : 'bg-muted text-foreground'

@@ -40,7 +40,6 @@ const navGroups = [
       { href: "/admin/matching/recommendations", label: "Recommendations", icon: Users },
       { href: "/admin/matching/matchings", label: "Matchings", icon: Network },
       { href: "/admin/matching/reports", label: "Reports", icon: Flag },
-      { href: "/admin/matching/chat", label: "Chat", icon: MessageSquare },
     ],
   },
 ]
