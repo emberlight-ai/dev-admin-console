@@ -23,19 +23,18 @@ interface Message {
   id: string;
   match_id: string;
   sender_id: string;
+  receiver_id?: string | null;
   content: string;
   created_at: string;
 }
 
 interface ChatProps {
   matchId: string;
-  userA: PickUser;
-  userB: PickUser;
   currentUser: PickUser;
   onSwitchUser: () => void;
 }
 
-function ChatInterface({ matchId, userA, userB, currentUser, onSwitchUser }: ChatProps) {
+function ChatInterface({ matchId, currentUser, onSwitchUser }: ChatProps) {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [inputText, setInputText] = React.useState('');
@@ -130,7 +129,7 @@ function ChatInterface({ matchId, userA, userB, currentUser, onSwitchUser }: Cha
       setMessages(prev => [...prev, data as Message]);
       
       setInputText('');
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast.error('Failed to send message. Are you logged in as a participant?');
       console.error(err);
     } finally {
@@ -324,8 +323,6 @@ export default function AdminChatPage() {
                 */}
                 <ChatInterface 
                   matchId={matchId} 
-                  userA={userA} 
-                  userB={userB} 
                   currentUser={currentUser || userA}
                   onSwitchUser={() => {
                     const next = currentUser?.userid === userA.userid ? userB : userA;

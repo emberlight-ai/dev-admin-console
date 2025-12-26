@@ -783,10 +783,49 @@ create table if not exists public.messages (
   id uuid primary key default uuid_generate_v4(),
   match_id uuid references public.user_matches(id) on delete cascade not null,
   sender_id uuid references public.users(userid) on delete cascade not null,
+  -- The other participant in the match. Filled automatically when NULL (see trigger below).
+  receiver_id uuid references public.users(userid) on delete cascade,
   content text, -- Text content
   media_url text, -- Optional for images/audio
   created_at timestamptz default now()
 );
+
+-- Ensure receiver_id is set for inserts (supports legacy clients that don't send receiver_id)
+create or replace function public.set_message_receiver_id()
+returns trigger
+language plpgsql
+as $$
+declare
+  a uuid;
+  b uuid;
+begin
+  if new.receiver_id is not null then
+    return new;
+  end if;
+
+  select user_a, user_b into a, b
+  from public.user_matches
+  where id = new.match_id;
+
+  if not found then
+    return new;
+  end if;
+
+  if new.sender_id = a then
+    new.receiver_id := b;
+  elsif new.sender_id = b then
+    new.receiver_id := a;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists messages_set_receiver_id on public.messages;
+create trigger messages_set_receiver_id
+before insert on public.messages
+for each row
+execute function public.set_message_receiver_id();
 
 -- RLS: Allow any authenticated user to read and send messages (MVP Loose Mode)
 alter table public.messages enable row level security;
@@ -826,12 +865,13 @@ as $$
 $$;
 
 -- RPC: Send a message (Wrapper for INSERT, simplified for MVP)
--- MODIFIED to accept optional sender_id for Admin debugging without auth
+-- Populates receiver_id automatically from user_matches.
 create or replace function public.rpc_send_message(
   match_id uuid,
   content text default null,
   media_url text default null,
-  sender_id uuid default null
+  sender_id uuid default null,
+  receiver_id uuid default null
 )
 returns public.messages
 language plpgsql
@@ -840,6 +880,9 @@ as $$
 declare
   msg public.messages;
   final_sender uuid;
+  final_receiver uuid;
+  a uuid;
+  b uuid;
 begin
   if match_id is null then
     raise exception 'match_id is required';
@@ -855,8 +898,33 @@ begin
      raise exception 'sender_id required (not logged in)';
   end if;
 
-  insert into public.messages (match_id, sender_id, content, media_url)
-  values (match_id, final_sender, content, media_url)
+  -- Determine receiver from match participants (or use explicit receiver_id if provided)
+  select user_a, user_b into a, b
+  from public.user_matches
+  where id = match_id;
+
+  if not found then
+    raise exception 'match not found';
+  end if;
+
+  final_receiver := coalesce(
+    receiver_id,
+    case
+      when final_sender = a then b
+      when final_sender = b then a
+      else null
+    end
+  );
+
+  if final_receiver is null then
+    raise exception 'sender not in match';
+  end if;
+  if final_receiver = final_sender then
+    raise exception 'cannot message self';
+  end if;
+
+  insert into public.messages (match_id, sender_id, receiver_id, content, media_url)
+  values (match_id, final_sender, final_receiver, content, media_url)
   returning * into msg;
 
   return msg;

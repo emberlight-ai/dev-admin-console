@@ -22,6 +22,7 @@ interface Message {
   id: string;
   match_id: string;
   sender_id: string;
+  receiver_id?: string | null;
   content: string;
   created_at: string;
 }

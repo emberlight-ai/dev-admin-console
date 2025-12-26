@@ -1,3 +1,5 @@
+// @ts-nocheck
+// This file is a Supabase Edge Function (Deno runtime). Next.js/TypeScript tooling should not typecheck it.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import admin from 'npm:firebase-admin@12.0.0';
 
@@ -26,6 +28,7 @@ interface WebhookPayload {
     id: string;
     match_id: string;
     sender_id: string;
+    receiver_id?: string;
     content: string;
     created_at: string;
   };
@@ -42,24 +45,13 @@ Deno.serve(async (req) => {
       return new Response('Ignored', { status: 200 });
     }
 
-    // 1. Find the RECIPIENT of the message
-    // We look up the match to find who the other person is.
-    const { data: matchData, error: matchError } = await supabase
-      .from('user_matches')
-      .select('user_a, user_b')
-      .eq('id', record.match_id)
-      .single();
-
-    if (matchError || !matchData) {
-      console.error('Match not found', matchError);
-      return new Response('Match not found', { status: 404 });
+    // 1. Identify the recipient directly from messages.receiver_id
+    // (receiver_id is now stored on the messages table, so we don't need to query user_matches here.)
+    const recipientId = record.receiver_id;
+    if (!recipientId) {
+      console.error('Missing receiver_id on message record', record.id);
+      return new Response('Missing receiver_id', { status: 400 });
     }
-
-    // Identify the recipient (the one who is NOT the sender)
-    const recipientId =
-      matchData.user_a === record.sender_id
-        ? matchData.user_b
-        : matchData.user_a;
 
     // 2. Get the recipient's FCM tokens
     const { data: tokens, error: tokenError } = await supabase
