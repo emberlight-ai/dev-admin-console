@@ -168,12 +168,29 @@ const edgeTypes: EdgeTypes = { inviting: InvitingEdge };
 type SimNode = SimulationNodeDatum & { id: string; x?: number; y?: number };
 type SimLink = SimulationLinkDatum<SimNode> & { source: string | SimNode; target: string | SimNode };
 
+// Deterministic hash function for stable initial positions
+function simpleHash(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash);
+}
+
 function layoutWithForce(nodes: UserGraphNode[], edges: Edge[], width: number, height: number) {
-  const simNodes: SimNode[] = nodes.map((n) => ({
-    id: n.id,
-    x: n.position.x || (Math.random() - 0.5) * 200,
-    y: n.position.y || (Math.random() - 0.5) * 200,
-  }));
+  const simNodes: SimNode[] = nodes.map((n) => {
+    // Use deterministic positioning based on node id hash
+    const hash = simpleHash(n.id);
+    const angle = (hash % 360) * (Math.PI / 180);
+    const radius = 150 + ((hash % 100) / 100) * 100;
+    return {
+      id: n.id,
+      x: n.position.x || width / 2 + Math.cos(angle) * radius,
+      y: n.position.y || height / 2 + Math.sin(angle) * radius,
+    };
+  });
 
   const linkData: SimLink[] = edges.map((e) => ({ source: e.source, target: e.target }));
 
@@ -216,12 +233,12 @@ export function RelationshipGraph({
   const rfRef = React.useRef<ReactFlowInstance<Node<UserNodeData>, Edge> | null>(null);
   const [rfReady, setRfReady] = React.useState(false);
 
-  const [rawNodes, setRawNodes] = React.useState<UserGraphNode[]>([]);
-  const [rawEdges, setRawEdges] = React.useState<Edge[]>([]);
-
   const containerRef = React.useRef<HTMLDivElement | null>(null);
-  const sizeRef = React.useRef({ w: 1100, h: 720 });
-  const resizeTimerRef = React.useRef<number | null>(null);
+  const dataVersionRef = React.useRef(0);
+  
+  // Fixed size for layout calculation to prevent recalculation
+  const FIXED_WIDTH = 1100;
+  const FIXED_HEIGHT = 720;
 
   // If embedded with a fixed root id, keep it in sync if prop changes.
   React.useEffect(() => {
@@ -229,30 +246,13 @@ export function RelationshipGraph({
     setRoot({ userid: initialRootUserId, username: initialRootUserId } as PickUser);
   }, [initialRootUserId]);
 
-  React.useEffect(() => {
-    if (!containerRef.current) return;
-    const el = containerRef.current;
-    const ro = new ResizeObserver((entries) => {
-      const r = entries[0]?.contentRect;
-      if (!r) return;
-      sizeRef.current = { w: Math.max(600, Math.floor(r.width)), h: Math.max(420, Math.floor(r.height)) };
-      if (resizeTimerRef.current) window.clearTimeout(resizeTimerRef.current);
-      resizeTimerRef.current = window.setTimeout(() => {
-        resizeTimerRef.current = null;
-        if (!rawNodes.length) return;
-        const { w, h } = sizeRef.current;
-        setNodes(layoutWithForce(rawNodes, rawEdges, w, h));
-        queueMicrotask(() => rfRef.current?.fitView({ padding: 0.2, duration: 250 }));
-      }, 250);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [rawNodes, rawEdges]);
-
   const load = React.useCallback(async () => {
     if (!root?.userid) return;
     setLoading(true);
     setError(null);
+    dataVersionRef.current += 1;
+    const currentVersion = dataVersionRef.current;
+    
     try {
       const url = new URL('/api/admin/matching/graph', window.location.origin);
       url.searchParams.set('rootUserId', root.userid);
@@ -261,6 +261,9 @@ export function RelationshipGraph({
       const res = await fetch(url.toString());
       const json = (await res.json()) as GraphResponse & { error?: string };
       if (!res.ok) throw new Error(json.error || 'Failed to load graph');
+
+      // Only process if this is still the latest request
+      if (currentVersion !== dataVersionRef.current) return;
 
       const baseNodes: UserGraphNode[] = (json.nodes ?? []).map((u) => ({
         id: u.userid,
@@ -297,20 +300,29 @@ export function RelationshipGraph({
         };
       });
 
-      setRawNodes(baseNodes);
-      setRawEdges(baseEdges);
-
-      const { w, h } = sizeRef.current;
-      setNodes(layoutWithForce(baseNodes, baseEdges, w, h));
+      // Calculate layout once with fixed size
+      const laidOutNodes = layoutWithForce(baseNodes, baseEdges, FIXED_WIDTH, FIXED_HEIGHT);
+      
+      // Set nodes and edges together to prevent intermediate renders
+      setNodes(laidOutNodes);
       setEdges(baseEdges);
-      queueMicrotask(() => rfRef.current?.fitView({ padding: 0.2, duration: 400 }));
+      
+      // Fit view once after layout
+      queueMicrotask(() => {
+        if (currentVersion === dataVersionRef.current && rfRef.current) {
+          rfRef.current.fitView({ padding: 0.2, duration: 400 });
+        }
+      });
     } catch (err) {
+      if (currentVersion !== dataVersionRef.current) return;
       console.error(err);
       setNodes([]);
       setEdges([]);
       setError(err instanceof Error ? err.message : 'Failed to load graph');
     } finally {
-      setLoading(false);
+      if (currentVersion === dataVersionRef.current) {
+        setLoading(false);
+      }
     }
   }, [root?.userid]);
 
@@ -381,7 +393,6 @@ export function RelationshipGraph({
               rfRef.current = inst;
               setRfReady(true);
             }}
-            fitView
             proOptions={{ hideAttribution: true }}
             className="matching-flow"
             defaultEdgeOptions={{ type: 'straight' }}
