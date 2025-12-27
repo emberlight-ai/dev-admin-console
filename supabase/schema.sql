@@ -552,17 +552,38 @@ create or replace function public.rpc_list_match_requests(
   start_index integer default 0,
   limit_count integer default 20
 )
-returns setof public.match_requests
+returns table (
+  request_id uuid,
+  from_user_id uuid,
+  to_user_id uuid,
+  created_at timestamptz,
+  other_user_id uuid,
+  other_username text,
+  other_avatar text
+)
 language sql
 security invoker
 as $$
-  select *
-  from public.match_requests
+  select
+    mr.id as request_id,
+    mr.from_user_id,
+    mr.to_user_id,
+    mr.created_at,
+    u.userid as other_user_id,
+    u.username as other_username,
+    u.avatar as other_avatar
+  from public.match_requests mr
+  join public.users u
+    on u.userid = case
+      when direction = 'inbound' then mr.from_user_id
+      when direction = 'outbound' then mr.to_user_id
+      else null
+    end
   where (
-    direction = 'inbound' and to_user_id = auth.uid()
-    or direction = 'outbound' and from_user_id = auth.uid()
+    direction = 'inbound' and mr.to_user_id = auth.uid()
+    or direction = 'outbound' and mr.from_user_id = auth.uid()
   )
-  order by created_at desc
+  order by mr.created_at desc
   offset greatest(start_index, 0)
   limit least(greatest(limit_count, 0), 50);
 $$;
@@ -570,13 +591,19 @@ $$;
 create or replace function public.rpc_accept_match_request(request_id uuid)
 returns void
 language plpgsql
-security invoker
+security definer
+set search_path = public
 as $$
 declare
   r public.match_requests%rowtype;
   a uuid;
   b uuid;
 begin
+  -- Verify user is authenticated
+  if auth.uid() is null then
+    raise exception 'authentication required';
+  end if;
+
   select * into r
   from public.match_requests
   where id = request_id
@@ -629,18 +656,41 @@ begin
 end;
 $$;
 
-create or replace function public.rpc_list_matches(
+create or replace function public.rpc_list_connections(
   start_index integer default 0,
   limit_count integer default 50
 )
-returns setof public.user_matches
+returns table (
+  id uuid,
+  connection_username text,
+  connection_user_id uuid,
+  connection_avatar text,
+  created_at timestamptz,
+  is_new_connection boolean
+)
 language sql
 security invoker
 as $$
-  select *
-  from public.user_matches
-  where user_a = auth.uid() or user_b = auth.uid()
-  order by created_at desc
+  select
+    um.id,
+    u.username as connection_username,
+    u.userid as connection_user_id,
+    u.avatar as connection_avatar,
+    um.created_at,
+    not exists (
+      select 1
+      from public.messages m
+      where m.match_id = um.id
+      limit 1
+    ) as is_new_connection
+  from public.user_matches um
+  join public.users u
+    on u.userid = case
+      when um.user_a = auth.uid() then um.user_b
+      else um.user_a
+    end
+  where um.user_a = auth.uid() or um.user_b = auth.uid()
+  order by um.created_at desc
   offset greatest(start_index, 0)
   limit least(greatest(limit_count, 0), 200);
 $$;
@@ -928,6 +978,88 @@ begin
   returning * into msg;
 
   return msg;
+end;
+$$;
+
+-- RPC: Fetch connection chat metadata (last message + unread count)
+create or replace function public.rpc_fetch_connections_chat_metas(
+  params jsonb
+)
+returns table (
+  match_id uuid,
+  message text,
+  created_at timestamptz,
+  sender_id uuid,
+  receiver_id uuid,
+  unread_count bigint,
+  media_url text,
+  message_id uuid
+)
+language plpgsql
+security invoker
+as $$
+begin
+  return query
+  with input_data as (
+    select
+      (e->>'match_id')::uuid as m_id,
+      (e->>'last_read_time')::timestamptz as lrt
+    from jsonb_array_elements(params) as e
+  ),
+  match_ids as (
+    select distinct m_id from input_data
+  ),
+  last_msgs as (
+    select distinct on (m.match_id)
+      m.match_id,
+      m.content,
+      m.created_at,
+      m.sender_id,
+      m.receiver_id,
+      m.media_url,
+      m.id
+    from public.messages m
+    join match_ids mi on m.match_id = mi.m_id
+    order by m.match_id, m.created_at desc
+  ),
+  my_last_sent as (
+    select
+      m.match_id,
+      max(m.created_at) as last_sent_at
+    from public.messages m
+    where m.sender_id = auth.uid()
+    and m.match_id in (select m_id from match_ids)
+    group by m.match_id
+  ),
+  unread_calc as (
+    select
+      i.m_id,
+      count(m.id) as cnt
+    from input_data i
+    left join my_last_sent mls on mls.match_id = i.m_id
+    left join public.messages m on m.match_id = i.m_id
+    where
+      m.sender_id <> auth.uid() -- Only count incoming messages
+      and (
+        case
+          when i.lrt is not null then m.created_at > i.lrt
+          when mls.last_sent_at is not null then m.created_at > mls.last_sent_at
+          else true -- If no last_read_time and I haven't sent anything, count all incoming
+        end
+      )
+    group by i.m_id
+  )
+  select
+    lm.match_id,
+    lm.content as message,
+    lm.created_at,
+    lm.sender_id,
+    lm.receiver_id,
+    coalesce(uc.cnt, 0) as unread_count,
+    lm.media_url,
+    lm.id as message_id
+  from last_msgs lm
+  left join unread_calc uc on uc.m_id = lm.match_id;
 end;
 $$;
 

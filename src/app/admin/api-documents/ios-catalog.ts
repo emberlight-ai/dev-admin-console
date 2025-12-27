@@ -34,6 +34,22 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     },
     baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
+    responseExample: {
+      userid: '<user_uuid>',
+      username: 'Alice',
+      age: 28,
+      gender: 'Female',
+      personality: 'Funny',
+      zipcode: '90210',
+      phone: '+15555555555',
+      bio: 'Hello world',
+      education: 'College',
+      profession: 'Engineer',
+      avatar: 'https://example.com/avatar.jpg',
+      created_at: '2025-01-01T00:00:00Z',
+      updated_at: '2025-01-01T00:00:00Z',
+      is_digital_human: false,
+    },
   },
   {
     id: 'ios.users.update.patch',
@@ -52,6 +68,11 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       zipcode: '90210',
       avatar: 'https://example.com/my-new-avatar.jpg',
     },
+    responseExample: {
+      userid: '<user_uuid>',
+      username: 'Alice',
+      // ... other fields
+    },
   },
   {
     id: 'ios.users.delete.soft',
@@ -64,6 +85,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
     requestExample: {},
+    responseExample: { success: true },
   },
   {
     id: 'ios.posts.create',
@@ -83,6 +105,15 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       latitude: 35.0116,
       occurred_at: '2025-01-01T00:00:00.000Z',
       photos: [],
+    },
+    responseExample: {
+      id: '<post_uuid>',
+      userid: '<user_uuid>',
+      description: 'Visited Kyoto',
+      location_name: 'Kyoto, Japan',
+      occurred_at: '2025-01-01T00:00:00.000Z',
+      photos: [],
+      // ...
     },
   },
   {
@@ -115,6 +146,20 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
         example: 'false',
       },
     ],
+    responseExample: [
+      {
+        id: '<post_uuid>',
+        userid: '<user_uuid>',
+        description: 'Post description',
+        photos: ['url1', 'url2'],
+        location_name: 'City',
+        longitude: 100.0,
+        latitude: 20.0,
+        altitude: 10.0,
+        occurred_at: '2025-01-01T00:00:00Z',
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ],
   },
   {
     id: 'ios.earth.locations',
@@ -140,6 +185,16 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
         example: '200',
       },
     ],
+    responseExample: [
+      {
+        post_id: '<post_uuid>',
+        occurred_at: '2025-01-01T00:00:00Z',
+        longitude: 100.0,
+        latitude: 20.0,
+        altitude: 10.0,
+        location_name: 'City',
+      },
+    ],
   },
   // RPCs for matching still use direct Supabase RPCs for now as they are "actions"
   // but we can wrap them if requested. For now, user complained about GET filters.
@@ -153,6 +208,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: supabaseAuthHeaders,
     requestExample: { target_user_id: '<other_user_uuid>' },
+    responseExample: '<request_uuid_or_match_uuid>',
   },
   {
     id: 'ios.match.requests.list',
@@ -164,6 +220,17 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: supabaseAuthHeaders,
     requestExample: { direction: 'inbound', start_index: 0, limit_count: 20 },
+    responseExample: [
+      {
+        request_id: '<request_uuid>',
+        from_user_id: '<sender_uuid>',
+        to_user_id: '<receiver_uuid>',
+        created_at: '2025-01-01T00:00:00Z',
+        other_user_id: '<other_uuid>',
+        other_username: 'Bob',
+        other_avatar: 'https://example.com/bob.jpg',
+      },
+    ],
   },
   {
     id: 'ios.match.accept',
@@ -175,6 +242,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: supabaseAuthHeaders,
     requestExample: { request_id: '<request_uuid>' },
+    responseExample: null, // void
   },
   {
     id: 'ios.match.decline',
@@ -186,6 +254,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: supabaseAuthHeaders,
     requestExample: { request_id: '<request_uuid>' },
+    responseExample: null, // void
   },
   {
     id: 'ios.match.cancel',
@@ -199,17 +268,31 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: supabaseAuthHeaders,
     requestExample: { request_id: '<request_uuid>' },
+    responseExample: null, // void
   },
   {
-    id: 'ios.match.list',
+    id: 'ios.connections.list',
     audience: 'ios',
     method: 'POST',
-    path: '/rest/v1/rpc/rpc_list_matches',
-    summary: 'List matches',
+    path: '/rest/v1/rpc/rpc_list_connections',
+    summary: 'List connections',
     auth: { type: 'bearer' },
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: supabaseAuthHeaders,
     requestExample: { start_index: 0, limit_count: 50 },
+    notes: [
+      'Returns only the other participant profile fields (connection_*) plus `is_new_connection` which is true when there are no messages yet for the match_id.',
+    ],
+    responseExample: [
+      {
+        id: '<match_uuid>',
+        connection_username: 'Bob',
+        connection_user_id: '<bob_uuid>',
+        connection_avatar: 'https://example.com/bob.jpg',
+        created_at: '2025-01-01T00:00:00Z',
+        is_new_connection: true,
+      },
+    ],
   },
   {
     id: 'ios.match.unmatch',
@@ -221,6 +304,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: supabaseAuthHeaders,
     requestExample: { match_id: '<match_uuid>' },
+    responseExample: null, // void
   },
   {
     id: 'ios.reports.user',
@@ -234,6 +318,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: supabaseAuthHeaders,
     requestExample: { target_user_id: '<other_user_uuid>', reason: 'Spam' },
+    responseExample: '<report_uuid>',
   },
   {
     id: 'ios.reports.post',
@@ -251,6 +336,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       target_post_id: '<post_uuid>',
       reason: 'Inappropriate content',
     },
+    responseExample: '<report_uuid>',
   },
   {
     id: 'ios.matchings.feed',
@@ -307,6 +393,10 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       'Bucket is public for MVP: anyone with the URL can view the image.',
       'Write policy restricts uploads to paths starting with <auth_uid>/.',
     ],
+    responseExample: {
+      Key: 'images/<user_id>/avatar_xyz.jpg',
+      // ... storage metadata
+    },
   },
   {
     id: 'ios.chat.messages.list',
@@ -323,6 +413,17 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       start_index: 0,
       limit_count: 50,
     },
+    responseExample: [
+      {
+        id: '<message_uuid>',
+        match_id: '<match_uuid>',
+        sender_id: '<sender_uuid>',
+        receiver_id: '<receiver_uuid>',
+        content: 'Hello world',
+        media_url: null,
+        created_at: '2025-01-01T12:00:00Z',
+      },
+    ],
   },
   {
     id: 'ios.chat.messages.send',
@@ -340,6 +441,45 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       content: 'Hello world',
       media_url: null,
     },
+    responseExample: {
+      id: '<message_uuid>',
+      match_id: '<match_uuid>',
+      sender_id: '<sender_uuid>',
+      receiver_id: '<receiver_uuid>',
+      content: 'Hello world',
+      media_url: null,
+      created_at: '2025-01-01T12:00:00Z',
+    },
+  },
+  {
+    id: 'ios.chat.connections.metas',
+    audience: 'ios',
+    method: 'POST',
+    path: '/rest/v1/rpc/rpc_fetch_connections_chat_metas',
+    summary: 'Fetch chat metadata (last msg + unread count)',
+    description:
+      'Fetch the most recent message and unread count for a list of matches. `unread_count` logic: if `last_read_time` is provided, counts messages after it. If not, counts messages after the last message sent by the current user.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: SUPABASE_URL,
+    defaultHeaders: supabaseAuthHeaders,
+    requestExample: {
+      params: [
+        { match_id: '<match_uuid_1>' },
+        { match_id: '<match_uuid_2>', last_read_time: '2025-01-01T12:00:00Z' },
+      ],
+    },
+    responseExample: [
+      {
+        match_id: '<match_uuid>',
+        message: 'Last message content',
+        created_at: '2025-01-01T12:05:00Z',
+        sender_id: '<sender_uuid>',
+        receiver_id: '<receiver_uuid>',
+        unread_count: 3,
+        media_url: null,
+        message_id: '<message_uuid>',
+      },
+    ],
   },
   {
     id: 'ios.push.tokens.register',
@@ -356,6 +496,6 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       token: '<fcm_token>',
       platform: 'ios',
     },
+    responseExample: null, // void or row
   },
 ];
-

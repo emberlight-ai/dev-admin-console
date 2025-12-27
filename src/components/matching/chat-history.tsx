@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Loader2, ArrowRightLeft } from 'lucide-react';
+import { Send, Loader2, ArrowRightLeft, Copy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -142,7 +142,22 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
          <span className="font-medium text-sm">
             Chatting with <span className="text-primary">{/* We might want to pass username here if needed */}Partner</span>
          </span>
-        <span className="text-xs text-muted-foreground">Match ID: {matchId.slice(0, 8)}...</span>
+        <span className="text-xs text-muted-foreground flex items-center gap-1">
+          Match ID
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="ml-1 w-5 h-5"
+            title="Copy Match ID"
+            onClick={() => {
+              navigator.clipboard.writeText(matchId);
+              toast.success('Copied Match ID!');
+            }}
+          >
+            <Copy className="h-3 w-3 text-muted-foreground" />
+          </Button>
+        </span>
       </div>
       
       <ScrollArea className="flex-1 min-h-0">

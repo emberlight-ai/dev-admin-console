@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v
+  );
+}
+
 // Helper to create a user-context Supabase client
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
@@ -22,6 +28,10 @@ export async function GET(
 ) {
   try {
     const { userid } = await params;
+    // Return 200 for invalid/missing users (client-friendly behavior for iOS).
+    if (!isUuid(userid)) {
+      return NextResponse.json({ error: 'User not found' }, { status: 200 });
+    }
     const supabase = getUserSupabase(req);
 
     // If requesting own profile, standard query.
@@ -33,13 +43,21 @@ export async function GET(
       .from('users')
       .select('*')
       .eq('userid', userid)
-      .single();
+      .maybeSingle();
 
     if (error) {
+      // PostgREST returns PGRST116 for 0 rows with `.single()`; with `.maybeSingle()` we may still
+      // see coercion errors depending on gateway/version. Treat these as "not found".
+      if (
+        error.code === 'PGRST116' ||
+        /Cannot coerce the result to a single JSON object/i.test(error.message)
+      ) {
+        return NextResponse.json({ error: 'User not found' }, { status: 200 });
+      }
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     if (!data) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      return NextResponse.json({ error: 'User not found' }, { status: 200 });
     }
 
     return NextResponse.json(data);
