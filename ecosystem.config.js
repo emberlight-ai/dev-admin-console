@@ -3,7 +3,7 @@ module.exports = {
     {
       name: 'web-app',
       script: 'npm',
-      args: 'start',
+      args: 'start -- -p 3015 -H 127.0.0.1',
       env: {
         NODE_ENV: 'production',
       },
