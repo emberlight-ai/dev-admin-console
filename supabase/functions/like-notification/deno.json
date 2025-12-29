@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "like-notification": {
+      "noVerifyJwt": true
+    }
+  }
+}
+

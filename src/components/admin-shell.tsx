@@ -139,7 +139,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           </div>
         </GlareHover>
         <Separator />
-        
+
         <nav className="flex-1 overflow-y-auto p-3 space-y-5">
           {navGroups.map((group) => (
             <div key={group.title}>
@@ -166,7 +166,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               ))}
             </div>
           </div>
-          
+
           <Button
             variant="outline"
             className="w-full justify-start gap-2"
@@ -213,7 +213,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                       </div>
                     ))}
                   </nav>
-                  
+
                   <div className="p-3 border-t space-y-4">
                     <div>
                       <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
@@ -249,8 +249,8 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
             {/* Desktop: keep right-aligned controls; Mobile: controls still accessible */}
             <div className="flex items-center gap-2">
-            <ThemeColorPicker />
-            <ThemeToggle />
+              <ThemeColorPicker />
+              <ThemeToggle />
             </div>
           </div>
         </header>

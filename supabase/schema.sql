@@ -1065,3 +1065,272 @@ $$;
 
 -- Enable Realtime for messages (Required for chat subscriptions)
 alter publication supabase_realtime add table public.messages;
+
+-- ==============================================================================
+-- DIGITAL HUMAN AUTOMATION (Added for automated digital human interactions)
+-- ==============================================================================
+
+-- 1. Track invites sent from digital humans to real users
+create table if not exists public.digital_human_invites_tracking (
+  user_id uuid references public.users(userid) on delete cascade not null primary key,
+  invite_count integer not null default 0,
+  updated_at timestamptz default now()
+);
+
+drop trigger if exists digital_human_invites_tracking_set_updated_at on public.digital_human_invites_tracking;
+create trigger digital_human_invites_tracking_set_updated_at
+before update on public.digital_human_invites_tracking
+for each row
+execute function public.set_updated_at();
+
+-- 2. Configuration table for digital human automation parameters
+create table if not exists public.digital_human_config (
+  key text primary key,
+  value text not null,
+  description text
+);
+
+-- Insert default configuration values
+insert into public.digital_human_config (key, value, description)
+values
+  ('max_invites_per_user', '5', 'Maximum invites a real user can receive from digital humans'),
+  ('invites_per_cron_run', '5', 'How many invites to send per cron execution'),
+  ('accept_rate_percentage', '30', 'Percentage of requests digital humans accept (0-100)'),
+  ('active_hour_start', '5', 'Start hour for digital human activity in PST (0-23, 5 = 5 AM)'),
+  ('active_hour_end', '23', 'End hour for digital human activity in PST (0-23, 23 = 11:59 PM)')
+on conflict (key) do nothing;
+
+-- 3. Function: Send match invites from digital humans to real users
+create or replace function public.send_digital_human_invites()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_hour_pst integer;
+  active_start integer;
+  active_end integer;
+  max_invites integer;
+  invites_per_run integer;
+  invites_sent integer := 0;
+  digital_human_id uuid;
+  real_user_id uuid;
+  existing_count integer;
+  invite_count integer;
+begin
+  -- Check if we're within active hours (5 AM - 11:59 PM PST)
+  select extract(hour from (now() AT TIME ZONE 'America/Los_Angeles'))::integer into current_hour_pst;
+  select value::integer into active_start from public.digital_human_config where key = 'active_hour_start';
+  select value::integer into active_end from public.digital_human_config where key = 'active_hour_end';
+  
+  -- Default values if config is missing
+  active_start := coalesce(active_start, 5);
+  active_end := coalesce(active_end, 23);
+  
+  -- Return early if outside active hours
+  if current_hour_pst < active_start or current_hour_pst > active_end then
+    return 0;
+  end if;
+  
+  -- Get configuration
+  select value::integer into max_invites from public.digital_human_config where key = 'max_invites_per_user';
+  select value::integer into invites_per_run from public.digital_human_config where key = 'invites_per_cron_run';
+  
+  -- Default values if config is missing
+  max_invites := coalesce(max_invites, 5);
+  invites_per_run := coalesce(invites_per_run, 5);
+  
+  -- Loop to send invites
+  for i in 1..invites_per_run loop
+    -- Select a random digital human
+    select userid into digital_human_id
+    from public.users
+    where is_digital_human = true
+      and deleted_at is null
+    order by random()
+    limit 1;
+    
+    -- If no digital humans exist, exit
+    if digital_human_id is null then
+      exit;
+    end if;
+    
+    -- Select a real user who:
+    -- 1. Hasn't exceeded max invites
+    -- 2. Doesn't already have a pending request with this digital human
+    -- 3. Isn't already matched with this digital human
+    -- 4. Isn't blocked by or blocking this digital human
+    -- Prioritize older users first (newer users last) by ordering by created_at ASC
+    select u.userid into real_user_id
+    from public.users u
+    left join public.digital_human_invites_tracking dt on dt.user_id = u.userid
+    where u.is_digital_human = false
+      and u.deleted_at is null
+      and coalesce(dt.invite_count, 0) < max_invites
+      and not exists (
+        select 1 from public.match_requests mr
+        where (mr.from_user_id = digital_human_id and mr.to_user_id = u.userid)
+           or (mr.from_user_id = u.userid and mr.to_user_id = digital_human_id)
+      )
+      and not exists (
+        select 1 from public.user_matches um
+        where (um.user_a = least(digital_human_id, u.userid) and um.user_b = greatest(digital_human_id, u.userid))
+      )
+      and not exists (
+        select 1 from public.blocks b
+        where (b.blocker_id = digital_human_id and b.blocked_id = u.userid)
+           or (b.blocker_id = u.userid and b.blocked_id = digital_human_id)
+      )
+    order by u.created_at asc
+    limit 1;
+    
+    -- If no eligible real user found, continue to next iteration
+    if real_user_id is null then
+      continue;
+    end if;
+    
+    -- Insert match request
+    insert into public.match_requests (from_user_id, to_user_id)
+    values (digital_human_id, real_user_id)
+    on conflict (from_user_id, to_user_id) do nothing;
+    
+    -- Update or insert tracking
+    insert into public.digital_human_invites_tracking (user_id, invite_count)
+    values (real_user_id, 1)
+    on conflict (user_id) do update
+    set invite_count = digital_human_invites_tracking.invite_count + 1;
+    
+    invites_sent := invites_sent + 1;
+  end loop;
+  
+  return invites_sent;
+end;
+$$;
+
+-- 4. Function: Process match requests for digital humans (accept/reject)
+create or replace function public.process_digital_human_requests()
+returns table(accepted integer, rejected integer)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_hour_pst integer;
+  active_start integer;
+  active_end integer;
+  accept_rate numeric;
+  request_record record;
+  accepted_count integer := 0;
+  rejected_count integer := 0;
+  a uuid;
+  b uuid;
+begin
+  -- Check if we're within active hours (5 AM - 11:59 PM PST)
+  select extract(hour from (now() AT TIME ZONE 'America/Los_Angeles'))::integer into current_hour_pst;
+  select value::integer into active_start from public.digital_human_config where key = 'active_hour_start';
+  select value::integer into active_end from public.digital_human_config where key = 'active_hour_end';
+  
+  -- Default values if config is missing
+  active_start := coalesce(active_start, 5);
+  active_end := coalesce(active_end, 23);
+  
+  -- Return early if outside active hours
+  if current_hour_pst < active_start or current_hour_pst > active_end then
+    return query select 0::integer, 0::integer;
+    return;
+  end if;
+  
+  -- Get accept rate configuration
+  select value::numeric into accept_rate from public.digital_human_config where key = 'accept_rate_percentage';
+  accept_rate := coalesce(accept_rate, 30) / 100.0; -- Convert percentage to decimal
+  
+  -- Process up to 3 pending requests where to_user_id is a digital human
+  -- Random selection makes it more realistic (not all digital humans respond instantly)
+  for request_record in
+    select mr.id, mr.from_user_id, mr.to_user_id
+    from public.match_requests mr
+    join public.users u on u.userid = mr.to_user_id
+    where u.is_digital_human = true
+      and u.deleted_at is null
+    order by random()
+    limit 3
+    for update skip locked
+  loop
+    -- Randomly decide: accept (30%) or reject (70%)
+    if random() < accept_rate then
+      -- Accept: delete request and create match
+      delete from public.match_requests
+      where id = request_record.id;
+      
+      a := least(request_record.from_user_id, request_record.to_user_id);
+      b := greatest(request_record.from_user_id, request_record.to_user_id);
+      
+      insert into public.user_matches (user_a, user_b)
+      values (a, b)
+      on conflict (user_a, user_b) do nothing;
+      
+      accepted_count := accepted_count + 1;
+    else
+      -- Reject: delete the request
+      delete from public.match_requests
+      where id = request_record.id;
+      
+      rejected_count := rejected_count + 1;
+    end if;
+  end loop;
+  
+  return query select accepted_count, rejected_count;
+end;
+$$;
+
+-- 5. Enable pg_cron extension and schedule jobs
+-- Note: pg_cron may not be available in all Supabase plans. If unavailable, use Supabase Edge Functions
+-- with scheduled invocations or an external cron service.
+create extension if not exists pg_cron;
+
+-- Schedule job to send invites from digital humans (every 1 hour)
+do $$
+declare
+  job_exists boolean;
+begin
+  -- Check if job already exists
+  select exists(
+    select 1 from cron.job where jobname = 'send-digital-human-invites'
+  ) into job_exists;
+  
+  if job_exists then
+    -- Unschedule existing job
+    perform cron.unschedule('send-digital-human-invites');
+  end if;
+  
+  -- Schedule the job
+  perform cron.schedule(
+    'send-digital-human-invites',
+    '0 * * * *', -- Every 1 hour
+    $cmd$select public.send_digital_human_invites()$cmd$
+  );
+end $$;
+
+-- Schedule job to process digital human match requests (every 5 minutes)
+do $$
+declare
+  job_exists boolean;
+begin
+  -- Check if job already exists
+  select exists(
+    select 1 from cron.job where jobname = 'process-digital-human-requests'
+  ) into job_exists;
+  
+  if job_exists then
+    -- Unschedule existing job
+    perform cron.unschedule('process-digital-human-requests');
+  end if;
+  
+  -- Schedule the job
+  perform cron.schedule(
+    'process-digital-human-requests',
+    '*/5 * * * *', -- Every 5 minutes
+    $cmd$select public.process_digital_human_requests()$cmd$
+  );
+end $$;
