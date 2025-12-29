@@ -40,7 +40,7 @@ type Row = {
   postsCount: number
 }
 
-export default function ManageDigitalHumans() {
+function ManageDigitalHumansContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const pathname = usePathname()
@@ -131,23 +131,23 @@ export default function ManageDigitalHumans() {
   React.useEffect(() => {
     let cancelled = false;
     const fetchPersonalities = async () => {
-        const gendersToFetch = genderFilter === 'all' ? ['Male', 'Female'] : [genderFilter === 'female' ? 'Female' : 'Male'];
-        const allPersonalities = new Set<string>();
-        
-        try {
-            for (const g of gendersToFetch) {
-                const res = await fetch(`/api/system-prompts/personalities?gender=${encodeURIComponent(g)}`);
-                if (res.ok) {
-                    const json = await res.json();
-                    (json.data || []).forEach((p: string) => allPersonalities.add(p));
-                }
-            }
-            if (!cancelled) {
-                setPersonalities(Array.from(allPersonalities).sort());
-            }
-        } catch (err) {
-            console.error("Failed to fetch personalities", err);
+      const gendersToFetch = genderFilter === 'all' ? ['Male', 'Female'] : [genderFilter === 'female' ? 'Female' : 'Male'];
+      const allPersonalities = new Set<string>();
+
+      try {
+        for (const g of gendersToFetch) {
+          const res = await fetch(`/api/system-prompts/personalities?gender=${encodeURIComponent(g)}`);
+          if (res.ok) {
+            const json = await res.json();
+            (json.data || []).forEach((p: string) => allPersonalities.add(p));
+          }
         }
+        if (!cancelled) {
+          setPersonalities(Array.from(allPersonalities).sort());
+        }
+      } catch (err) {
+        console.error("Failed to fetch personalities", err);
+      }
     };
 
     fetchPersonalities();
@@ -161,15 +161,15 @@ export default function ManageDigitalHumans() {
     try {
       // Use offset state for pagination, but props from URL for filtering
       const currentOffset = isLoadMore ? offset : 0
-      
+
       const res = await fetch(
         `/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}&personality=${encodeURIComponent(personalityFilter === 'All' || personalityFilter === null ? 'all' : personalityFilter)}&offset=${currentOffset}&limit=${LIMIT}`
       )
       const json = (await res.json()) as { data?: Row[]; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to fetch digital humans")
-      
+
       const newRows = (json.data ?? []) as Row[]
-      
+
       if (newRows.length < LIMIT) {
         setHasMore(false)
       } else {
@@ -199,18 +199,18 @@ export default function ManageDigitalHumans() {
   const prevFilters = React.useRef({ genderFilter, personalityFilter });
 
   React.useEffect(() => {
-    const filtersChanged = 
-      prevFilters.current.genderFilter !== genderFilter || 
+    const filtersChanged =
+      prevFilters.current.genderFilter !== genderFilter ||
       prevFilters.current.personalityFilter !== personalityFilter;
 
     if (filtersChanged) {
-       setOffset(0);
-       setHasMore(true);
-       prevFilters.current = { genderFilter, personalityFilter };
-       void fetchRows(false);
+      setOffset(0);
+      setHasMore(true);
+      prevFilters.current = { genderFilter, personalityFilter };
+      void fetchRows(false);
     } else if (isFirstRun.current) {
-       void fetchRows(false);
-       isFirstRun.current = false;
+      void fetchRows(false);
+      isFirstRun.current = false;
     }
   }, [genderFilter, personalityFilter, fetchRows])
 
@@ -335,9 +335,9 @@ export default function ManageDigitalHumans() {
         <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-3">
           <div className="flex items-center gap-4">
             <div className="text-sm font-medium text-muted-foreground">All digital humans</div>
-            
+
             <div className="flex items-center gap-2">
-              <select 
+              <select
                 className="h-9 w-[150px] rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 value={personalityFilter}
                 onChange={(e) => updateFilters({ personality: e.target.value })}
@@ -478,3 +478,12 @@ export default function ManageDigitalHumans() {
     </div>
   )
 }
+
+export default function ManageDigitalHumans() {
+  return (
+    <React.Suspense fallback={<div>Loading...</div>}>
+      <ManageDigitalHumansContent />
+    </React.Suspense>
+  )
+}
+

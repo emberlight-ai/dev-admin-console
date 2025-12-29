@@ -1334,3 +1334,69 @@ begin
     $cmd$select public.process_digital_human_requests()$cmd$
   );
 end $$;
+
+-- ==============================================================================
+-- AI RESPONSE ORCHESTRATION (Added for robust digital human responses)
+-- ==============================================================================
+
+create table if not exists public.user_match_ai_state (
+  match_id uuid primary key references public.user_matches(id) on delete cascade,
+  
+  -- Concurrency control
+  ai_locked_until timestamptz,
+  
+  -- State tracking
+  last_message_id uuid,          -- The most recent message in the convo
+  last_message_at timestamptz,   -- When that message occurred (for debouncing)
+  last_message_sender_id uuid,   -- Who sent it (to filter for USER messages)
+  
+  -- Progress tracking
+  ai_last_processed_message_id uuid, -- The last message the AI has already responded to/ingested
+  
+  updated_at timestamptz default now()
+);
+
+alter table public.user_match_ai_state enable row level security;
+
+create policy "Authenticated read ai state" on public.user_match_ai_state
+  for select to authenticated using (true);
+
+-- Trigger to auto-update state on new message
+create or replace function public.handle_new_message_ai_state()
+returns trigger
+language plpgsql
+security definer
+as $$
+begin
+  -- Upsert into tracking table
+  insert into public.user_match_ai_state (
+    match_id, 
+    last_message_id, 
+    last_message_at, 
+    last_message_sender_id,
+    updated_at
+  )
+  values (
+    new.match_id, 
+    new.id, 
+    new.created_at, 
+    new.sender_id,
+    now()
+  )
+  on conflict (match_id) do update
+  set 
+    last_message_id = excluded.last_message_id,
+    last_message_at = excluded.last_message_at,
+    last_message_sender_id = excluded.last_message_sender_id,
+    updated_at = now();
+    
+  return new;
+end;
+$$;
+
+drop trigger if exists on_message_created_update_ai_state on public.messages;
+create trigger on_message_created_update_ai_state
+after insert on public.messages
+for each row
+execute function public.handle_new_message_ai_state();
+

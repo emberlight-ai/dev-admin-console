@@ -415,4 +415,3 @@ function getEffectiveSystemPrompt(
   return composeSystemPromptWithUserProfile(systemPrompt ?? "", userProfile)
 }
 
-
