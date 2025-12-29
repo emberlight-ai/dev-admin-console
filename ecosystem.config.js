@@ -10,10 +10,9 @@ module.exports = {
     },
     {
       name: 'ai-worker',
-      script: 'scripts/ai-worker.ts',
-      // Uses tsx to run the TypeScript file directly without separate compilation step for the script
-      interpreter: 'node_modules/.bin/tsx', 
-      watch: false,
+      script: 'npx',
+      args: 'tsx scripts/ai-worker.ts',
+      interpreter: 'none',
       env: {
         NODE_ENV: 'production',
       },
