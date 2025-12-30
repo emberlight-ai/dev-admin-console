@@ -90,6 +90,7 @@ create table public."SystemPrompts" (
   gender text not null,
   personality text not null,
   system_prompt text not null,
+  response_delay integer default 0,
   created_at timestamptz default now()
 );
 
@@ -1352,6 +1353,7 @@ create table if not exists public.user_match_ai_state (
   
   -- Progress tracking
   ai_last_processed_message_id uuid, -- The last message the AI has already responded to/ingested
+  scheduled_response_at timestamptz, -- When the AI is scheduled to respond (for delay)
   
   updated_at timestamptz default now()
 );

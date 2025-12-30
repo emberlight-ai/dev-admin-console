@@ -30,8 +30,12 @@ const DEBOUNCE_SECONDS = 2
 const LOCK_DURATION_SECONDS = 30
 const PROMPT_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000 // 24 hours
 
-// Cache: "Gender:Personality" -> Template String
-let systemPromptCache = new Map<string, string>()
+// Cache: "Gender:Personality" -> { template: string, responseDelay: number }
+interface CachedPrompt {
+    template: string
+    responseDelay: number
+}
+let systemPromptCache = new Map<string, CachedPrompt>()
 let lastPromptRefresh = 0
 
 
@@ -82,6 +86,7 @@ async function processPendingConversations() {
       last_message_sender_id,
       ai_last_processed_message_id,
       ai_locked_until,
+      scheduled_response_at,
       match:user_matches!inner (
         user_a,
         user_b
@@ -90,6 +95,19 @@ async function processPendingConversations() {
     .lt('last_message_at', debounceThreshold.toISOString())
     .is('ai_locked_until', null) // or passed time, but null is easier if we clear it. Or we check < now
     .not('last_message_id', 'is', null) // Should exist
+    
+    // We want to process if:
+    // 1. New message (last_message_id != ai_last_processed_message_id)
+    // 2. OR Scheduled time has passed (scheduled_response_at < now)
+    
+    // Since OR queries are complex in Supabase JS client without a raw query or joining everything, 
+    // we'll fetch a wider net and filter in memory.
+    // The current filters are:
+    // - last_message_at < debounce (means it's not brand new typing)
+    // - not locked
+    // - has a last message
+    
+    // This is generally fine. We will check `scheduled_response_at` inside the loop.
 
     
     // We want where last_message_sender_id is NOT a digital human. 
@@ -113,7 +131,20 @@ async function processPendingConversations() {
     // We should probably check `or ai_locked_until < now()` in SQL, but supabase JS syntax for OR is tricky with other filters.
     // Let's handle "stuck" locks later or assume we clear them.
     
-    if (c.last_message_id === c.ai_last_processed_message_id) continue;
+    // Logic:
+    // If ai_last_processed_message_id is different -> New Message Event.
+    // If same, check if we are just waiting for scheduled time.
+    
+    const isNewMessage = c.last_message_id !== c.ai_last_processed_message_id;
+    const isScheduled = !!c.scheduled_response_at;
+    
+    if (!isNewMessage && !isScheduled) continue; // Nothing to do
+    
+    // If it IS scheduled, check if it's time
+    if (isScheduled) {
+        const scheduleTime = new Date(c.scheduled_response_at).getTime();
+        if (Date.now() < scheduleTime) continue; // Not time yet
+    }
     
     // Check if sender is a digital human (we don't want bot talking to bot loop, or bot replying to itself)
     // We need to know if last_message_sender_id is digital human.
@@ -172,10 +203,6 @@ async function processConversation({ state, targetBot, userSenderId }: any) {
     
     if (!messages) throw new Error('No messages found')
     
-    // Sort chronological
-    // We keep messages in DESC order to find the latest user message correctly.
-
-    
     // 3. Construct Prompt
     // Determine the actual latest user message we are about to respond to.
     const latestUserMessage = messages.find((m: any) => m.sender_id !== targetBot.userid)
@@ -189,8 +216,6 @@ async function processConversation({ state, targetBot, userSenderId }: any) {
     let template = systemPromptCache.get(cacheKey)
     if (!template) {
        console.warn(`No system prompt found for key "${cacheKey}", falling back to default or trying "General"`)
-       // Fallback to just gender if personality specific not found? Or just generic default.
-       // Try generic for gender
        template = systemPromptCache.get(`${g}:General`)
     }
 
@@ -206,7 +231,7 @@ async function processConversation({ state, targetBot, userSenderId }: any) {
             background: targetBot.bio // Using bio as background for now
         }
         
-        finalSystemInstruction = composeSystemPromptFromTemplate(template, botProfile)
+        finalSystemInstruction = composeSystemPromptFromTemplate(template.template, botProfile)
     } else {
         // Hardcoded Fallback
         finalSystemInstruction = `
@@ -220,6 +245,29 @@ Reply as this character. Keep it engaging, short, and natural for a chat app.
 Do not use emojis excessively.
 reply directly with the text content.
 `
+    }
+    
+    // --- Scheduling Logic ---
+    // If this is a NEW message (not just waking up for a schedule), we need to decide if we delay.
+    if (!state.scheduled_response_at && state.last_message_id !== state.ai_last_processed_message_id) {
+       const delaySeconds = template?.responseDelay || 0;
+       
+       if (delaySeconds > 0) {
+           const messageTime = new Date(state.last_message_at).getTime();
+           const targetTime = messageTime + (delaySeconds * 1000);
+           
+           if (targetTime > Date.now()) {
+               console.log(`Scheduling delayed response for ${targetBot.username} in ${delaySeconds}s (at ${new Date(targetTime).toISOString()})`)
+               
+               // Write schedule to DB and exit
+               await supabase.from('user_match_ai_state').update({
+                   scheduled_response_at: new Date(targetTime).toISOString(),
+                   ai_locked_until: null // Unlock immediately so we can pick it up later
+               }).eq('match_id', matchId)
+               
+               return; // STOP Processing
+           }
+       }
     }
 
     // Reverse for chronological order for Gemini
@@ -259,6 +307,7 @@ reply directly with the text content.
     // Mark as processed up to the message we actually included in the context (checkpointId)
     await supabase.from('user_match_ai_state').update({
       ai_last_processed_message_id: checkpointId, 
+      scheduled_response_at: null, // Clear schedule
       ai_locked_until: null // Unlock
     }).eq('match_id', matchId)
     
@@ -284,7 +333,7 @@ async function refreshSystemPrompts() {
     
     const { data, error } = await supabase
       .from('SystemPrompts')
-      .select('gender, personality, system_prompt, created_at')
+      .select('gender, personality, system_prompt, response_delay, created_at')
       .order('created_at', { ascending: false })
       
     if (error) {
@@ -293,7 +342,7 @@ async function refreshSystemPrompts() {
     }
     
     // Process: store only the FIRST occurrence (which is latest due to sort) for each key
-    const newCache = new Map<string, string>()
+    const newCache = new Map<string, CachedPrompt>()
     let count = 0
     
     for (const row of data || []) {
@@ -302,7 +351,10 @@ async function refreshSystemPrompts() {
         const key = `${g}:${p}`
         
         if (!newCache.has(key)) {
-            newCache.set(key, row.system_prompt)
+            newCache.set(key, { 
+                template: row.system_prompt,
+                responseDelay: row.response_delay || 0
+            })
             count++
         }
     }

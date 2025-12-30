@@ -45,7 +45,7 @@ export default function DigitalHumanPromptsPage() {
   const fetchKeys = React.useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/system-prompts/keys?gender=${encodeURIComponent(genderFilter)}`)
+      const res = await fetch(`/api/system-prompts/keys?gender=${encodeURIComponent(genderFilter === "all" ? "all" : genderFilter)}`)
       const json = (await res.json()) as { data?: KeyRow[]; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to load prompts")
       setKeys(json.data ?? [])
@@ -62,6 +62,7 @@ export default function DigitalHumanPromptsPage() {
     void fetchKeys()
   }, [fetchKeys])
 
+
   const empty = !loading && keys.length === 0
 
   return (
@@ -77,7 +78,7 @@ export default function DigitalHumanPromptsPage() {
         <Tabs
           value={genderFilter}
           onValueChange={(v) => {
-            if (v === "all" || v === "Female" || v === "Male") setGenderFilter(v)
+            if (v === "all" || v === "Female" || v === "Male") setGenderFilter(v as any)
           }}
         >
           <TabsList>
@@ -87,11 +88,14 @@ export default function DigitalHumanPromptsPage() {
           </TabsList>
         </Tabs>
 
-        <PromptEditorDialog
-          mode="create"
-          trigger={<Button>+ System Prompt</Button>}
-          onSaved={fetchKeys}
-        />
+        <div className="flex gap-2">
+          <ConfigurationDialog trigger={<Button variant="outline">Global Configuration</Button>} />
+          <PromptEditorDialog
+            mode="create"
+            trigger={<Button>+ System Prompt</Button>}
+            onSaved={fetchKeys}
+          />
+        </div>
       </div>
 
       {empty ? (
@@ -151,7 +155,141 @@ export default function DigitalHumanPromptsPage() {
           </Table>
         </Card>
       )}
+
+
     </div>
+  )
+}
+
+function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
+  const [open, setOpen] = React.useState(false)
+  const [loading, setLoading] = React.useState(true)
+  const [saving, setSaving] = React.useState(false)
+  const [config, setConfig] = React.useState({
+    max_invites_per_user: "5",
+    invites_per_cron_run: "5",
+    accept_rate_percentage: "30",
+    active_hour_start: "5",
+    active_hour_end: "23",
+  })
+
+  React.useEffect(() => {
+    if (open) {
+      setLoading(true)
+      fetch("/api/admin/digital-humans/config")
+        .then((res) => res.json())
+        .then((json) => {
+          if (json.data) {
+            setConfig((prev) => ({ ...prev, ...json.data }))
+          }
+        })
+        .catch((err) => toast.error("Failed to load config"))
+        .finally(() => setLoading(false))
+    }
+  }, [open])
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/admin/digital-humans/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      })
+      if (!res.ok) throw new Error("Failed to save")
+      toast.success("Configuration saved")
+      setOpen(false)
+    } catch (error) {
+      toast.error("Failed to save configuration")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      <DialogContent className="sm:max-w-xl">
+        <DialogXCloseButton />
+        <DialogHeader>
+          <DialogTitle>Global Configuration</DialogTitle>
+          <DialogDescription>
+            Configure automation settings for all digital humans.
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="p-10 text-center text-muted-foreground">Loading config...</div>
+        ) : (
+          <div className="grid gap-6 p-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Max invites per user</Label>
+                <Input
+                  type="number"
+                  value={config.max_invites_per_user}
+                  onChange={(e) => setConfig({ ...config, max_invites_per_user: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">Max invites a real user can receive total.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Invites per cron run</Label>
+                <Input
+                  type="number"
+                  value={config.invites_per_cron_run}
+                  onChange={(e) => setConfig({ ...config, invites_per_cron_run: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">Invites sent every hour.</p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Accept Rate Percentage (0-100)</Label>
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                value={config.accept_rate_percentage}
+                onChange={(e) => setConfig({ ...config, accept_rate_percentage: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">Likelihood a digital human accepts a user request.</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Active Hour Start (PST)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="23"
+                  value={config.active_hour_start}
+                  onChange={(e) => setConfig({ ...config, active_hour_start: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Active Hour End (PST)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="23"
+                  value={config.active_hour_end}
+                  onChange={(e) => setConfig({ ...config, active_hour_end: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving ? "Saving..." : "Save Changes"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -174,6 +312,7 @@ function PromptEditorDialog({
   const [gender, setGender] = React.useState<Gender>(initialGender ?? "Female")
   const [personality, setPersonality] = React.useState(initialPersonality ?? "")
   const [systemPrompt, setSystemPrompt] = React.useState("")
+  const [responseDelay, setResponseDelay] = React.useState<number>(0)
 
   const title = mode === "create" ? "Create system prompt" : `Edit: ${initialGender} · ${initialPersonality}`
 
@@ -183,6 +322,7 @@ function PromptEditorDialog({
     setGender(initialGender ?? "Female")
     setPersonality(initialPersonality ?? "")
     setSystemPrompt("")
+    setResponseDelay(0)
 
     if (mode === "edit" && initialGender && initialPersonality) {
       const run = async () => {
@@ -192,9 +332,10 @@ function PromptEditorDialog({
               initialPersonality
             )}`
           )
-          const json = (await res.json()) as { data?: { system_prompt: string } | null; error?: string }
+          const json = (await res.json()) as { data?: { system_prompt: string; response_delay?: number } | null; error?: string }
           if (!res.ok) throw new Error(json.error || "Failed to load latest prompt")
           setSystemPrompt(json.data?.system_prompt ?? "")
+          setResponseDelay(json.data?.response_delay ?? 0)
         } catch (err: unknown) {
           console.error(err)
           toast.error(err instanceof Error ? err.message : "Failed to load latest prompt")
@@ -208,6 +349,7 @@ function PromptEditorDialog({
     const g = gender.trim()
     const p = personality.trim()
     const sp = systemPrompt
+    const rd = Number(responseDelay)
 
     if (!g) return toast.error("Gender is required")
     if (!p) return toast.error("Personality is required")
@@ -215,13 +357,16 @@ function PromptEditorDialog({
     if (!PLACEHOLDER_RE.test(sp)) {
       return toast.error("Prompt must include: <bot_profile> BOT_PROFILE_DETAILS </bot_profile>")
     }
+    if (isNaN(rd) || rd < 0 || rd > 86400) {
+      return toast.error("Response delay must be between 0 and 86400 seconds")
+    }
 
     setSaving(true)
     try {
       const res = await fetch("/api/system-prompts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gender: g, personality: p, system_prompt: sp }),
+        body: JSON.stringify({ gender: g, personality: p, system_prompt: sp, response_delay: rd }),
       })
       const json = (await res.json()) as { data?: unknown; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to save prompt")
@@ -269,6 +414,17 @@ function PromptEditorDialog({
                 onChange={(e) => setPersonality(e.target.value)}
                 placeholder="e.g. calm_playboy"
                 disabled={mode === "edit"}
+              />
+            </div>
+            <div className="space-y-2 col-span-2 sm:col-span-2">
+              <Label>Response Delay (seconds) - 0 to 86400</Label>
+              <Input
+                type="number"
+                min={0}
+                max={86400}
+                value={responseDelay}
+                onChange={(e) => setResponseDelay(Number(e.target.value))}
+                placeholder="0"
               />
             </div>
           </div>

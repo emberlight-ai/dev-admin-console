@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from("SystemPrompts")
-    .select("system_prompt,created_at")
+    .select("system_prompt,created_at,response_delay")
     .eq("gender", gender)
     .eq("personality", personality)
     .order("created_at", { ascending: false })
