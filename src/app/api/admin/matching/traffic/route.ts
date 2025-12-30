@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
         
         const { data: users } = await supabase
             .from('users')
-            .select('userid, username, is_digital_human, avatar') // fetching avatar if exists, or just use ID
+            .select('userid, username, is_digital_human, avatar, personality') // fetching avatar if exists, or just use ID
             .in('userid', ids);
             
         const userA = users?.find((u: any) => u.userid === match.user_a);

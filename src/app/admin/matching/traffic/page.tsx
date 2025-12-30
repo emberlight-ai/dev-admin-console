@@ -28,6 +28,7 @@ type UserDetails = {
   username: string;
   is_digital_human: boolean;
   avatar?: string;
+  personality?: string | null;
 };
 
 type RecentConversation = {
@@ -130,6 +131,7 @@ export default function ChatTrafficPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Digital Human</TableHead>
+              <TableHead>Personality</TableHead>
               <TableHead>User</TableHead>
               <TableHead>Last Message</TableHead>
               <TableHead>Time</TableHead>
@@ -175,6 +177,9 @@ export default function ChatTrafficPage() {
                         <span>{bot?.username || 'Unknown Bot'}</span>
                         <Badge variant="secondary" className="text-[10px] h-5">AI</Badge>
                       </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {bot?.personality || <span className="italic text-muted-foreground/60">—</span>}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">

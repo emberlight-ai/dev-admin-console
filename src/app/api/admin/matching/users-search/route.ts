@@ -21,7 +21,6 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabaseAdmin
     .from('users')
     .select('userid,username,avatar,is_digital_human')
-    .eq('is_digital_human', false)
     .is('deleted_at', null)
     .ilike('username', `%${q}%`)
     .order('username', { ascending: true })

@@ -31,15 +31,47 @@ interface Message {
 interface ChatProps {
   matchId: string;
   currentUser: PickUser;
+  userA: PickUser;
+  userB: PickUser;
   onSwitchUser: () => void;
 }
 
-function ChatInterface({ matchId, currentUser, onSwitchUser }: ChatProps) {
+function ChatInterface({ matchId, currentUser, userA, userB, onSwitchUser }: ChatProps) {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [inputText, setInputText] = React.useState('');
   const [sending, setSending] = React.useState(false);
+  const [otherUserPersonality, setOtherUserPersonality] = React.useState<string | null>(null);
+  const [otherUserIsAI, setOtherUserIsAI] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  // Identify the other user and fetch their personality if they're an AI
+  React.useEffect(() => {
+    const otherUser = currentUser.userid === userA.userid ? userB : userA;
+
+    const fetchOtherUserDetails = async () => {
+      const supabase = getSupabase();
+      // Always fetch to get the latest is_digital_human status and personality
+      const { data, error } = await supabase
+        .from('users')
+        .select('is_digital_human, personality')
+        .eq('userid', otherUser.userid)
+        .single();
+
+      if (error) {
+        console.error('Failed to fetch user details:', error);
+        setOtherUserIsAI(false);
+        setOtherUserPersonality(null);
+        return;
+      }
+
+      const isAI = data?.is_digital_human === true;
+      setOtherUserIsAI(isAI);
+      setOtherUserPersonality(isAI ? (data?.personality || null) : null);
+    };
+
+    fetchOtherUserDetails();
+  }, [currentUser, userA, userB]);
 
   // Fetch initial 
   React.useEffect(() => {
@@ -124,10 +156,10 @@ function ChatInterface({ matchId, currentUser, onSwitchUser }: ChatProps) {
       });
 
       if (error) throw error;
-      
+
       // Optimistically add message
       setMessages(prev => [...prev, data as Message]);
-      
+
       setInputText('');
     } catch (err: unknown) {
       toast.error('Failed to send message. Are you logged in as a participant?');
@@ -137,26 +169,47 @@ function ChatInterface({ matchId, currentUser, onSwitchUser }: ChatProps) {
     }
   };
 
+  const otherUser = currentUser.userid === userA.userid ? userB : userA;
+
   return (
     <div className="flex flex-col h-[600px] border rounded-md">
-      <div className="p-3 border-b bg-muted/30 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <span className="font-medium text-sm">
-            Chatting as <span className="text-primary">{currentUser.username}</span>
-          </span>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="h-7 text-xs gap-1"
-            onClick={onSwitchUser}
-          >
-            <ArrowRightLeft className="h-3 w-3" />
-            Switch
-          </Button>
+      <div className="p-3 border-b bg-muted/30">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-4">
+            <span className="font-medium text-sm">
+              Chatting as <span className="text-primary">{currentUser.username}</span>
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={onSwitchUser}
+            >
+              <ArrowRightLeft className="h-3 w-3" />
+              Switch
+            </Button>
+          </div>
+          <span className="text-xs text-muted-foreground">Match ID: {matchId.slice(0, 8)}...</span>
         </div>
-        <span className="text-xs text-muted-foreground">Match ID: {matchId.slice(0, 8)}...</span>
+        {otherUserIsAI && (
+          <div className="text-xs text-muted-foreground mt-1">
+            AI User: <span className="font-medium text-foreground">{otherUser.username}</span>
+            {otherUserPersonality && (
+              <>
+                {' • '}
+                Personality: <span className="font-medium text-foreground">{otherUserPersonality}</span>
+              </>
+            )}
+            {!otherUserPersonality && (
+              <>
+                {' • '}
+                <span className="text-muted-foreground italic">No personality set</span>
+              </>
+            )}
+          </div>
+        )}
       </div>
-      
+
       <ScrollArea className="flex-1 min-h-0">
         <div className="space-y-4 p-4">
           {loading ? (
@@ -244,10 +297,10 @@ export default function AdminChatPage() {
     const checkMatch = async () => {
       setChecking(true);
       const supabase = getSupabase();
-      
+
       // We need to find if there is a match row
       // We also check for 'match_requests' if they are still pending? No, only confirmed matches for chat.
-      
+
       const { data, error } = await supabase
         .from('user_matches')
         .select('id')
@@ -260,7 +313,7 @@ export default function AdminChatPage() {
       } else {
         setMatchId(null);
         if (error && error.code !== 'PGRST116') { // 116 is no rows found
-           console.error('Error checking match:', error);
+          console.error('Error checking match:', error);
         }
       }
       setChecking(false);
@@ -321,9 +374,11 @@ export default function AdminChatPage() {
                   Since we are simulating, we pick "User A" as the sender for the UI demo.
                   In reality, the Supabase client uses the logged-in session.
                 */}
-                <ChatInterface 
-                  matchId={matchId} 
+                <ChatInterface
+                  matchId={matchId}
                   currentUser={currentUser || userA}
+                  userA={userA}
+                  userB={userB}
                   onSwitchUser={() => {
                     const next = currentUser?.userid === userA.userid ? userB : userA;
                     setCurrentUser(next);
