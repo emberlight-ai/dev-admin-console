@@ -9,13 +9,13 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? '';
 // - Authorization: Bearer <access_token> (user session)
 const supabaseAuthHeaders = {
   apikey: SUPABASE_ANON_KEY,
-  Authorization: 'Bearer <SUPABASE_ACCESS_TOKEN>',
+  Authorization: 'Bearer <AUTH_TOKEN>',
   'Content-Type': 'application/json',
 };
 
 // Headers for Next.js API Routes (no apikey needed, same origin)
 const nextApiHeaders = {
-  Authorization: 'Bearer <SUPABASE_ACCESS_TOKEN>',
+  Authorization: 'Bearer <AUTH_TOKEN>',
   'Content-Type': 'application/json',
 };
 
@@ -127,7 +127,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     auth: { type: 'bearer' },
     baseUrlOverride: APP_URL,
     defaultHeaders: {
-      Authorization: 'Bearer <SUPABASE_ACCESS_TOKEN>',
+      Authorization: 'Bearer <AUTH_TOKEN>',
       // Content-Type is multipart/form-data, usually set automatically by client networking libs
     },
     requestExample: {
@@ -188,30 +188,22 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
   {
     id: 'ios.earth.locations',
     audience: 'ios',
-    method: 'GET',
-    path: '/api/ios/users/<userid>/locations?startIndex=0&limit=200',
+    method: 'POST',
+    path: '/api/ios/locations',
     summary: 'Get Earth points',
-    description: 'Fetch lightweight location data for 3D Earth view.',
+    description: 'Fetch lightweight location data for 3D Earth view for multiple users.',
     auth: { type: 'bearer' },
     baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
-    params: [
-      {
-        name: 'startIndex',
-        in: 'query',
-        required: false,
-        example: '0',
-      },
-      {
-        name: 'limit',
-        in: 'query',
-        required: false,
-        example: '200',
-      },
-    ],
+    requestExample: {
+      userIds: ['<user_uuid_1>', '<user_uuid_2>'],
+      startIndex: 0,
+      limit: 200,
+    },
     responseExample: [
       {
         post_id: '<post_uuid>',
+        userid: '<user_uuid>',
         occurred_at: '2025-01-01T00:00:00Z',
         longitude: 100.0,
         latitude: 20.0,
@@ -410,7 +402,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     baseUrlOverride: SUPABASE_URL,
     defaultHeaders: {
       apikey: SUPABASE_ANON_KEY,
-      Authorization: 'Bearer <SUPABASE_ACCESS_TOKEN>',
+      Authorization: 'Bearer <AUTH_TOKEN>',
       'Content-Type': 'image/jpeg',
     },
     notes: [
