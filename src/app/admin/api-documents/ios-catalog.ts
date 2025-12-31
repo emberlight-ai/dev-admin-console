@@ -117,6 +117,30 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     },
   },
   {
+    id: 'ios.posts.photos.upload',
+    audience: 'ios',
+    method: 'POST',
+    path: '/api/ios/posts/<postid>/photos',
+    summary: 'Upload photos to post',
+    description:
+      'Upload images to an existing post. Use multipart/form-data with key `files`. Appends to existing photos. Standard flow: Create Post -> Get ID -> Upload Photos.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
+    defaultHeaders: {
+      Authorization: 'Bearer <SUPABASE_ACCESS_TOKEN>',
+      // Content-Type is multipart/form-data, usually set automatically by client networking libs
+    },
+    requestExample: {
+      _type: 'multipart/form-data',
+      files: ['<file_bytes_1>', '<file_bytes_2>'],
+    },
+    responseExample: {
+      success: true,
+      photos: ['https://.../1.jpg', 'https://.../2.jpg'],
+      added: ['https://.../2.jpg'],
+    },
+  },
+  {
     id: 'ios.posts.list',
     audience: 'ios',
     method: 'GET',
