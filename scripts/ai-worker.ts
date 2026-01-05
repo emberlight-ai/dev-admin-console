@@ -20,7 +20,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !GEMINI_API_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
 const model = genAI.getGenerativeModel({ 
-  model: 'gemini-2.0-flash-exp' // or use env var, falling back to a known good model
+  model: 'gemini-2.5-flash' // or use env var, falling back to a known good model
 }, {
   baseUrl: GEMINI_BASE_URL
 })

@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     .from('users')
     .select('userid,username,avatar,is_digital_human')
     .is('deleted_at', null)
-    .ilike('username', `%${q}%`)
+    .ilike('username', `${q}%`)
     .order('username', { ascending: true })
     .limit(limit);
 

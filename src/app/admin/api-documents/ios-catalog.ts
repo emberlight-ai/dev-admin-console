@@ -209,6 +209,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
         latitude: 20.0,
         altitude: 10.0,
         location_name: 'City',
+        photos: ['https://example.com/photo1.jpg', 'https://example.com/photo2.jpg'],
       },
     ],
   },

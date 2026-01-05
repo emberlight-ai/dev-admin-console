@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
 
     const { data, error } = await supabase
       .from('user_posts')
-      .select('id, userid, occurred_at, longitude, latitude, altitude, location_name')
+      .select('id, userid, occurred_at, longitude, latitude, altitude, location_name, photos')
       .in('userid', userIds)
       .is('deleted_at', null)
       .or('geom.neq.null,location_name.neq.null')
@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
       latitude: post.latitude,
       altitude: post.altitude,
       location_name: post.location_name,
+      photos: post.photos || [],
     }));
 
     return NextResponse.json(formattedData);

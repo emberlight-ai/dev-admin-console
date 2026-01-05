@@ -55,6 +55,10 @@ function ManageDigitalHumansContent() {
   // Derived state from URL params
   const genderFilter = (searchParams.get("gender") as "all" | "female" | "male") || "all"
   const personalityFilter = searchParams.get("personality") || "All"
+  const searchQuery = searchParams.get("search") || ""
+
+  // Local state for search input with debounce
+  const [searchInput, setSearchInput] = React.useState(searchQuery)
 
   // Fetched personalities based on gender filter
   const [personalities, setPersonalities] = React.useState<string[]>([])
@@ -162,8 +166,9 @@ function ManageDigitalHumansContent() {
       // Use offset state for pagination, but props from URL for filtering
       const currentOffset = isLoadMore ? offset : 0
 
+      const searchParam = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : '';
       const res = await fetch(
-        `/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}&personality=${encodeURIComponent(personalityFilter === 'All' || personalityFilter === null ? 'all' : personalityFilter)}&offset=${currentOffset}&limit=${LIMIT}`
+        `/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}&personality=${encodeURIComponent(personalityFilter === 'All' || personalityFilter === null ? 'all' : personalityFilter)}${searchParam}&offset=${currentOffset}&limit=${LIMIT}`
       )
       const json = (await res.json()) as { data?: Row[]; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to fetch digital humans")
@@ -191,28 +196,45 @@ function ManageDigitalHumansContent() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [genderFilter, personalityFilter, offset])
+  }, [genderFilter, personalityFilter, searchQuery, offset])
+
+  // Debounce search input to URL param
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchInput !== searchQuery) {
+        updateFilters({ search: searchInput || null });
+      }
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timer);
+  }, [searchInput]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync searchInput with URL param when it changes externally
+  React.useEffect(() => {
+    setSearchInput(searchQuery);
+  }, [searchQuery]);
 
   // Reset offset and fetch when filters change (detected via URL change)
   // We use a ref to track if this is the initial mount or a filter change
   const isFirstRun = React.useRef(true);
-  const prevFilters = React.useRef({ genderFilter, personalityFilter });
+  const prevFilters = React.useRef({ genderFilter, personalityFilter, searchQuery });
 
   React.useEffect(() => {
     const filtersChanged =
       prevFilters.current.genderFilter !== genderFilter ||
-      prevFilters.current.personalityFilter !== personalityFilter;
+      prevFilters.current.personalityFilter !== personalityFilter ||
+      prevFilters.current.searchQuery !== searchQuery;
 
     if (filtersChanged) {
       setOffset(0);
       setHasMore(true);
-      prevFilters.current = { genderFilter, personalityFilter };
+      prevFilters.current = { genderFilter, personalityFilter, searchQuery };
       void fetchRows(false);
     } else if (isFirstRun.current) {
       void fetchRows(false);
       isFirstRun.current = false;
     }
-  }, [genderFilter, personalityFilter, fetchRows])
+  }, [genderFilter, personalityFilter, searchQuery, fetchRows])
 
 
   // Infinite scroll
@@ -337,6 +359,13 @@ function ManageDigitalHumansContent() {
             <div className="text-sm font-medium text-muted-foreground">All digital humans</div>
 
             <div className="flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Search by name..."
+                className="h-9 w-[200px] rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
               <select
                 className="h-9 w-[150px] rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 value={personalityFilter}

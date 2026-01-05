@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -174,7 +175,16 @@ export default function ChatTrafficPage() {
                           <AvatarImage src={`/api/avatar/${bot?.userid}`} />
                           <AvatarFallback>{bot?.username?.substring(0, 2)}</AvatarFallback>
                         </Avatar>
-                        <span>{bot?.username || 'Unknown Bot'}</span>
+                        {bot?.userid ? (
+                          <Link
+                            href={`/admin/digital-humans/${bot.userid}`}
+                            className="hover:underline text-foreground"
+                          >
+                            {bot.username || 'Unknown Bot'}
+                          </Link>
+                        ) : (
+                          <span>{bot?.username || 'Unknown Bot'}</span>
+                        )}
                         <Badge variant="secondary" className="text-[10px] h-5">AI</Badge>
                       </div>
                     </TableCell>
@@ -187,7 +197,16 @@ export default function ChatTrafficPage() {
                           <AvatarImage src={`/api/avatar/${user?.userid}`} />
                           <AvatarFallback>{user?.username?.substring(0, 2)}</AvatarFallback>
                         </Avatar>
-                        <span>{user?.username || 'Unknown User'}</span>
+                        {user?.userid ? (
+                          <Link
+                            href={`/admin/users/${user.userid}`}
+                            className="hover:underline text-foreground"
+                          >
+                            {user.username || 'Unknown User'}
+                          </Link>
+                        ) : (
+                          <span>{user?.username || 'Unknown User'}</span>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell>

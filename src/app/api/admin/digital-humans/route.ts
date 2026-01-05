@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const gender = (url.searchParams.get('gender') ?? 'all').toLowerCase();
   const personality = url.searchParams.get('personality') ?? 'all';
+  const search = (url.searchParams.get('search') ?? '').trim();
   const offset = parseInt(url.searchParams.get('offset') ?? '0') || 0;
   const limit = parseInt(url.searchParams.get('limit') ?? '20') || 20;
 
@@ -42,6 +43,7 @@ export async function GET(req: NextRequest) {
   if (gender === 'female') q = q.eq('gender', 'Female');
   if (gender === 'male') q = q.eq('gender', 'Male');
   if (personality !== 'all') q = q.eq('personality', personality);
+  if (search) q = q.ilike('username', `${search}%`);
 
   const { data, error } = await q;
   if (error) return jsonError(error.message, 500);
