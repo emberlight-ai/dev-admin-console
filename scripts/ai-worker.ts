@@ -28,31 +28,53 @@ const model = genAI.getGenerativeModel({
 const POLLING_INTERVAL_MS = 1000
 const DEBOUNCE_SECONDS = 2
 const LOCK_DURATION_SECONDS = 30
-const PROMPT_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000 // 24 hours
+const PROMPT_REFRESH_INTERVAL_MS = 60 * 60 * 1000 // 1 hour (reduced from 24h for easier config updates)
+const CONFIG_REFRESH_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 
-// Cache: "Gender:Personality" -> { template: string, responseDelay: number }
+// Cache: "Gender:Personality" -> { template: string, responseDelay: number, ... }
 interface CachedPrompt {
     template: string
     responseDelay: number
+    followUpEnabled: boolean
+    followUpPrompt?: string
+    followUpDelay: number
+    maxFollowUps: number
 }
 let systemPromptCache = new Map<string, CachedPrompt>()
 let lastPromptRefresh = 0
+
+// Global Config Cache
+interface GlobalConfig {
+    autoReplyEnabled: boolean
+    followUpEnabled: boolean
+}
+let globalConfig: GlobalConfig = {
+    autoReplyEnabled: true,
+    followUpEnabled: true
+}
+let lastConfigRefresh = 0
 
 
 async function main() {
   console.log('Starting AI Worker...')
   
-  // Initial Prompt Load
+  // Initial Loads
   await refreshSystemPrompts()
+  await refreshGlobalConfig()
 
   while (true) {
     try {
+      const now = Date.now()
       // Refresh cache if needed
-      if (Date.now() - lastPromptRefresh > PROMPT_REFRESH_INTERVAL_MS) {
+      if (now - lastPromptRefresh > PROMPT_REFRESH_INTERVAL_MS) {
         await refreshSystemPrompts()
+      }
+      if (now - lastConfigRefresh > CONFIG_REFRESH_INTERVAL_MS) {
+        await refreshGlobalConfig()
       }
 
       await processPendingConversations()
+      await processFollowUps()
     } catch (error) {
       console.error('Error in worker loop:', error)
     }
@@ -61,6 +83,8 @@ async function main() {
 }
 
 async function processPendingConversations() {
+  if (!globalConfig.autoReplyEnabled) return
+
   // 1. Identify candidates
   // We need matches where:
   // - receiver (one of the participants) is a digital human
@@ -68,11 +92,6 @@ async function processPendingConversations() {
   // - last message was > 2 seconds ago (debouncing)
   // - not currently locked
   // - last_message_id is new (hasn't been processed yet)
-  
-  // To do this efficiently, we query user_match_ai_state joined with users.
-  // Note: Since `user_match_ai_state` only has match_id, we need to verify the participants.
-  // However, `last_message_sender_id` tells us who sent the last message. 
-  // We should check if `last_message_sender_id` is NOT a digital human.
   
   const now = new Date()
   const debounceThreshold = new Date(now.getTime() - DEBOUNCE_SECONDS * 1000)
@@ -93,47 +112,18 @@ async function processPendingConversations() {
       )
     `)
     .lt('last_message_at', debounceThreshold.toISOString())
-    .is('ai_locked_until', null) // or passed time, but null is easier if we clear it. Or we check < now
-    .not('last_message_id', 'is', null) // Should exist
-    
-    // We want to process if:
-    // 1. New message (last_message_id != ai_last_processed_message_id)
-    // 2. OR Scheduled time has passed (scheduled_response_at < now)
-    
-    // Since OR queries are complex in Supabase JS client without a raw query or joining everything, 
-    // we'll fetch a wider net and filter in memory.
-    // The current filters are:
-    // - last_message_at < debounce (means it's not brand new typing)
-    // - not locked
-    // - has a last message
-    
-    // This is generally fine. We will check `scheduled_response_at` inside the loop.
-
-    
-    // We want where last_message_sender_id is NOT a digital human. 
-    // And one of the participants IS a digital human.
-    // This defines "User sent a message to a bot".
-    // Checking "is_digital_human" requires joining users.
-    // For MVP efficiency, let's fetch a batch and filter in code, or do a deeper join.
-    // Let's do a deeper join if possible.
+    .is('ai_locked_until', null)
+    .not('last_message_id', 'is', null)
     
   if (error) {
     console.error('Error fetching candidates:', error)
     return
   }
 
-  // Filter in memory for complex logic if join is hard
+  // Filter in memory 
   const actionable = []
   
   for (const c of candidates || []) {
-    // Check lock expiration manually if we didn't filter strictly by time in SQL (we filtered is null above)
-    // Actually, let's just respect the NULL check for simplicity. If it crashes, it stays locked? 
-    // We should probably check `or ai_locked_until < now()` in SQL, but supabase JS syntax for OR is tricky with other filters.
-    // Let's handle "stuck" locks later or assume we clear them.
-    
-    // Logic:
-    // If ai_last_processed_message_id is different -> New Message Event.
-    // If same, check if we are just waiting for scheduled time.
     
     const isNewMessage = c.last_message_id !== c.ai_last_processed_message_id;
     const isScheduled = !!c.scheduled_response_at;
@@ -146,7 +136,7 @@ async function processPendingConversations() {
         if (Date.now() < scheduleTime) continue; // Not time yet
     }
     
-    // Check if sender is a digital human (we don't want bot talking to bot loop, or bot replying to itself)
+    // Check if sender is a digital human 
     // We need to know if last_message_sender_id is digital human.
     const { data: senderUser } = await supabase.from('users').select('is_digital_human').eq('userid', c.last_message_sender_id).single()
     if (!senderUser || senderUser.is_digital_human) continue;
@@ -213,15 +203,15 @@ async function processConversation({ state, targetBot, userSenderId }: any) {
     const p = (targetBot.personality || 'General').trim()
     const cacheKey = `${g}:${p}`
     
-    let template = systemPromptCache.get(cacheKey)
-    if (!template) {
+    let promptConfig = systemPromptCache.get(cacheKey)
+    if (!promptConfig) {
        console.warn(`No system prompt found for key "${cacheKey}", falling back to default or trying "General"`)
-       template = systemPromptCache.get(`${g}:General`)
+       promptConfig = systemPromptCache.get(`${g}:General`)
     }
 
     let finalSystemInstruction = ''
 
-    if (template) {
+    if (promptConfig) {
         // Compose using the shared library
         const botProfile: BotProfileInput = {
             name: targetBot.username,
@@ -231,7 +221,7 @@ async function processConversation({ state, targetBot, userSenderId }: any) {
             background: targetBot.bio // Using bio as background for now
         }
         
-        finalSystemInstruction = composeSystemPromptFromTemplate(template.template, botProfile)
+        finalSystemInstruction = composeSystemPromptFromTemplate(promptConfig.template, botProfile)
     } else {
         // Hardcoded Fallback
         finalSystemInstruction = `
@@ -250,7 +240,7 @@ reply directly with the text content.
     // --- Scheduling Logic ---
     // If this is a NEW message (not just waking up for a schedule), we need to decide if we delay.
     if (!state.scheduled_response_at && state.last_message_id !== state.ai_last_processed_message_id) {
-       const delaySeconds = template?.responseDelay || 0;
+       const delaySeconds = promptConfig?.responseDelay || 0;
        
        if (delaySeconds > 0) {
            const messageTime = new Date(state.last_message_at).getTime();
@@ -285,14 +275,10 @@ reply directly with the text content.
     })
     
     // 4. Generate
-    // We just ask for the next response.
-    // The history is already loaded.
     const result = await chat.sendMessage('[[Responded to user messages]]') 
     const responseText = result.response.text()
     
     // 5. Send Response
-    // We use rpc_send_message or insert directly.
-    // rpc_send_message handles receiver logic nicely.
     const { data: sentMsg, error: sendError } = await supabase.rpc('rpc_send_message', {
       match_id: matchId,
       content: responseText,
@@ -304,11 +290,11 @@ reply directly with the text content.
     console.log(`Sent response from ${targetBot.username}: "${responseText.substring(0, 20)}..."`)
     
     // 6. Update AI State
-    // Mark as processed up to the message we actually included in the context (checkpointId)
     await supabase.from('user_match_ai_state').update({
       ai_last_processed_message_id: checkpointId, 
       scheduled_response_at: null, // Clear schedule
-      ai_locked_until: null // Unlock
+      ai_locked_until: null, // Unlock
+      ai_follow_up_count: 0 // Reset follow up count since the bot just replied to a user message
     }).eq('match_id', matchId)
     
   } catch (err) {
@@ -320,20 +306,197 @@ reply directly with the text content.
   }
 }
 
+
+async function processFollowUps() {
+    if (!globalConfig.followUpEnabled) return
+
+    // Find candidates for follow-up
+    // Criteria:
+    // - Last message sender IS the digital human
+    // - Not locked
+    // - Count < Max Followups
+    // - Time since last message > Delay
+    
+    const now = Date.now()
+    
+    // We can't easily filter by "dynamic delay" in SQL since delay is in the Prompt config (app layer).
+    // So we fetch candidates that look "idle" and filter in code.
+    // Fetch items where last_message_at is older than, say, 1 hour (minimum sanity check) 
+    // to avoid fetching everything.
+    // Assuming minimum follow-up is not instant.
+    
+    const oneHourAgo = new Date(now - 60 * 60 * 1000).toISOString()
+    
+    const { data: candidates, error } = await supabase
+      .from('user_match_ai_state')
+      .select(`
+        match_id,
+        last_message_id,
+        last_message_at,
+        last_message_sender_id,
+        ai_follow_up_count,
+        ai_locked_until,
+        match:user_matches!inner (
+            user_a,
+            user_b
+        )
+      `)
+      .lt('last_message_at', oneHourAgo) 
+      .is('ai_locked_until', null)
+      
+    if (error) {
+        console.error('Error fetching follow-up candidates', error)
+        return
+    }
+    
+    if (!candidates || candidates.length === 0) return
+
+    // In-memory filter and processing
+    for (const c of candidates) {
+        // 1. Identify Bot
+        let botUserId = c.last_message_sender_id
+        const { data: senderUser } = await supabase.from('users').select('is_digital_human, username, gender, personality, age, bio, profession').eq('userid', botUserId).single()
+        
+        // If last sender wasn't a bot, then the user replied last, so no follow up needed (wait, if user replied last, allow AI response logic to handle it).
+        // Follow-ups are only when the USER hasn't replied to the BOT.
+        // So last_message_sender_id should be the BOT.
+        
+        if (!senderUser || !senderUser.is_digital_human) continue;
+        
+        // 2. Get Config for this Bot
+        const g = (senderUser.gender || 'Female').trim()
+        const p = (senderUser.personality || 'General').trim()
+        const cacheKey = `${g}:${p}`
+        
+        let promptConfig = systemPromptCache.get(cacheKey)
+        if (!promptConfig) promptConfig = systemPromptCache.get(`${g}:General`)
+        
+        if (!promptConfig || !promptConfig.followUpEnabled || !promptConfig.followUpPrompt) continue
+        
+        // 3. Check Counts
+        const max = promptConfig.maxFollowUps || 3
+        if ((c.ai_follow_up_count || 0) >= max) continue
+        
+        // 4. Check Delay
+        const delayMs = (promptConfig.followUpDelay || 86400) * 1000
+        const lastMsgTime = new Date(c.last_message_at).getTime()
+        
+        if (now < lastMsgTime + delayMs) continue
+        
+        // READY TO SEND FOLLOW UP
+        await sendFollowUp(c, senderUser, promptConfig)
+    }
+}
+
+async function sendFollowUp(state: any, botUser: any, config: CachedPrompt) {
+    const matchId = state.match_id
+    const lockTime = new Date(Date.now() + LOCK_DURATION_SECONDS * 1000)
+    
+     // 1. Lock
+    const { error: lockError } = await supabase
+        .from('user_match_ai_state')
+        .update({ ai_locked_until: lockTime.toISOString() })
+        .eq('match_id', matchId)
+        .eq('ai_follow_up_count', state.ai_follow_up_count) // Optimistic lock
+  
+    if (lockError) return
+    
+    console.log(`Sending follow-up named to match ${matchId} from ${botUser.username}`)
+
+    try {
+        // Compose Follow Up Prompt
+         const botProfile: BotProfileInput = {
+            name: botUser.username,
+            age: botUser.age,
+            archetype: botUser.profession,
+            bio: botUser.bio,
+            background: botUser.bio 
+        }
+        
+        // We use the followUpPrompt as the system instruction or user instruction?
+        // Usually follow up is "Generate a message to check in on the user".
+        // Let's treat followUpPrompt as the INSTRUCTION to the model.
+        // But we also need the persona.
+        
+        // Strategy: Use the BASE system prompt + an appended instruction to "Send a follow up message".
+        // Or if the follow_up_prompt is a full template, use it.
+        // Let's assume follow_up_prompt is the *Instruction* given to the model, e.g. "User hasn't replied in a while. Send a follow up..."
+        
+        // Ideally we start a chat with history, and ask it to generate a follow up.
+        
+        // Fetch history
+        const { data: messages } = await supabase.rpc('rpc_get_messages', {
+            match_id: matchId,
+            limit_count: 20,
+            start_index: 0
+        })
+        const history = [...(messages || [])].reverse()
+
+        const systemText = composeSystemPromptFromTemplate(config.template, botProfile)
+        
+        const chat = model.startChat({
+            history: history.map((m: any) => ({
+                role: m.sender_id === botUser.userid ? 'model' : 'user',
+                parts: [{ text: m.content || '' }]
+            })),
+            systemInstruction: {
+                role: 'system',
+                parts: [{ text: systemText }]
+            }
+        })
+        
+        // The trigger prompt
+        // Use the configured follow-up prompt as the user message that triggers the AI? 
+        // No, that puts words in user's mouth.
+        // We should send it as a system notification or just "Model, please follow up".
+        // Gemini API doesn't support "system" messages in history easily mid-stream in standard chat.
+        // We can just send a user part that says `(System: The user hasn't replied. ${config.followUpPrompt})`
+        
+        const triggerMsg = `[System: The user hasn't replied in a while. ${config.followUpPrompt || 'Send a casual follow-up message to re-engage the conversation.'}]`
+        
+        const result = await chat.sendMessage(triggerMsg)
+        const responseText = result.response.text()
+        
+        // Send
+        const { error: sendError } = await supabase.rpc('rpc_send_message', {
+            match_id: matchId,
+            content: responseText,
+            sender_id: botUser.userid
+        })
+        
+        if (sendError) throw sendError
+
+        // Update State
+        await supabase.from('user_match_ai_state').update({
+            ai_follow_up_count: (state.ai_follow_up_count || 0) + 1,
+            last_message_at: new Date().toISOString(), // Update this so we reset the timer for the NEXT follow up!
+             // Wait... if we update last_message_at, then "last_message_sender" becomes the BOT (which it already was).
+             // And "ai_follow_up_count" increments.
+             // Next loop will see last_message_at is new. It will wait another DELAY period.
+             // Then check count < max. 
+             // This correctly implements "Follow up 1, wait, Follow up 2, wait..."
+            last_message_id: (await supabase.from('messages').select('id').eq('match_id', matchId).order('created_at', {ascending:false}).limit(1).single()).data?.id,
+            ai_locked_until: null
+        }).eq('match_id', matchId)
+        
+        console.log(`Sent follow-up: ${responseText.substring(0, 20)}...`)
+
+    } catch (e) {
+        console.error('Error sending follow-up', e)
+        await supabase.from('user_match_ai_state').update({ ai_locked_until: null }).eq('match_id', matchId)
+    }
+}
+
+
 // Run
 main().catch(console.error)
 
 async function refreshSystemPrompts() {
   console.log('Refreshing system prompts...')
   try {
-    // We want the LATEST system prompt for each (gender, personality) tuple.
-    // "SystemPrompts" table has: id, gender, personality, system_prompt, created_at
-    // We can just fetch all and process in JS if list is small, or use distinct on.
-    // Given the scale, fetching a few hundred rows is fine.
-    
     const { data, error } = await supabase
       .from('SystemPrompts')
-      .select('gender, personality, system_prompt, response_delay, created_at')
+      .select('gender, personality, system_prompt, response_delay, follow_up_message_enabled, follow_up_message_prompt, follow_up_delay, max_follow_ups, created_at')
       .order('created_at', { ascending: false })
       
     if (error) {
@@ -341,7 +504,6 @@ async function refreshSystemPrompts() {
        return 
     }
     
-    // Process: store only the FIRST occurrence (which is latest due to sort) for each key
     const newCache = new Map<string, CachedPrompt>()
     let count = 0
     
@@ -353,7 +515,11 @@ async function refreshSystemPrompts() {
         if (!newCache.has(key)) {
             newCache.set(key, { 
                 template: row.system_prompt,
-                responseDelay: row.response_delay || 0
+                responseDelay: row.response_delay || 0,
+                followUpEnabled: row.follow_up_message_enabled || false,
+                followUpPrompt: row.follow_up_message_prompt,
+                followUpDelay: row.follow_up_delay || 86400,
+                maxFollowUps: row.max_follow_ups ?? 3
             })
             count++
         }
@@ -366,5 +532,26 @@ async function refreshSystemPrompts() {
   } catch (err) {
       console.error('Failed to refresh system prompts', err)
   }
+}
+
+async function refreshGlobalConfig() {
+    try {
+        const { data, error } = await supabase.from('digital_human_config').select('key, value')
+        if (error) {
+            console.error('Error fetching global config', error); 
+            return
+        }
+        
+        const configMap: any = {}
+        data.forEach((r: any) => configMap[r.key] = r.value)
+        
+        globalConfig.autoReplyEnabled = configMap['enable_digital_human_auto_response'] !== 'false' // Default true
+        globalConfig.followUpEnabled = configMap['enable_digital_human_follow_up'] !== 'false' // Default true
+        
+        lastConfigRefresh = Date.now()
+        // console.log('Global config refreshed:', globalConfig)
+    } catch (e) {
+        console.error('Error refreshing global config', e)
+    }
 }
 

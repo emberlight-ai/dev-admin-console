@@ -91,6 +91,10 @@ create table public."SystemPrompts" (
   personality text not null,
   system_prompt text not null,
   response_delay integer default 0,
+  follow_up_message_enabled boolean default false,
+  follow_up_message_prompt text,
+  follow_up_delay integer default 86400, -- 24 hours in seconds
+  max_follow_ups integer default 3,
   created_at timestamptz default now()
 );
 
@@ -1098,7 +1102,9 @@ values
   ('invites_per_cron_run', '5', 'How many invites to send per cron execution'),
   ('accept_rate_percentage', '30', 'Percentage of requests digital humans accept (0-100)'),
   ('active_hour_start', '5', 'Start hour for digital human activity in PST (0-23, 5 = 5 AM)'),
-  ('active_hour_end', '23', 'End hour for digital human activity in PST (0-23, 23 = 11:59 PM)')
+  ('active_hour_end', '23', 'End hour for digital human activity in PST (0-23, 23 = 11:59 PM)'),
+  ('enable_digital_human_auto_response', 'true', 'Global toggle for digital human auto-replies'),
+  ('enable_digital_human_follow_up', 'true', 'Global toggle for digital human follow-up messages')
 on conflict (key) do nothing;
 
 -- 3. Function: Send match invites from digital humans to real users
@@ -1354,6 +1360,8 @@ create table if not exists public.user_match_ai_state (
   -- Progress tracking
   ai_last_processed_message_id uuid, -- The last message the AI has already responded to/ingested
   scheduled_response_at timestamptz, -- When the AI is scheduled to respond (for delay)
+  
+  ai_follow_up_count integer default 0, -- Track number of follow-ups sent since last user message
   
   updated_at timestamptz default now()
 );

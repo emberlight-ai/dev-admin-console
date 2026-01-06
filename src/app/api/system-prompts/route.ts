@@ -13,15 +13,30 @@ export async function POST(req: NextRequest) {
     const personality = typeof body?.personality === "string" ? body.personality.trim() : ""
     const system_prompt = typeof body?.system_prompt === "string" ? body.system_prompt : ""
     const response_delay = typeof body?.response_delay === "number" ? body.response_delay : 0
+    const follow_up_message_enabled = typeof body?.follow_up_message_enabled === "boolean" ? body.follow_up_message_enabled : false
+    const follow_up_message_prompt = typeof body?.follow_up_message_prompt === "string" ? body.follow_up_message_prompt : ""
+    const follow_up_delay = typeof body?.follow_up_delay === "number" ? body.follow_up_delay : 86400
+    const max_follow_ups = typeof body?.max_follow_ups === "number" ? body.max_follow_ups : 3
 
     if (!gender) return jsonError("Missing required field: gender", 400)
     if (!personality) return jsonError("Missing required field: personality", 400)
     if (!system_prompt.trim()) return jsonError("Missing required field: system_prompt", 400)
     if (response_delay < 0 || response_delay > 86400) return jsonError("response_delay must be between 0 and 86400", 400)
+    if (follow_up_delay < 0) return jsonError("follow_up_delay must be positive", 400)
+    if (max_follow_ups < 0 || max_follow_ups > 10) return jsonError("max_follow_ups should be reasonable (0-10)", 400)
 
     const { data, error } = await supabaseAdmin
       .from("SystemPrompts")
-      .insert({ gender, personality, system_prompt, response_delay })
+      .insert({ 
+        gender, 
+        personality, 
+        system_prompt, 
+        response_delay,
+        follow_up_message_enabled,
+        follow_up_message_prompt,
+        follow_up_delay,
+        max_follow_ups
+      })
       .select("id,gender,personality,created_at,response_delay")
       .single()
 

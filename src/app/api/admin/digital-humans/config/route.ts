@@ -39,6 +39,8 @@ export async function POST(req: NextRequest) {
       "accept_rate_percentage",
       "active_hour_start",
       "active_hour_end",
+      "enable_digital_human_auto_response",
+      "enable_digital_human_follow_up",
     ]
 
     for (const key of allowedKeys) {

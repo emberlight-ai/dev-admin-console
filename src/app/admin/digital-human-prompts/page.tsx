@@ -2,12 +2,12 @@
 
 import * as React from "react"
 import { toast } from "sonner"
+import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Dialog,
@@ -30,12 +30,6 @@ import {
 
 type Gender = "Female" | "Male"
 type KeyRow = { gender: string; personality: string; created_at: string }
-
-const PLACEHOLDER_RE = /<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot_profile>/i
-
-function toGender(v: string): Gender {
-  return v === "Male" ? "Male" : "Female"
-}
 
 export default function DigitalHumanPromptsPage() {
   const [genderFilter, setGenderFilter] = React.useState<"all" | Gender>("all")
@@ -90,11 +84,9 @@ export default function DigitalHumanPromptsPage() {
 
         <div className="flex gap-2">
           <ConfigurationDialog trigger={<Button variant="outline">Global Configuration</Button>} />
-          <PromptEditorDialog
-            mode="create"
-            trigger={<Button>+ System Prompt</Button>}
-            onSaved={fetchKeys}
-          />
+          <Link href="/admin/digital-human-prompts/manage">
+            <Button>+ System Prompt</Button>
+          </Link>
         </div>
       </div>
 
@@ -140,13 +132,9 @@ export default function DigitalHumanPromptsPage() {
                     <TableCell className="font-medium">{k.personality}</TableCell>
                     <TableCell className="text-muted-foreground">{new Date(k.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
-                      <PromptEditorDialog
-                        mode="edit"
-                        initialGender={toGender(k.gender)}
-                        initialPersonality={k.personality}
-                        trigger={<Button variant="outline">Edit</Button>}
-                        onSaved={fetchKeys}
-                      />
+                      <Link href={`/admin/digital-human-prompts/manage?gender=${encodeURIComponent(k.gender)}&personality=${encodeURIComponent(k.personality)}`}>
+                        <Button variant="outline" size="sm">Edit</Button>
+                      </Link>
                     </TableCell>
                   </TableRow>
                 ))
@@ -171,6 +159,8 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
     accept_rate_percentage: "30",
     active_hour_start: "5",
     active_hour_end: "23",
+    enable_digital_human_auto_response: "true",
+    enable_digital_human_follow_up: "true",
   })
 
   React.useEffect(() => {
@@ -222,6 +212,36 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
           <div className="p-10 text-center text-muted-foreground">Loading config...</div>
         ) : (
           <div className="grid gap-6 p-4">
+
+            <div className="grid grid-cols-2 gap-4 border-b pb-4">
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="g-auto-reply"
+                    className="h-4 w-4 rounded border-gray-300 accent-primary"
+                    checked={config.enable_digital_human_auto_response !== "false"}
+                    onChange={(e) => setConfig({ ...config, enable_digital_human_auto_response: e.target.checked ? "true" : "false" })}
+                  />
+                  <Label htmlFor="g-auto-reply">Enable Auto-Reply</Label>
+                </div>
+                <p className="text-xs text-muted-foreground ml-6">Digital humans will respond to new user messages automatically.</p>
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="g-follow-up"
+                    className="h-4 w-4 rounded border-gray-300 accent-primary"
+                    checked={config.enable_digital_human_follow_up !== "false"}
+                    onChange={(e) => setConfig({ ...config, enable_digital_human_follow_up: e.target.checked ? "true" : "false" })}
+                  />
+                  <Label htmlFor="g-follow-up">Enable Follow-ups</Label>
+                </div>
+                <p className="text-xs text-muted-foreground ml-6">Digital humans will send check-in messages if user is inactive (if enabled per bot).</p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Max invites per user</Label>
@@ -292,169 +312,3 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
     </Dialog>
   )
 }
-
-function PromptEditorDialog({
-  mode,
-  initialGender,
-  initialPersonality,
-  trigger,
-  onSaved,
-}: {
-  mode: "create" | "edit"
-  initialGender?: Gender
-  initialPersonality?: string
-  trigger: React.ReactNode
-  onSaved: () => void
-}) {
-  const [open, setOpen] = React.useState(false)
-  const [saving, setSaving] = React.useState(false)
-
-  const [gender, setGender] = React.useState<Gender>(initialGender ?? "Female")
-  const [personality, setPersonality] = React.useState(initialPersonality ?? "")
-  const [systemPrompt, setSystemPrompt] = React.useState("")
-  const [responseDelay, setResponseDelay] = React.useState<number>(0)
-
-  const title = mode === "create" ? "Create system prompt" : `Edit: ${initialGender} · ${initialPersonality}`
-
-  React.useEffect(() => {
-    if (!open) return
-    setSaving(false)
-    setGender(initialGender ?? "Female")
-    setPersonality(initialPersonality ?? "")
-    setSystemPrompt("")
-    setResponseDelay(0)
-
-    if (mode === "edit" && initialGender && initialPersonality) {
-      const run = async () => {
-        try {
-          const res = await fetch(
-            `/api/system-prompts/latest?gender=${encodeURIComponent(initialGender)}&personality=${encodeURIComponent(
-              initialPersonality
-            )}`
-          )
-          const json = (await res.json()) as { data?: { system_prompt: string; response_delay?: number } | null; error?: string }
-          if (!res.ok) throw new Error(json.error || "Failed to load latest prompt")
-          setSystemPrompt(json.data?.system_prompt ?? "")
-          setResponseDelay(json.data?.response_delay ?? 0)
-        } catch (err: unknown) {
-          console.error(err)
-          toast.error(err instanceof Error ? err.message : "Failed to load latest prompt")
-        }
-      }
-      void run()
-    }
-  }, [open, mode, initialGender, initialPersonality])
-
-  const save = async () => {
-    const g = gender.trim()
-    const p = personality.trim()
-    const sp = systemPrompt
-    const rd = Number(responseDelay)
-
-    if (!g) return toast.error("Gender is required")
-    if (!p) return toast.error("Personality is required")
-    if (!sp.trim()) return toast.error("System prompt is required")
-    if (!PLACEHOLDER_RE.test(sp)) {
-      return toast.error("Prompt must include: <bot_profile> BOT_PROFILE_DETAILS </bot_profile>")
-    }
-    if (isNaN(rd) || rd < 0 || rd > 86400) {
-      return toast.error("Response delay must be between 0 and 86400 seconds")
-    }
-
-    setSaving(true)
-    try {
-      const res = await fetch("/api/system-prompts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gender: g, personality: p, system_prompt: sp, response_delay: rd }),
-      })
-      const json = (await res.json()) as { data?: unknown; error?: string }
-      if (!res.ok) throw new Error(json.error || "Failed to save prompt")
-      toast.success(mode === "create" ? "Prompt created" : "New prompt version created")
-      setOpen(false)
-      onSaved()
-    } catch (err: unknown) {
-      console.error(err)
-      toast.error(err instanceof Error ? err.message : "Failed to save prompt")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogXCloseButton />
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>
-            Templates must include the placeholder block so the app can inject the generated bot profile.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="grid gap-4 p-4 pt-0">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Gender</Label>
-              <select
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                value={gender}
-                onChange={(e) => setGender(e.target.value as Gender)}
-                disabled={mode === "edit"}
-              >
-                <option value="Female">Female</option>
-                <option value="Male">Male</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>Personality</Label>
-              <Input
-                value={personality}
-                onChange={(e) => setPersonality(e.target.value)}
-                placeholder="e.g. calm_playboy"
-                disabled={mode === "edit"}
-              />
-            </div>
-            <div className="space-y-2 col-span-2 sm:col-span-2">
-              <Label>Response Delay (seconds) - 0 to 86400</Label>
-              <Input
-                type="number"
-                min={0}
-                max={86400}
-                value={responseDelay}
-                onChange={(e) => setResponseDelay(Number(e.target.value))}
-                placeholder="0"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>System prompt template</Label>
-            <Textarea
-              rows={16}
-              className="max-h-[420px] overflow-y-auto"
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              placeholder={`Include:\n<bot_profile>\nBOT_PROFILE_DETAILS\n</bot_profile>`}
-            />
-            <div className="text-xs text-muted-foreground">
-              Required placeholder: <code className="rounded bg-muted px-1 py-0.5">BOT_PROFILE_DETAILS</code>
-            </div>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={saving}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={saving}>
-            {saving ? "Saving..." : "Save"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-
