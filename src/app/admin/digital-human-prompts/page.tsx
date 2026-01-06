@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { CheckCircle2, Clock } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -29,7 +30,13 @@ import {
 } from "@/components/ui/table"
 
 type Gender = "Female" | "Male"
-type KeyRow = { gender: string; personality: string; created_at: string }
+type KeyRow = {
+  gender: string
+  personality: string
+  created_at: string
+  response_delay: number
+  follow_up_message_enabled: boolean
+}
 
 export default function DigitalHumanPromptsPage() {
   const [genderFilter, setGenderFilter] = React.useState<"all" | Gender>("all")
@@ -108,6 +115,8 @@ export default function DigitalHumanPromptsPage() {
               <TableRow>
                 <TableHead>Gender</TableHead>
                 <TableHead>Personality</TableHead>
+                <TableHead>Response Delay</TableHead>
+                <TableHead>Follow-up</TableHead>
                 <TableHead>Last updated</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -115,13 +124,13 @@ export default function DigitalHumanPromptsPage() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                     Loading...
                   </TableCell>
                 </TableRow>
               ) : keys.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                     No prompts found.
                   </TableCell>
                 </TableRow>
@@ -130,6 +139,26 @@ export default function DigitalHumanPromptsPage() {
                   <TableRow key={`${k.gender}::${k.personality}`} className="hover:bg-muted/20">
                     <TableCell>{k.gender}</TableCell>
                     <TableCell className="font-medium">{k.personality}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                        <Clock className="h-4 w-4" />
+                        {k.response_delay > 0 ? (
+                          <span>{k.response_delay}s</span>
+                        ) : (
+                          <span className="text-muted-foreground/60">Instant</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {k.follow_up_message_enabled ? (
+                        <div className="flex items-center gap-1.5 text-sm">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-muted-foreground">Enabled</span>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-muted-foreground/60">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{new Date(k.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
                       <Link href={`/admin/digital-human-prompts/manage?gender=${encodeURIComponent(k.gender)}&personality=${encodeURIComponent(k.personality)}`}>

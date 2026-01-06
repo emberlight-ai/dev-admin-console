@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from "react"
+import { Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
 import { ChevronLeft } from "lucide-react"
@@ -13,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea"
 
 const PLACEHOLDER_RE = /<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot_profile>/i
 
-export default function ManagePromptPage() {
+function ManagePromptPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const editGender = searchParams.get("gender")
@@ -246,5 +247,13 @@ export default function ManagePromptPage() {
         <Button onClick={save} disabled={saving}>{saving ? "Saving..." : "Save Changes"}</Button>
       </div>
     </div>
+  )
+}
+
+export default function ManagePromptPage() {
+  return (
+    <Suspense fallback={<div className="p-10 text-center">Loading...</div>}>
+      <ManagePromptPageContent />
+    </Suspense>
   )
 }

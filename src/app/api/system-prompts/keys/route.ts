@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server"
 
 import { supabaseAdmin } from "@/lib/supabase"
 
-type KeyRow = { gender: string; personality: string; created_at: string }
+type KeyRow = { 
+  gender: string
+  personality: string
+  created_at: string
+  response_delay: number
+  follow_up_message_enabled: boolean
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -10,7 +16,7 @@ export async function GET(req: NextRequest) {
 
   let q = supabaseAdmin
     .from("SystemPrompts")
-    .select("gender,personality,created_at")
+    .select("gender,personality,created_at,response_delay,follow_up_message_enabled")
     .order("created_at", { ascending: false })
     .limit(1000)
 
@@ -31,7 +37,13 @@ export async function GET(req: NextRequest) {
     const k = `${g}::${p}`
     if (seen.has(k)) continue
     seen.add(k)
-    keys.push({ gender: g, personality: p, created_at: r.created_at })
+    keys.push({ 
+      gender: g, 
+      personality: p, 
+      created_at: r.created_at,
+      response_delay: r.response_delay ?? 0,
+      follow_up_message_enabled: r.follow_up_message_enabled ?? false
+    })
   }
 
   return NextResponse.json({ data: keys })
