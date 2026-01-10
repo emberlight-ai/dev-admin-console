@@ -24,6 +24,17 @@ export default function DigitalHumanDetail() {
   const [loading, setLoading] = React.useState(true)
   const [computedSystemPrompt, setComputedSystemPrompt] = React.useState<string | null>(null)
   const [effectiveSystemPrompt, setEffectiveSystemPrompt] = React.useState<string | null>(null)
+  const [systemPromptMeta, setSystemPromptMeta] = React.useState<{
+    response_delay: number
+    immediate_match_enabled: boolean
+    follow_up_message_enabled: boolean
+    active_greeting_enabled: boolean
+    follow_up_delay: number
+    max_follow_ups: number
+    created_at: string | null
+    gender: string
+    personality: string
+  } | null>(null)
   const [zoomSrc, setZoomSrc] = React.useState<string | null>(null)
   const [profileOpen, setProfileOpen] = React.useState(false)
 
@@ -50,57 +61,81 @@ export default function DigitalHumanDetail() {
     setLoading(false);
   };
 
-  React.useEffect(() => {
-    if (!user) {
-      setComputedSystemPrompt(null)
-      setEffectiveSystemPrompt(null)
-      return
-    }
-
+  const refreshSystemPromptInfo = React.useCallback(async () => {
+    if (!user) return
     const g = (user.gender ?? "").trim()
     const p = ((user.personality ?? "").trim() || "General").trim()
     if (!g) {
       setComputedSystemPrompt(null)
+      setSystemPromptMeta(null)
       return
     }
 
-    let cancelled = false
-    const run = async () => {
-      try {
-        const res = await fetch(
-          `/api/system-prompts/latest?gender=${encodeURIComponent(g)}&personality=${encodeURIComponent(p)}`
-        )
-        const json = (await res.json()) as { data?: { system_prompt: string; created_at: string } | null; error?: string }
-        if (!res.ok) throw new Error(json.error || "Failed to load system prompt template")
-
-        const tpl = json.data?.system_prompt ?? ""
-        if (!tpl.trim()) {
-          if (!cancelled) setComputedSystemPrompt(null)
-          return
-        }
-
-        const composed = composeSystemPromptFromTemplate(
-          tpl,
-          {
-            name: user.username,
-            age: user.age ?? null,
-            archetype: user.profession ?? null,
-            bio: user.bio ?? null,
-            background: user.bio ?? null,
-          },
-          `${user.userid}:${p}`
-        )
-        if (!cancelled) setComputedSystemPrompt(composed)
-      } catch (err: unknown) {
-        console.error(err)
-        if (!cancelled) setComputedSystemPrompt(null)
+    try {
+      const res = await fetch(`/api/system-prompts/latest?gender=${encodeURIComponent(g)}&personality=${encodeURIComponent(p)}`)
+      const json = (await res.json()) as {
+        data?: {
+          system_prompt: string
+          created_at: string
+          response_delay?: number
+          immediate_match_enabled?: boolean
+          follow_up_message_enabled?: boolean
+          follow_up_message_prompt?: string
+          follow_up_delay?: number
+          max_follow_ups?: number
+          active_greeting_enabled?: boolean
+          active_greeting_prompt?: string
+        } | null
+        error?: string
       }
-    }
-    void run()
-    return () => {
-      cancelled = true
+      if (!res.ok) throw new Error(json.error || "Failed to load system prompt template")
+
+      setSystemPromptMeta({
+        response_delay: json.data?.response_delay ?? 0,
+        immediate_match_enabled: json.data?.immediate_match_enabled ?? false,
+        follow_up_message_enabled: json.data?.follow_up_message_enabled ?? false,
+        active_greeting_enabled: json.data?.active_greeting_enabled ?? false,
+        follow_up_delay: json.data?.follow_up_delay ?? 86400,
+        max_follow_ups: json.data?.max_follow_ups ?? 3,
+        created_at: json.data?.created_at ?? null,
+        gender: g,
+        personality: p,
+      })
+
+      const tpl = json.data?.system_prompt ?? ""
+      if (!tpl.trim()) {
+        setComputedSystemPrompt(null)
+        return
+      }
+
+      const composed = composeSystemPromptFromTemplate(
+        tpl,
+        {
+          name: user.username,
+          age: user.age ?? null,
+          archetype: user.profession ?? null,
+          bio: user.bio ?? null,
+          background: user.bio ?? null,
+        },
+        `${user.userid}:${p}`
+      )
+      setComputedSystemPrompt(composed)
+    } catch (err: unknown) {
+      console.error(err)
+      setComputedSystemPrompt(null)
+      setSystemPromptMeta(null)
     }
   }, [user])
+
+  React.useEffect(() => {
+    if (!user) {
+      setComputedSystemPrompt(null)
+      setEffectiveSystemPrompt(null)
+      setSystemPromptMeta(null)
+      return
+    }
+    void refreshSystemPromptInfo()
+  }, [user, refreshSystemPromptInfo])
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading...</div>
   if (!user) return <div className="text-sm text-muted-foreground">User not found</div>
@@ -122,7 +157,8 @@ export default function DigitalHumanDetail() {
             avatarSrc={avatarSrc}
             onEdit={() => setProfileOpen(true)}
             onZoomAvatar={() => setZoomSrc(avatarSrc)}
-            computedSystemPrompt={effectiveSystemPrompt ?? computedSystemPrompt}
+            systemPromptMeta={systemPromptMeta}
+            onPromptSaved={() => void refreshSystemPromptInfo()}
           />
         </div>
 
@@ -131,7 +167,7 @@ export default function DigitalHumanDetail() {
           <Card className="p-6">
             <Tabs defaultValue="posts" className="w-full">
               <TabsList>
-              <TabsTrigger value="posts">Post History</TabsTrigger>
+                <TabsTrigger value="posts">Post History</TabsTrigger>
                 <TabsTrigger value="chat">Chat &amp; Tuning</TabsTrigger>
                 <TabsTrigger value="history">Chat History</TabsTrigger>
               </TabsList>
@@ -144,7 +180,7 @@ export default function DigitalHumanDetail() {
               </TabsContent>
 
               <TabsContent value="history">
-                 <ChatHistory currentUserId={user.userid} />
+                <ChatHistory currentUserId={user.userid} />
               </TabsContent>
 
               <TabsContent value="posts" className="mt-4">

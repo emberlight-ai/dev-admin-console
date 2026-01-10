@@ -111,6 +111,40 @@ let lastPromptRefresh = 0
 let globalConfig: GlobalConfig = { autoReplyEnabled: true }
 let lastConfigRefresh = 0
 
+// Avoid hammering `users` on every poll.
+const USER_CACHE_TTL_MS = 10 * 60 * 1000
+const userIsDigitalHumanCache = new Map<UUID, { value: boolean; expiresAt: number }>()
+const userRowCache = new Map<UUID, { value: UserRow; expiresAt: number }>()
+
+async function getIsDigitalHuman(userid: UUID): Promise<boolean | null> {
+  const cached = userIsDigitalHumanCache.get(userid)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  const { data, error } = await supabase.from('users').select('is_digital_human').eq('userid', userid).single()
+  if (error || !data) return null
+
+  const val = Boolean((data as { is_digital_human?: boolean }).is_digital_human)
+  userIsDigitalHumanCache.set(userid, { value: val, expiresAt: Date.now() + USER_CACHE_TTL_MS })
+  return val
+}
+
+async function getUserRow(userid: UUID): Promise<UserRow | null> {
+  const cached = userRowCache.get(userid)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('userid, is_digital_human, username, personality, bio, gender, age, profession')
+    .eq('userid', userid)
+    .single()
+
+  if (error || !data) return null
+  const row = data as unknown as UserRow
+  userRowCache.set(userid, { value: row, expiresAt: Date.now() + USER_CACHE_TTL_MS })
+  userIsDigitalHumanCache.set(userid, { value: Boolean(row.is_digital_human), expiresAt: Date.now() + USER_CACHE_TTL_MS })
+  return row
+}
+
 function getPromptConfigForUser(user: Pick<UserRow, 'gender' | 'personality'>): CachedPrompt | undefined {
   const g = (user.gender || 'Female').trim()
   const p = (user.personality || 'General').trim()
@@ -221,23 +255,35 @@ async function processPendingConversations() {
 
     if (!c.last_message_sender_id) continue
 
-    const { data: senderUser } = await supabase
-      .from('users')
-      .select('is_digital_human')
-      .eq('userid', c.last_message_sender_id)
-      .single()
-
-    if (!senderUser || (senderUser as { is_digital_human?: boolean }).is_digital_human) continue
+    // If the latest message was sent by the bot, we should NOT keep re-processing this match forever.
+    // Mark it as processed so we only do work when a real user sends a new message.
+    const senderIsDh = await getIsDigitalHuman(c.last_message_sender_id)
+    if (senderIsDh == null) continue
+    if (senderIsDh) {
+      if (c.last_message_id && c.ai_last_processed_message_id !== c.last_message_id) {
+        await supabase
+          .from('user_match_ai_state')
+          .update({ ai_last_processed_message_id: c.last_message_id, scheduled_response_at: null })
+          .eq('match_id', c.match_id)
+          .eq('last_message_id', c.last_message_id)
+      }
+      continue
+    }
 
     const otherUserId = c.match.user_a === c.last_message_sender_id ? c.match.user_b : c.match.user_a
-    const { data: otherUser } = await supabase
-      .from('users')
-      .select('userid, is_digital_human, username, personality, bio, gender, age, profession')
-      .eq('userid', otherUserId)
-      .single()
-
-    const bot = otherUser as unknown as UserRow | null
-    if (!bot || !bot.is_digital_human) continue
+    const bot = await getUserRow(otherUserId)
+    if (!bot) continue
+    if (!bot.is_digital_human) {
+      // Human↔human match: mark processed so we don't keep polling this forever.
+      if (c.last_message_id && c.ai_last_processed_message_id !== c.last_message_id) {
+        await supabase
+          .from('user_match_ai_state')
+          .update({ ai_last_processed_message_id: c.last_message_id, scheduled_response_at: null })
+          .eq('match_id', c.match_id)
+          .eq('last_message_id', c.last_message_id)
+      }
+      continue
+    }
 
     await processConversation(c, bot)
   }

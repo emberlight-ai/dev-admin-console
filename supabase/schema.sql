@@ -1431,13 +1431,21 @@ returns trigger
 language plpgsql
 security definer
 as $$
+declare
+  sender_is_digital_human boolean;
 begin
+  select coalesce(u.is_digital_human, false) into sender_is_digital_human
+  from public.users u
+  where u.userid = new.sender_id;
+
   -- Upsert into tracking table
   insert into public.user_match_ai_state (
     match_id, 
     last_message_id, 
     last_message_at, 
     last_message_sender_id,
+    ai_last_processed_message_id,
+    scheduled_response_at,
     updated_at
   )
   values (
@@ -1445,6 +1453,8 @@ begin
     new.id, 
     new.created_at, 
     new.sender_id,
+    case when sender_is_digital_human then new.id else null end,
+    null,
     now()
   )
   on conflict (match_id) do update
@@ -1452,6 +1462,16 @@ begin
     last_message_id = excluded.last_message_id,
     last_message_at = excluded.last_message_at,
     last_message_sender_id = excluded.last_message_sender_id,
+    -- If the latest message was sent by a digital human, mark it as already processed so
+    -- auto-reply workers only react to real user messages.
+    ai_last_processed_message_id = case
+      when sender_is_digital_human then excluded.last_message_id
+      else public.user_match_ai_state.ai_last_processed_message_id
+    end,
+    scheduled_response_at = case
+      when sender_is_digital_human then null
+      else public.user_match_ai_state.scheduled_response_at
+    end,
     updated_at = now();
     
   return new;

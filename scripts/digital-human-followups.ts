@@ -93,7 +93,8 @@ interface GlobalConfig {
 }
 
 // ---- Config / cache ----
-const POLLING_INTERVAL_MS = 1000
+// Follow-ups are hour/day scale; don't poll every second.
+const POLLING_INTERVAL_MS = 10_000
 const LOCK_DURATION_SECONDS = 30
 const PROMPT_REFRESH_INTERVAL_MS = 60 * 60 * 1000
 const CONFIG_REFRESH_INTERVAL_MS = 5 * 60 * 1000
@@ -102,6 +103,40 @@ let systemPromptCache = new Map<string, CachedPrompt>()
 let lastPromptRefresh = 0
 let globalConfig: GlobalConfig = { followUpEnabled: true }
 let lastConfigRefresh = 0
+
+// Avoid hammering `users` on every poll.
+const USER_CACHE_TTL_MS = 10 * 60 * 1000
+const userIsDigitalHumanCache = new Map<UUID, { value: boolean; expiresAt: number }>()
+const userRowCache = new Map<UUID, { value: UserRow; expiresAt: number }>()
+
+async function getIsDigitalHuman(userid: UUID): Promise<boolean | null> {
+  const cached = userIsDigitalHumanCache.get(userid)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  const { data, error } = await supabase.from('users').select('is_digital_human').eq('userid', userid).single()
+  if (error || !data) return null
+
+  const val = Boolean((data as { is_digital_human?: boolean }).is_digital_human)
+  userIsDigitalHumanCache.set(userid, { value: val, expiresAt: Date.now() + USER_CACHE_TTL_MS })
+  return val
+}
+
+async function getUserRow(userid: UUID): Promise<UserRow | null> {
+  const cached = userRowCache.get(userid)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('userid, is_digital_human, username, gender, personality, age, bio, profession')
+    .eq('userid', userid)
+    .single()
+
+  if (error || !data) return null
+  const row = data as unknown as UserRow
+  userRowCache.set(userid, { value: row, expiresAt: Date.now() + USER_CACHE_TTL_MS })
+  userIsDigitalHumanCache.set(userid, { value: Boolean(row.is_digital_human), expiresAt: Date.now() + USER_CACHE_TTL_MS })
+  return row
+}
 
 function getPromptConfigForUser(user: Pick<UserRow, 'gender' | 'personality'>): CachedPrompt | undefined {
   const g = (user.gender || 'Female').trim()
@@ -187,6 +222,8 @@ async function processFollowUps() {
     )
     .lt('last_message_at', oneHourAgo)
     .is('ai_locked_until', null)
+    .not('last_message_id', 'is', null)
+    .not('last_message_sender_id', 'is', null)
 
   if (error) {
     console.error('[dh-followups] Error fetching follow-up candidates', error)
@@ -197,13 +234,11 @@ async function processFollowUps() {
   for (const c of candidates) {
     if (!c.last_message_sender_id || !c.last_message_at) continue
 
-    const { data: senderUser } = await supabase
-      .from('users')
-      .select('userid, is_digital_human, username, gender, personality, age, bio, profession')
-      .eq('userid', c.last_message_sender_id)
-      .single()
+    // Follow-ups only happen when the *latest* message was from the digital human.
+    const senderIsDh = await getIsDigitalHuman(c.last_message_sender_id)
+    if (!senderIsDh) continue
 
-    const botUser = senderUser as unknown as UserRow | null
+    const botUser = await getUserRow(c.last_message_sender_id)
     if (!botUser || !botUser.is_digital_human) continue
 
     const promptConfig = getPromptConfigForUser(botUser)
@@ -257,27 +292,20 @@ async function sendFollowUp(state: UserMatchAiStateFollowUpCandidateRow, botUser
     const result = await model.generateContent(prompt)
     const responseText = result.response.text()
 
-    const { error: sendError } = await supabase.rpc('rpc_send_message', {
+    const { data: sentMsg, error: sendError } = await supabase.rpc('rpc_send_message', {
       match_id: matchId,
       content: responseText,
       sender_id: botUser.userid,
     })
     if (sendError) throw sendError
 
-    const latestMsg = await supabase
-      .from('messages')
-      .select('id')
-      .eq('match_id', matchId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single()
-
     await supabase
       .from('user_match_ai_state')
       .update({
         ai_follow_up_count: (state.ai_follow_up_count || 0) + 1,
-        last_message_at: new Date().toISOString(),
-        last_message_id: latestMsg.data?.id,
+        // last_message_* will be updated by the on_message_created_update_ai_state trigger.
+        // Still setting last_message_id is fine if the RPC returns it, but not required.
+        last_message_id: (sentMsg as { id?: string } | null)?.id ?? state.last_message_id,
         ai_locked_until: null,
       })
       .eq('match_id', matchId)
