@@ -35,10 +35,12 @@ type KeyRow = {
   personality: string
   created_at: string
   response_delay: number
+  immediate_match_enabled: boolean
   follow_up_message_enabled: boolean
+  active_greeting_enabled: boolean
 }
 
-export default function DigitalHumanPromptsPage() {
+export default function SystemPromptsPage() {
   const [genderFilter, setGenderFilter] = React.useState<"all" | Gender>("all")
   const [loading, setLoading] = React.useState(true)
   const [keys, setKeys] = React.useState<KeyRow[]>([])
@@ -46,7 +48,9 @@ export default function DigitalHumanPromptsPage() {
   const fetchKeys = React.useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/system-prompts/keys?gender=${encodeURIComponent(genderFilter === "all" ? "all" : genderFilter)}`)
+      const res = await fetch(
+        `/api/system-prompts/keys?gender=${encodeURIComponent(genderFilter === "all" ? "all" : genderFilter)}`
+      )
       const json = (await res.json()) as { data?: KeyRow[]; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to load prompts")
       setKeys(json.data ?? [])
@@ -63,13 +67,12 @@ export default function DigitalHumanPromptsPage() {
     void fetchKeys()
   }, [fetchKeys])
 
-
   const empty = !loading && keys.length === 0
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Digital Human Prompts</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">System Prompts</h1>
         <p className="text-sm text-muted-foreground">
           Create versioned prompt templates by gender and personality. Each edit creates a new entry.
         </p>
@@ -79,7 +82,7 @@ export default function DigitalHumanPromptsPage() {
         <Tabs
           value={genderFilter}
           onValueChange={(v) => {
-            if (v === "all" || v === "Female" || v === "Male") setGenderFilter(v as any)
+            if (v === "all" || v === "Female" || v === "Male") setGenderFilter(v)
           }}
         >
           <TabsList>
@@ -91,7 +94,7 @@ export default function DigitalHumanPromptsPage() {
 
         <div className="flex gap-2">
           <ConfigurationDialog trigger={<Button variant="outline">Global Configuration</Button>} />
-          <Link href="/admin/digital-human-prompts/manage">
+          <Link href="/admin/system-prompts/manage">
             <Button>+ System Prompt</Button>
           </Link>
         </div>
@@ -105,9 +108,7 @@ export default function DigitalHumanPromptsPage() {
         <Card className="p-0">
           <div className="border-b p-4">
             <div className="text-sm font-medium">Latest prompt per key</div>
-            <div className="text-xs text-muted-foreground">
-              {loading ? "Loading..." : `${keys.length} personalities`}
-            </div>
+            <div className="text-xs text-muted-foreground">{loading ? "Loading..." : `${keys.length} personalities`}</div>
           </div>
 
           <Table>
@@ -116,7 +117,9 @@ export default function DigitalHumanPromptsPage() {
                 <TableHead>Gender</TableHead>
                 <TableHead>Personality</TableHead>
                 <TableHead>Response Delay</TableHead>
+                <TableHead>Immediate Match</TableHead>
                 <TableHead>Follow-up</TableHead>
+                <TableHead>Greeting</TableHead>
                 <TableHead>Last updated</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -124,13 +127,13 @@ export default function DigitalHumanPromptsPage() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                     Loading...
                   </TableCell>
                 </TableRow>
               ) : keys.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                     No prompts found.
                   </TableCell>
                 </TableRow>
@@ -142,12 +145,18 @@ export default function DigitalHumanPromptsPage() {
                     <TableCell>
                       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
                         <Clock className="h-4 w-4" />
-                        {k.response_delay > 0 ? (
-                          <span>{k.response_delay}s</span>
-                        ) : (
-                          <span className="text-muted-foreground/60">Instant</span>
-                        )}
+                        {k.response_delay > 0 ? <span>{k.response_delay}s</span> : <span className="text-muted-foreground/60">Instant</span>}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      {k.immediate_match_enabled ? (
+                        <div className="flex items-center gap-1.5 text-sm">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-muted-foreground">Enabled</span>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-muted-foreground/60">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       {k.follow_up_message_enabled ? (
@@ -159,10 +168,24 @@ export default function DigitalHumanPromptsPage() {
                         <span className="text-sm text-muted-foreground/60">—</span>
                       )}
                     </TableCell>
+                    <TableCell>
+                      {k.active_greeting_enabled ? (
+                        <div className="flex items-center gap-1.5 text-sm">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-muted-foreground">Enabled</span>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-muted-foreground/60">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{new Date(k.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
-                      <Link href={`/admin/digital-human-prompts/manage?gender=${encodeURIComponent(k.gender)}&personality=${encodeURIComponent(k.personality)}`}>
-                        <Button variant="outline" size="sm">Edit</Button>
+                      <Link
+                        href={`/admin/system-prompts/manage?gender=${encodeURIComponent(k.gender)}&personality=${encodeURIComponent(k.personality)}`}
+                      >
+                        <Button variant="outline" size="sm">
+                          Edit
+                        </Button>
                       </Link>
                     </TableCell>
                   </TableRow>
@@ -172,8 +195,6 @@ export default function DigitalHumanPromptsPage() {
           </Table>
         </Card>
       )}
-
-
     </div>
   )
 }
@@ -232,16 +253,13 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
         <DialogXCloseButton />
         <DialogHeader>
           <DialogTitle>Global Configuration</DialogTitle>
-          <DialogDescription>
-            Configure automation settings for all digital humans.
-          </DialogDescription>
+          <DialogDescription>Configure automation settings for all digital humans.</DialogDescription>
         </DialogHeader>
 
         {loading ? (
           <div className="p-10 text-center text-muted-foreground">Loading config...</div>
         ) : (
           <div className="grid gap-6 p-4">
-
             <div className="grid grid-cols-2 gap-4 border-b pb-4">
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
@@ -250,7 +268,9 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
                     id="g-auto-reply"
                     className="h-4 w-4 rounded border-gray-300 accent-primary"
                     checked={config.enable_digital_human_auto_response !== "false"}
-                    onChange={(e) => setConfig({ ...config, enable_digital_human_auto_response: e.target.checked ? "true" : "false" })}
+                    onChange={(e) =>
+                      setConfig({ ...config, enable_digital_human_auto_response: e.target.checked ? "true" : "false" })
+                    }
                   />
                   <Label htmlFor="g-auto-reply">Enable Auto-Reply</Label>
                 </div>
@@ -263,11 +283,15 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
                     id="g-follow-up"
                     className="h-4 w-4 rounded border-gray-300 accent-primary"
                     checked={config.enable_digital_human_follow_up !== "false"}
-                    onChange={(e) => setConfig({ ...config, enable_digital_human_follow_up: e.target.checked ? "true" : "false" })}
+                    onChange={(e) =>
+                      setConfig({ ...config, enable_digital_human_follow_up: e.target.checked ? "true" : "false" })
+                    }
                   />
                   <Label htmlFor="g-follow-up">Enable Follow-ups</Label>
                 </div>
-                <p className="text-xs text-muted-foreground ml-6">Digital humans will send check-in messages if user is inactive (if enabled per bot).</p>
+                <p className="text-xs text-muted-foreground ml-6">
+                  Digital humans will send check-in messages if user is inactive (if enabled per bot).
+                </p>
               </div>
             </div>
 
@@ -341,3 +365,4 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
     </Dialog>
   )
 }
+

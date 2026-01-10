@@ -59,7 +59,7 @@ export default function ChatTrafficPage() {
 
       setStats(json.stats);
       setConversations(json.recent_conversations || []);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error);
       toast.error('Failed to load chat traffic.');
     } finally {
@@ -160,8 +160,8 @@ export default function ChatTrafficPage() {
                 // Identify who is who
                 // We assume one is bot, one is user. Or both users? logic handles bot-user matches.
                 // find the bot
-                let bot = userA?.is_digital_human ? userA : (userB?.is_digital_human ? userB : null);
-                let user = userA?.is_digital_human ? userB : (userB?.is_digital_human ? userA : userA); // logic if both human? just show A as user
+                const bot = userA?.is_digital_human ? userA : (userB?.is_digital_human ? userB : null);
+                const user = userA?.is_digital_human ? userB : (userB?.is_digital_human ? userA : userA); // logic if both human? just show A as user
 
                 // If both are bots or both humans (unlikely for AI Dashboard but possible in DB), handle gracefully
 

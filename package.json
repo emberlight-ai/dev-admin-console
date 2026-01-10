@@ -6,7 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "pm2:dh:auto-replies:restart": "pm2 startOrRestart deploy/pm2/ecosystem.config.cjs --only dh-auto-replies --update-env && pm2 save",
+    "pm2:dh:greetings:restart": "pm2 startOrRestart deploy/pm2/ecosystem.config.cjs --only dh-greetings --update-env && pm2 save",
+    "pm2:dh:followups:restart": "pm2 startOrRestart deploy/pm2/ecosystem.config.cjs --only dh-followups --update-env && pm2 save",
+    "pm2:dh:stop": "pm2 stop dh-auto-replies dh-greetings dh-followups || true",
+    "pm2:dh:delete": "pm2 delete dh-auto-replies dh-greetings dh-followups || true",
+    "pm2:dh:logs": "pm2 logs dh-auto-replies dh-greetings dh-followups",
+    "pm2:save": "pm2 save"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

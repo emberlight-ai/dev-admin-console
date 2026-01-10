@@ -91,10 +91,13 @@ create table public."SystemPrompts" (
   personality text not null,
   system_prompt text not null,
   response_delay integer default 0,
+  immediate_match_enabled boolean not null default false,
   follow_up_message_enabled boolean default false,
   follow_up_message_prompt text,
   follow_up_delay integer default 86400, -- 24 hours in seconds
   max_follow_ups integer default 3,
+  active_greeting_enabled boolean not null default false,
+  active_greeting_prompt text,
   created_at timestamptz default now()
 );
 
@@ -496,6 +499,10 @@ declare
   a uuid;
   b uuid;
   reciprocal_id uuid;
+  target_is_digital_human boolean;
+  target_gender text;
+  target_personality text;
+  immediate_enabled boolean := false;
 begin
   if target_user_id is null then
     raise exception 'target_user_id is required';
@@ -513,6 +520,49 @@ begin
   limit 1;
   if match_id is not null then
     return match_id;
+  end if;
+
+  -- If target is a digital human and their SystemPrompt template enables immediate match,
+  -- directly create the match (no pending request).
+  select u.is_digital_human, u.gender, u.personality
+    into target_is_digital_human, target_gender, target_personality
+  from public.users u
+  where u.userid = target_user_id
+    and u.deleted_at is null
+  limit 1;
+
+  if coalesce(target_is_digital_human, false) then
+    -- Resolve newest template for (gender, personality), fallback to (gender, 'General')
+    select sp.immediate_match_enabled
+      into immediate_enabled
+    from public."SystemPrompts" sp
+    where sp.gender = coalesce(nullif(trim(target_gender), ''), 'Female')
+      and sp.personality = coalesce(nullif(trim(target_personality), ''), 'General')
+    order by sp.created_at desc
+    limit 1;
+
+    if immediate_enabled is null then
+      select sp.immediate_match_enabled
+        into immediate_enabled
+      from public."SystemPrompts" sp
+      where sp.gender = coalesce(nullif(trim(target_gender), ''), 'Female')
+        and sp.personality = 'General'
+      order by sp.created_at desc
+      limit 1;
+    end if;
+
+    if coalesce(immediate_enabled, false) then
+      delete from public.match_requests
+      where (from_user_id = auth.uid() and to_user_id = target_user_id)
+         or (from_user_id = target_user_id and to_user_id = auth.uid());
+
+      insert into public.user_matches (user_a, user_b)
+      values (a, b)
+      on conflict (user_a, user_b) do update set created_at = public.user_matches.created_at
+      returning id into match_id;
+
+      return match_id;
+    end if;
   end if;
 
   -- If the other user has already invited me, auto-match:
@@ -1362,6 +1412,10 @@ create table if not exists public.user_match_ai_state (
   scheduled_response_at timestamptz, -- When the AI is scheduled to respond (for delay)
   
   ai_follow_up_count integer default 0, -- Track number of follow-ups sent since last user message
+
+  -- Greeting (sent on match creation when enabled)
+  ai_greeting_sent boolean not null default false,
+  ai_greeting_sent_at timestamptz,
   
   updated_at timestamptz default now()
 );
@@ -1410,3 +1464,30 @@ after insert on public.messages
 for each row
 execute function public.handle_new_message_ai_state();
 
+-- Trigger to ensure ai-state row exists as soon as a match is created (even before any messages)
+create or replace function public.handle_new_match_ai_state()
+returns trigger
+language plpgsql
+security definer
+as $$
+begin
+  insert into public.user_match_ai_state (
+    match_id,
+    updated_at
+  )
+  values (
+    new.id,
+    now()
+  )
+  on conflict (match_id) do update
+  set updated_at = now();
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_user_match_created_init_ai_state on public.user_matches;
+create trigger on_user_match_created_init_ai_state
+after insert on public.user_matches
+for each row
+execute function public.handle_new_match_ai_state();

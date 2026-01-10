@@ -31,7 +31,7 @@ const navGroups = [
     items: [
       { href: "/admin/users", label: "Dashboard", icon: LayoutDashboard },
       { href: "/admin/digital-humans", label: "Digital Humans", icon: Bot },
-      { href: "/admin/digital-human-prompts", label: "System Prompts", icon: ScrollText },
+      { href: "/admin/system-prompts", label: "System Prompts", icon: ScrollText },
     ],
   },
   {

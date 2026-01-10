@@ -60,7 +60,15 @@ export async function GET(req: NextRequest) {
 
     // Enhance recent with User details
     // We need to fetch User A and User B details for each match
-    const detailedRecent = await Promise.all((recent || []).map(async (item: any) => {
+    type RecentRow = {
+      match_id: string
+      last_message_at: string | null
+      last_message_sender_id: string | null
+      match: { user_a: string; user_b: string }
+    }
+    type UserRow = { userid: string; username: string | null; is_digital_human: boolean | null; avatar?: string | null; personality?: string | null }
+
+    const detailedRecent = await Promise.all(((recent || []) as unknown as RecentRow[]).map(async (item) => {
         const match = item.match;
         const ids = [match.user_a, match.user_b];
         
@@ -69,8 +77,9 @@ export async function GET(req: NextRequest) {
             .select('userid, username, is_digital_human, avatar, personality') // fetching avatar if exists, or just use ID
             .in('userid', ids);
             
-        const userA = users?.find((u: any) => u.userid === match.user_a);
-        const userB = users?.find((u: any) => u.userid === match.user_b);
+        const typedUsers = (users || []) as unknown as UserRow[]
+        const userA = typedUsers.find((u) => u.userid === match.user_a);
+        const userB = typedUsers.find((u) => u.userid === match.user_b);
         
         // Fetch snapshot of last message content
         const { data: lastMsg } = await supabase
@@ -99,10 +108,11 @@ export async function GET(req: NextRequest) {
       recent_conversations: detailedRecent
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching traffic stats:', error);
+    const message = error instanceof Error ? error.message : 'Internal Server Error'
     return NextResponse.json(
-      { error: error.message || 'Internal Server Error' },
+      { error: message },
       { status: 500 }
     );
   }

@@ -128,7 +128,7 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
       });
       
       setInputText('');
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast.error('Failed to send message.');
       console.error(err);
     } finally {

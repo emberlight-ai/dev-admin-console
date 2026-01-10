@@ -7,7 +7,9 @@ type KeyRow = {
   personality: string
   created_at: string
   response_delay: number
+  immediate_match_enabled: boolean
   follow_up_message_enabled: boolean
+  active_greeting_enabled: boolean
 }
 
 export async function GET(req: NextRequest) {
@@ -16,7 +18,7 @@ export async function GET(req: NextRequest) {
 
   let q = supabaseAdmin
     .from("SystemPrompts")
-    .select("gender,personality,created_at,response_delay,follow_up_message_enabled")
+    .select("gender,personality,created_at,response_delay,immediate_match_enabled,follow_up_message_enabled,active_greeting_enabled")
     .order("created_at", { ascending: false })
     .limit(1000)
 
@@ -42,7 +44,9 @@ export async function GET(req: NextRequest) {
       personality: p, 
       created_at: r.created_at,
       response_delay: r.response_delay ?? 0,
-      follow_up_message_enabled: r.follow_up_message_enabled ?? false
+      immediate_match_enabled: r.immediate_match_enabled ?? false,
+      follow_up_message_enabled: r.follow_up_message_enabled ?? false,
+      active_greeting_enabled: r.active_greeting_enabled ?? false
     })
   }
 
