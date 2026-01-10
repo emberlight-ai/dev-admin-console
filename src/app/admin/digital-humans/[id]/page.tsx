@@ -16,6 +16,7 @@ import { ProfileEditSheet } from "./_components/profile-edit-sheet"
 import { ChatHistory } from "@/components/matching/chat-history"
 import { ChatPanel } from "./_components/chat-panel"
 import { PostsPanel } from "./_components/posts-panel"
+import { ChatImagesPanel } from "./_components/chat-images-panel"
 import type { DbUser } from "./_components/types"
 
 export default function DigitalHumanDetail() {
@@ -168,6 +169,7 @@ export default function DigitalHumanDetail() {
             <Tabs defaultValue="posts" className="w-full">
               <TabsList>
                 <TabsTrigger value="posts">Post History</TabsTrigger>
+                <TabsTrigger value="chat-images">Chat Images</TabsTrigger>
                 <TabsTrigger value="chat">Chat &amp; Tuning</TabsTrigger>
                 <TabsTrigger value="history">Chat History</TabsTrigger>
               </TabsList>
@@ -185,6 +187,10 @@ export default function DigitalHumanDetail() {
 
               <TabsContent value="posts" className="mt-4">
                 <PostsPanel userid={user.userid} onZoom={(src) => setZoomSrc(src)} />
+              </TabsContent>
+
+              <TabsContent value="chat-images" className="mt-4">
+                <ChatImagesPanel userid={user.userid} onZoom={(src) => setZoomSrc(src)} />
               </TabsContent>
             </Tabs>
           </Card>
