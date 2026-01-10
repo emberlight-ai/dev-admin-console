@@ -88,6 +88,20 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     responseExample: { success: true },
   },
   {
+    id: 'ios.auth.logout',
+    audience: 'ios',
+    method: 'POST',
+    path: '/api/ios/me/logout',
+    summary: 'Logout (cleanup push token)',
+    description:
+      "Deletes this device's push token for the authenticated user so the device stops receiving notifications after logout. Client should also clear local session.",
+    auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
+    defaultHeaders: nextApiHeaders,
+    requestExample: { token: '<fcm_token>', platform: 'ios' },
+    responseExample: { success: true },
+  },
+  {
     id: 'ios.posts.create',
     audience: 'ios',
     method: 'POST',

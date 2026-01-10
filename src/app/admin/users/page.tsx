@@ -40,6 +40,19 @@ type UserRow = {
   created_at: string
 }
 
+type DeletedUserRow = {
+  id: string
+  deleted_user_id: string
+  deleted_at: string
+  provider?: string | null
+  profile_snapshot?: { username?: string; avatar?: string } | null
+  usage_snapshot?: {
+    user_posts?: number
+    messages?: number
+    user_matches?: number
+  } | null
+}
+
 import type { DateRange } from "react-day-picker"
 
 type Preset = "90" | "30" | "7"
@@ -79,6 +92,8 @@ function StatCard({
 export default function ManageUsers() {
   const [users, setUsers] = React.useState<UserRow[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [deletedUsers, setDeletedUsers] = React.useState<DeletedUserRow[]>([])
+  const [deletedLoading, setDeletedLoading] = React.useState(true)
   const [chartRows, setChartRows] = React.useState<
     { created_at: string; is_digital_human: boolean }[]
   >([])
@@ -110,6 +125,24 @@ export default function ManageUsers() {
   React.useEffect(() => {
     void fetchUsers()
   }, [fetchUsers])
+
+  const fetchDeletedUsers = React.useCallback(async () => {
+    setDeletedLoading(true)
+    try {
+      const res = await fetch("/api/admin/deleted-users?mode=list")
+      const json = (await res.json()) as { data?: DeletedUserRow[]; error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to fetch deleted users")
+      setDeletedUsers((json.data ?? []) as DeletedUserRow[])
+    } catch (err: unknown) {
+      console.error(err)
+      setDeletedUsers([])
+    }
+    setDeletedLoading(false)
+  }, [])
+
+  React.useEffect(() => {
+    void fetchDeletedUsers()
+  }, [fetchDeletedUsers])
 
   const fetchChartRows = React.useCallback(async () => {
     if (!range?.from || !range?.to) return
@@ -404,6 +437,71 @@ export default function ManageUsers() {
                     </TableCell>
                   </TableRow>
                 ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </Card>
+
+      <Card className="p-0">
+        <div className="p-6">
+          <div className="text-sm font-medium">Deleted Users</div>
+          <div className="text-xs text-muted-foreground">
+            {deletedLoading ? "Loading..." : `${deletedUsers.length} deleted users`}
+          </div>
+        </div>
+        <div className="border-t">
+          {deletedLoading ? (
+            <div className="py-10 text-center text-muted-foreground">Loading...</div>
+          ) : deletedUsers.length === 0 ? (
+            <div className="py-10 text-center text-muted-foreground">No deleted users.</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-4">Avatar</TableHead>
+                  <TableHead>Username</TableHead>
+                  <TableHead>Provider</TableHead>
+                  <TableHead>Deleted</TableHead>
+                  <TableHead>Posts</TableHead>
+                  <TableHead>Matches</TableHead>
+                  <TableHead>Messages</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {deletedUsers.map((u) => {
+                  const username = u.profile_snapshot?.username ?? "—"
+                  const posts = u.usage_snapshot?.user_posts ?? 0
+                  const matches = u.usage_snapshot?.user_matches ?? 0
+                  const messages = u.usage_snapshot?.messages ?? 0
+                  return (
+                    <TableRow key={u.id}>
+                      <TableCell className="pl-4">
+                        <Avatar className="h-9 w-9">
+                          <AvatarImage src={u.profile_snapshot?.avatar ?? ""} alt={username} />
+                          <AvatarFallback>{String(username).slice(0, 2).toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                      </TableCell>
+                      <TableCell className="font-medium">{username}</TableCell>
+                      <TableCell className="text-muted-foreground">{u.provider ?? "—"}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {u.deleted_at ? new Date(u.deleted_at).toLocaleString() : "—"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{posts}</TableCell>
+                      <TableCell className="text-muted-foreground">{matches}</TableCell>
+                      <TableCell className="text-muted-foreground">{messages}</TableCell>
+                      <TableCell className="text-left">
+                        <Button asChild variant="outline" size="sm">
+                          <Link href={`/admin/users/${u.deleted_user_id}`} className="gap-2">
+                            <Eye className="h-4 w-4" />
+                            View
+                          </Link>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           )}

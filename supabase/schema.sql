@@ -325,6 +325,42 @@ begin
 end;
 $$;
 
+-- ==============================================================================
+-- ACCOUNT DELETION AUDIT (for "delete account then re-register with Apple creates a new id")
+-- ------------------------------------------------------------------------------
+-- IMPORTANT:
+-- - If you hard-delete the Supabase Auth user (auth.users row), Apple can be used to create a NEW auth user id.
+-- - Because public.users.userid references auth.users(id) ON DELETE CASCADE, hard-deleting auth.users will also
+--   cascade-delete public.users and most app tables. Therefore, store any analytics/usage snapshot here FIRST.
+-- - This table intentionally has NO foreign keys to public.users/auth.users so history survives deletion.
+-- ==============================================================================
+create table if not exists public.user_deletion_audit (
+  id uuid primary key default uuid_generate_v4(),
+  deleted_user_id uuid not null,
+  deleted_at timestamptz not null default now(),
+
+  -- Provider info (store hashed values only; never store raw Apple subject here).
+  provider text,
+  provider_subject_hash text,
+  email_hash text,
+
+  -- Optional snapshots captured at deletion time.
+  profile_snapshot jsonb,
+  usage_snapshot jsonb,
+  posts_snapshot jsonb,
+  matches_snapshot jsonb,
+  messages_snapshot jsonb
+);
+
+create index if not exists user_deletion_audit_deleted_user_id_idx
+  on public.user_deletion_audit (deleted_user_id);
+
+create index if not exists user_deletion_audit_provider_subject_hash_idx
+  on public.user_deletion_audit (provider_subject_hash);
+
+alter table public.user_deletion_audit enable row level security;
+-- No policies by default: only service-role/admin tooling should read/write these rows.
+
 -- ---------------------------------------------------------------------------
 -- Matching (mutual agreement) + safety controls (blocks/reports)
 -- ---------------------------------------------------------------------------

@@ -32,9 +32,21 @@ import { RelationshipGraph } from "@/components/matching/relationship-graph"
 import { ChatHistory } from "@/components/matching/chat-history"
 import type { DbUser } from "@/app/admin/digital-humans/[id]/_components/types"
 
+type DeletionAudit = {
+  deleted_user_id: string
+  deleted_at: string
+  provider?: string | null
+  profile_snapshot?: Record<string, unknown> | null
+  usage_snapshot?: Record<string, unknown> | null
+  posts_snapshot?: Record<string, unknown>[] | null
+  matches_snapshot?: Record<string, unknown>[] | null
+  messages_snapshot?: Record<string, unknown>[] | null
+}
+
 export default function UserDetail() {
   const { id } = useParams()
   const [user, setUser] = React.useState<DbUser | null>(null)
+  const [deletedAudit, setDeletedAudit] = React.useState<DeletionAudit | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [zoomSrc, setZoomSrc] = React.useState<string | null>(null)
   const [profileOpen, setProfileOpen] = React.useState(false)
@@ -73,13 +85,24 @@ export default function UserDetail() {
     try {
       const res = await fetch(`/api/admin/users/${encodeURIComponent(String(id))}`)
       const json = (await res.json()) as { data?: DbUser | null; error?: string }
-      if (!res.ok) throw new Error(json.error || "Failed to fetch user details")
-      if (!json.data) throw new Error("User not found")
+      if (!res.ok || !json.data) {
+        // Fallback: user might have been hard-deleted; try archived deletion audit.
+        const dres = await fetch(`/api/admin/deleted-users/${encodeURIComponent(String(id))}`)
+        const djson = (await dres.json()) as { data?: DeletionAudit | null; error?: string }
+        if (!dres.ok) throw new Error(djson.error || "Failed to fetch deleted user details")
+        if (!djson.data) throw new Error("User not found")
+        setUser(null)
+        setDeletedAudit(djson.data)
+        setLoading(false)
+        return
+      }
+      setDeletedAudit(null)
       setUser(json.data)
     } catch (err: unknown) {
       console.error(err)
       toast.error(err instanceof Error ? err.message : "Failed to fetch user details")
       setUser(null)
+      setDeletedAudit(null)
     }
     setLoading(false)
   }
@@ -100,10 +123,16 @@ export default function UserDetail() {
   }
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading...</div>
-  if (!user) return <div className="text-sm text-muted-foreground">User not found</div>
+  if (!user && !deletedAudit) return <div className="text-sm text-muted-foreground">User not found</div>
 
-  const avatarV = user.updated_at || user.created_at || ""
-  const avatarSrc = `/api/avatar/${user.userid}${avatarV ? `?v=${encodeURIComponent(avatarV)}` : ""}`
+  const isDeleted = !!deletedAudit && !user
+  const profileSnapshot = (deletedAudit?.profile_snapshot ?? {}) as Record<string, unknown>
+  const deletedUsername = (profileSnapshot.username as string | undefined) ?? "Deleted user"
+
+  const avatarV = user?.updated_at || user?.created_at || ""
+  const avatarSrc = user
+    ? `/api/avatar/${user.userid}${avatarV ? `?v=${encodeURIComponent(avatarV)}` : ""}`
+    : (profileSnapshot.avatar as string | undefined) ?? ""
   const lastActive = authInfo?.last_sign_in_at
     ? formatDistanceToNow(new Date(authInfo.last_sign_in_at), { addSuffix: true })
     : "Never"
@@ -121,10 +150,14 @@ export default function UserDetail() {
             <Card className="p-6">
               <div className="flex items-start justify-between">
                 <div className="text-sm font-medium">Profile</div>
-                <Button variant="outline" size="sm" className="gap-2" onClick={() => setProfileOpen(true)}>
-                  <Pencil className="h-4 w-4" />
-                  Edit
-                </Button>
+                {user ? (
+                  <Button variant="outline" size="sm" className="gap-2" onClick={() => setProfileOpen(true)}>
+                    <Pencil className="h-4 w-4" />
+                    Edit
+                  </Button>
+                ) : (
+                  <Badge variant="secondary">Deleted</Badge>
+                )}
               </div>
               <Separator className="my-0 mt-4" />
 
@@ -138,18 +171,22 @@ export default function UserDetail() {
                   <Avatar className="h-28 w-28 overflow-hidden">
                     <AvatarImage
                       src={avatarSrc}
-                      alt={user.username}
+                      alt={user?.username ?? deletedUsername}
                       className="transition-transform duration-200 group-hover:scale-[1.06]"
                     />
-                    <AvatarFallback>{user.username.slice(0, 2).toUpperCase()}</AvatarFallback>
+                    <AvatarFallback>
+                      {(user?.username ?? deletedUsername).slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
                   </Avatar>
                 </button>
                 <div className="mt-4">
-                  <div className="text-xl font-semibold">{user.username}</div>
-                  <div className="text-sm text-muted-foreground">{user.profession ?? "—"}</div>
+                  <div className="text-xl font-semibold">{user?.username ?? deletedUsername}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {user ? (user.profession ?? "—") : (profileSnapshot.profession as string | undefined) ?? "—"}
+                  </div>
                 </div>
                 <div className="mt-3">
-                  <Badge variant="secondary">User</Badge>
+                  <Badge variant="secondary">{isDeleted ? "Deleted User" : "User"}</Badge>
                 </div>
               </div>
 
@@ -157,25 +194,29 @@ export default function UserDetail() {
               <dl className="space-y-3 text-sm mt-4">
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-muted-foreground">Age</dt>
-                  <dd>{user.age ?? "—"}</dd>
+                  <dd>{user ? (user.age ?? "—") : (profileSnapshot.age as number | undefined) ?? "—"}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-muted-foreground">Gender</dt>
-                  <dd>{user.gender ?? "—"}</dd>
+                  <dd>{user ? (user.gender ?? "—") : (profileSnapshot.gender as string | undefined) ?? "—"}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-muted-foreground">Personality</dt>
-                  <dd>{user.personality ?? "—"}</dd>
+                  <dd>
+                    {user
+                      ? (user.personality ?? "—")
+                      : (profileSnapshot.personality as string | undefined) ?? "—"}
+                  </dd>
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-muted-foreground">Location</dt>
-                  <dd>{user.zipcode ?? "—"}</dd>
+                  <dd>{user ? (user.zipcode ?? "—") : (profileSnapshot.zipcode as string | undefined) ?? "—"}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-muted-foreground">User ID</dt>
                   <dd>
                     <Button variant="ghost" size="sm" onClick={() => {
-                      navigator.clipboard.writeText(user.userid)
+                      navigator.clipboard.writeText(String(id))
                       toast.success("User ID copied to clipboard")
                     }}>
                       <Copy className="h-4 w-4" />
@@ -183,9 +224,17 @@ export default function UserDetail() {
                     </Button>
                   </dd>
                 </div>
+                {isDeleted ? (
+                  <div className="flex items-center justify-between gap-4">
+                    <dt className="text-muted-foreground">Deleted At</dt>
+                    <dd>{deletedAudit?.deleted_at ? new Date(deletedAudit.deleted_at).toLocaleString() : "—"}</dd>
+                  </div>
+                ) : null}
                 <div className="space-y-1">
                   <dt className="text-muted-foreground">Bio</dt>
-                  <dd className="text-sm">{user.bio ?? "—"}</dd>
+                  <dd className="text-sm">
+                    {user ? (user.bio ?? "—") : (profileSnapshot.bio as string | undefined) ?? "—"}
+                  </dd>
                 </div>
               </dl>
             </Card>
@@ -203,21 +252,131 @@ export default function UserDetail() {
               </TabsList>
 
               <TabsContent value="history" className="mt-4">
-                 <ChatHistory currentUserId={user.userid} />
+                {user ? (
+                  <ChatHistory currentUserId={user.userid} />
+                ) : (
+                  <div className="space-y-3">
+                    <div className="text-sm text-muted-foreground">
+                      Showing archived chat history (captured at deletion time).
+                    </div>
+                    <Card className="p-0">
+                      <div className="border-t">
+                        <div className="max-h-[520px] overflow-auto">
+                          <table className="w-full text-sm">
+                            <thead className="sticky top-0 bg-background">
+                              <tr className="border-b">
+                                <th className="p-2 text-left">Time</th>
+                                <th className="p-2 text-left">Match</th>
+                                <th className="p-2 text-left">Sender</th>
+                                <th className="p-2 text-left">Content</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(deletedAudit?.messages_snapshot ?? []).slice(0, 500).map((m, idx) => (
+                                <tr key={idx} className="border-b">
+                                  <td className="p-2 text-muted-foreground">
+                                    {typeof m.created_at === "string" ? new Date(m.created_at).toLocaleString() : "—"}
+                                  </td>
+                                  <td className="p-2 text-muted-foreground">{String(m.match_id ?? "—")}</td>
+                                  <td className="p-2 text-muted-foreground">{String(m.sender_id ?? "—")}</td>
+                                  <td className="p-2">{String(m.content ?? m.media_url ?? "—")}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+                )}
               </TabsContent>
 
               <TabsContent value="posts" className="mt-4">
-                <PostsPanel userid={user.userid} onZoom={(src) => setZoomSrc(src)} />
+                {user ? (
+                  <PostsPanel userid={user.userid} onZoom={(src) => setZoomSrc(src)} />
+                ) : (
+                  <div className="space-y-4">
+                    <div className="text-sm text-muted-foreground">
+                      Showing archived posts & matches (captured at deletion time).
+                    </div>
+
+                    <Card className="p-0">
+                      <div className="p-4 text-sm font-medium">Posts</div>
+                      <div className="border-t">
+                        <div className="max-h-[320px] overflow-auto">
+                          <table className="w-full text-sm">
+                            <thead className="sticky top-0 bg-background">
+                              <tr className="border-b">
+                                <th className="p-2 text-left">Created</th>
+                                <th className="p-2 text-left">Description</th>
+                                <th className="p-2 text-left">Photos</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(deletedAudit?.posts_snapshot ?? []).slice(0, 300).map((p, idx) => (
+                                <tr key={idx} className="border-b">
+                                  <td className="p-2 text-muted-foreground">
+                                    {typeof p.created_at === "string" ? new Date(p.created_at).toLocaleString() : "—"}
+                                  </td>
+                                  <td className="p-2">{String(p.description ?? "—")}</td>
+                                  <td className="p-2 text-muted-foreground">
+                                    {Array.isArray(p.photos) ? p.photos.length : 0}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </Card>
+
+                    <Card className="p-0">
+                      <div className="p-4 text-sm font-medium">Matches</div>
+                      <div className="border-t">
+                        <div className="max-h-[280px] overflow-auto">
+                          <table className="w-full text-sm">
+                            <thead className="sticky top-0 bg-background">
+                              <tr className="border-b">
+                                <th className="p-2 text-left">Created</th>
+                                <th className="p-2 text-left">Match ID</th>
+                                <th className="p-2 text-left">User A</th>
+                                <th className="p-2 text-left">User B</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(deletedAudit?.matches_snapshot ?? []).slice(0, 300).map((m, idx) => (
+                                <tr key={idx} className="border-b">
+                                  <td className="p-2 text-muted-foreground">
+                                    {typeof m.created_at === "string" ? new Date(m.created_at).toLocaleString() : "—"}
+                                  </td>
+                                  <td className="p-2 text-muted-foreground">{String(m.id ?? "—")}</td>
+                                  <td className="p-2 text-muted-foreground">{String(m.user_a ?? "—")}</td>
+                                  <td className="p-2 text-muted-foreground">{String(m.user_b ?? "—")}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+                )}
 
                 <div className="mt-6">
                   <div className="text-sm font-medium">Matchings</div>
                   <div className="mt-3">
                     <Card className="p-4">
-                      <RelationshipGraph
-                        initialRootUserId={user.userid}
-                        showPicker={false}
-                        heightClassName="h-[420px]"
-                      />
+                      {user ? (
+                        <RelationshipGraph
+                          initialRootUserId={user.userid}
+                          showPicker={false}
+                          heightClassName="h-[420px]"
+                        />
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          Relationship graph is not available for deleted users (live data is removed).
+                        </div>
+                      )}
                     </Card>
                   </div>
                 </div>
@@ -233,7 +392,9 @@ export default function UserDetail() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Provider</span>
-                      <span className="font-medium capitalize">{authInfo?.app_metadata?.provider ?? "—"}</span>
+                      <span className="font-medium capitalize">
+                        {authInfo?.app_metadata?.provider ?? deletedAudit?.provider ?? "—"}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Email</span>
@@ -254,7 +415,7 @@ export default function UserDetail() {
                       </div>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button variant="destructive" size="sm">
+                          <Button variant="destructive" size="sm" disabled={!user}>
                             <Trash2 className="h-4 w-4 mr-2" />
                             Delete
                           </Button>
@@ -281,13 +442,15 @@ export default function UserDetail() {
         </div>
       </div>
 
-      <ProfileEditSheet
-        open={profileOpen}
-        onOpenChange={setProfileOpen}
-        user={user}
-        avatarSrc={avatarSrc}
-        onSaved={(updates) => setUser((prev) => (prev ? { ...prev, ...updates } : prev))}
-      />
+      {user ? (
+        <ProfileEditSheet
+          open={profileOpen}
+          onOpenChange={setProfileOpen}
+          user={user}
+          avatarSrc={avatarSrc}
+          onSaved={(updates) => setUser((prev) => (prev ? { ...prev, ...updates } : prev))}
+        />
+      ) : null}
 
       <ImageZoomDialog src={zoomSrc} onClose={() => setZoomSrc(null)} />
     </div>
