@@ -22,6 +22,29 @@ const getUserSupabase = (req: NextRequest) => {
   );
 };
 
+function unknownUser(userid: string) {
+  // Return a stable shape for clients that expect a user object.
+  // We intentionally keep it "empty" (no PII) while remaining parseable.
+  const now = new Date().toISOString();
+  return {
+    userid,
+    username: 'Unknown user',
+    age: null,
+    gender: null,
+    personality: null,
+    zipcode: null,
+    phone: null,
+    bio: null,
+    education: null,
+    profession: null,
+    avatar: null,
+    created_at: now,
+    updated_at: now,
+    deleted_at: now,
+    is_digital_human: false,
+  };
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ userid: string }> }
@@ -52,12 +75,12 @@ export async function GET(
         error.code === 'PGRST116' ||
         /Cannot coerce the result to a single JSON object/i.test(error.message)
       ) {
-        return NextResponse.json({ error: 'User not found' }, { status: 200 });
+        return NextResponse.json(unknownUser(userid), { status: 200 });
       }
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     if (!data) {
-      return NextResponse.json({ error: 'User not found' }, { status: 200 });
+      return NextResponse.json(unknownUser(userid), { status: 200 });
     }
 
     return NextResponse.json(data);

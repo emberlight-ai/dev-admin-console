@@ -17,6 +17,7 @@ export type SystemPromptLatest = {
   system_prompt: string
   created_at: string
   response_delay: number
+  matching_enabled: boolean
   immediate_match_enabled: boolean
   follow_up_message_enabled: boolean
   follow_up_message_prompt: string
@@ -52,6 +53,7 @@ export function SystemPromptForm({
   const [systemPrompt, setSystemPrompt] = React.useState("")
   const [responseDelay, setResponseDelay] = React.useState<number>(0)
 
+  const [matchingEnabled, setMatchingEnabled] = React.useState(true)
   const [immediateMatchEnabled, setImmediateMatchEnabled] = React.useState(false)
   const [followUpEnabled, setFollowUpEnabled] = React.useState(false)
   const [followUpPrompt, setFollowUpPrompt] = React.useState("")
@@ -74,6 +76,7 @@ export function SystemPromptForm({
           const d = json.data as Partial<SystemPromptLatest>
           setSystemPrompt(d.system_prompt ?? "")
           setResponseDelay(d.response_delay ?? 0)
+          setMatchingEnabled(d.matching_enabled ?? true)
           setImmediateMatchEnabled(d.immediate_match_enabled ?? false)
           setFollowUpEnabled(d.follow_up_message_enabled ?? false)
           setFollowUpPrompt(d.follow_up_message_prompt ?? "")
@@ -93,6 +96,7 @@ export function SystemPromptForm({
     const p = personality.trim()
     const sp = systemPrompt
     const rd = Number(responseDelay)
+    const me = Boolean(matchingEnabled)
     const imm = Boolean(immediateMatchEnabled)
     const fued = Boolean(followUpEnabled)
     const fup = followUpPrompt
@@ -128,6 +132,7 @@ export function SystemPromptForm({
           personality: p,
           system_prompt: sp,
           response_delay: rd,
+          matching_enabled: me,
           immediate_match_enabled: imm,
           follow_up_message_enabled: fued,
           follow_up_message_prompt: fup,
@@ -211,6 +216,21 @@ export function SystemPromptForm({
           </div>
 
           <div className="border-t pt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium">Matching Enabled</div>
+                <div className="text-xs text-muted-foreground">
+                  If enabled, this digital human will appear in the matching feed.
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                id="enable-matching"
+                className="h-4 w-4 rounded border-gray-300 accent-primary"
+                checked={matchingEnabled}
+                onChange={(e) => setMatchingEnabled(e.target.checked)}
+              />
+            </div>
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-sm font-medium">Immediate Match</div>

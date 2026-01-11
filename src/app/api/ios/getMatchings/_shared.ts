@@ -14,6 +14,8 @@ type Candidate = {
   gender: string | null;
   bio: string | null;
   profession: string | null;
+  is_digital_human: boolean | null;
+  personality: string | null;
 };
 
 export type MatchingsCard = {
@@ -60,21 +62,18 @@ export async function buildMatchingsFeed(opts: {
 
   const exclude = Array.from(new Set([viewerUserId, ...visitedUserIds]));
 
-  let q = supabase
-    .from('users')
-    .select('userid,avatar,username,age,gender,bio,profession')
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false })
-    .limit(Math.min(250, count * 6));
+  const { data: users, error: usersErr } = await supabase.rpc(
+    'rpc_get_matching_candidates',
+    {
+      viewer_user_id: viewerUserId,
+      visited_user_ids: visitedUserIds,
+      limit_count: count,
+    }
+  );
 
-  if (exclude.length) {
-    q = q.not('userid', 'in', toPostgrestInList(exclude));
-  }
-
-  const { data: users, error: usersErr } = await q;
   if (usersErr) throw new Error(usersErr.message);
 
-  const candidates = ((users ?? []) as Candidate[]).slice(0, count);
+  const candidates = (users as Candidate[]).slice(0, count);
 
   const cards: MatchingsCard[] = [];
   for (const u of candidates) {

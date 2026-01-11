@@ -13,6 +13,8 @@ export async function POST(req: NextRequest) {
     const personality = typeof body?.personality === "string" ? body.personality.trim() : ""
     const system_prompt = typeof body?.system_prompt === "string" ? body.system_prompt : ""
     const response_delay = typeof body?.response_delay === "number" ? body.response_delay : 0
+    const matching_enabled =
+      typeof body?.matching_enabled === "boolean" ? body.matching_enabled : true
     const immediate_match_enabled =
       typeof body?.immediate_match_enabled === "boolean" ? body.immediate_match_enabled : false
     const follow_up_message_enabled = typeof body?.follow_up_message_enabled === "boolean" ? body.follow_up_message_enabled : false
@@ -42,6 +44,7 @@ export async function POST(req: NextRequest) {
         personality, 
         system_prompt, 
         response_delay,
+        matching_enabled,
         immediate_match_enabled,
         follow_up_message_enabled,
         follow_up_message_prompt,
@@ -50,7 +53,7 @@ export async function POST(req: NextRequest) {
         active_greeting_enabled,
         active_greeting_prompt: active_greeting_prompt.trim() || null
       })
-      .select("id,gender,personality,created_at,response_delay")
+      .select("id,gender,personality,created_at,response_delay,matching_enabled")
       .single()
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

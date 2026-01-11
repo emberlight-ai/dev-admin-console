@@ -27,7 +27,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     path: '/api/ios/users/<userid>',
     summary: 'Get user profile',
     description:
-      'Fetch a user profile by their UUID. Standard REST endpoint (proxies to Supabase).',
+      'Fetch a user profile by their UUID. If the user does not exist (e.g. deleted), returns an "Unknown user" placeholder object with the same shape.',
     auth: {
       type: 'bearer',
       notes: 'Send the Supabase Access Token in Authorization header.',
@@ -50,6 +50,9 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       updated_at: '2025-01-01T00:00:00Z',
       is_digital_human: false,
     },
+    notes: [
+      'Not-found behavior: returns 200 with `{ username: "Unknown user", ... }` (placeholder user object).',
+    ],
   },
   {
     id: 'ios.users.update.patch',
@@ -79,8 +82,9 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     audience: 'ios',
     method: 'POST',
     path: '/api/ios/me/delete',
-    summary: 'Soft delete my account',
-    description: 'Marks the authenticated user account as deleted.',
+    summary: 'Delete my account',
+    description:
+      'Deletes the authenticated Supabase Auth user (hard delete). Database rows are removed via FK cascade. Storage cleanup is best-effort.',
     auth: { type: 'bearer' },
     baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
@@ -326,18 +330,6 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     ],
   },
   {
-    id: 'ios.match.unmatch',
-    audience: 'ios',
-    method: 'POST',
-    path: '/rest/v1/rpc/rpc_unmatch',
-    summary: 'Unmatch',
-    auth: { type: 'bearer' },
-    baseUrlOverride: SUPABASE_URL,
-    defaultHeaders: supabaseAuthHeaders,
-    requestExample: { match_id: '<match_uuid>' },
-    responseExample: null, // void
-  },
-  {
     id: 'ios.reports.user',
     audience: 'ios',
     method: 'POST',
@@ -368,6 +360,54 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       reason: 'Inappropriate content',
     },
     responseExample: '<report_uuid>',
+  },
+  {
+    id: 'ios.blocks.user',
+    audience: 'ios',
+    method: 'POST',
+    path: '/rest/v1/rpc/rpc_block_user',
+    summary: 'Block a user',
+    description:
+      'Creates a block row (blocker_id = auth.uid(), blocked_id = target_user_id), cancels any pending requests between the two users, and clears AI state for the pair. Messages are preserved.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: SUPABASE_URL,
+    defaultHeaders: supabaseAuthHeaders,
+    requestExample: { target_user_id: '<other_user_uuid>' },
+    responseExample: null, // void
+  },
+  {
+    id: 'ios.blocks.user.unblock',
+    audience: 'ios',
+    method: 'POST',
+    path: '/rest/v1/rpc/rpc_unblock_user',
+    summary: 'Unblock a user',
+    description:
+      'Removes the block row and ensures a match + ai_state exist again for the two users. Returns the match_id.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: SUPABASE_URL,
+    defaultHeaders: supabaseAuthHeaders,
+    requestExample: { target_user_id: '<other_user_uuid>' },
+    responseExample: '<match_uuid>',
+  },
+  {
+    id: 'ios.blocks.list',
+    audience: 'ios',
+    method: 'POST',
+    path: '/rest/v1/rpc/rpc_get_blocking_list',
+    summary: 'Get blocking list',
+    description: 'Lists users that the authenticated user has blocked.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: SUPABASE_URL,
+    defaultHeaders: supabaseAuthHeaders,
+    requestExample: { start_index: 0, limit_count: 50 },
+    responseExample: [
+      {
+        blocked_id: '<user_uuid>',
+        blocked_username: 'Bob',
+        blocked_avatar: 'https://example.com/bob.jpg',
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ],
   },
   {
     id: 'ios.matchings.feed',

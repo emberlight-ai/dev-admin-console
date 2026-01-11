@@ -39,6 +39,13 @@ type ReportRow = {
   post?: PostLite | null;
 };
 
+type BlockRow = {
+  id: string;
+  created_at: string;
+  blocker?: UserLite | null;
+  blocked?: UserLite | null;
+};
+
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   const a = parts[0]?.[0] ?? '?';
@@ -67,24 +74,38 @@ export default function MatchingReportsPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [userReports, setUserReports] = React.useState<ReportRow[]>([]);
   const [postReports, setPostReports] = React.useState<ReportRow[]>([]);
+  const [blocks, setBlocks] = React.useState<BlockRow[]>([]);
 
   const load = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/admin/matching/reports');
-      const json = (await res.json()) as {
+      const [reportsRes, blocksRes] = await Promise.all([
+        fetch('/api/admin/matching/reports'),
+        fetch('/api/admin/matching/blocks'),
+      ]);
+
+      const reportsJson = (await reportsRes.json()) as {
         userReports?: ReportRow[];
         postReports?: ReportRow[];
         error?: string;
       };
-      if (!res.ok) throw new Error(json.error || 'Failed to load reports');
-      setUserReports(json.userReports ?? []);
-      setPostReports(json.postReports ?? []);
+      if (!reportsRes.ok) throw new Error(reportsJson.error || 'Failed to load reports');
+
+      const blocksJson = (await blocksRes.json()) as {
+        blocks?: BlockRow[];
+        error?: string;
+      };
+      if (!blocksRes.ok) throw new Error(blocksJson.error || 'Failed to load blocks');
+
+      setUserReports(reportsJson.userReports ?? []);
+      setPostReports(reportsJson.postReports ?? []);
+      setBlocks(blocksJson.blocks ?? []);
     } catch (err) {
       console.error(err);
       setUserReports([]);
       setPostReports([]);
+      setBlocks([]);
       setError(err instanceof Error ? err.message : 'Failed to load reports');
     } finally {
       setLoading(false);
@@ -114,6 +135,47 @@ export default function MatchingReportsPage() {
           <div className="text-sm text-destructive">{error}</div>
         </Card>
       ) : null}
+
+      <Card className="p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-medium">Blocks</div>
+          <div className="text-sm text-muted-foreground">{blocks.length}</div>
+        </div>
+        <div className="mt-3 overflow-auto rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Blocker</TableHead>
+                <TableHead>Blocked</TableHead>
+                <TableHead className="whitespace-nowrap">Created</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {blocks.length ? (
+                blocks.map((b) => (
+                  <TableRow key={b.id}>
+                    <TableCell className="min-w-[260px]">
+                      <UserCell user={b.blocker} />
+                    </TableCell>
+                    <TableCell className="min-w-[260px]">
+                      <UserCell user={b.blocked} />
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                      {new Date(b.created_at).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={3} className="py-10 text-center text-sm text-muted-foreground">
+                    No blocks.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
 
       <Card className="p-4">
         <div className="flex items-center justify-between gap-3">

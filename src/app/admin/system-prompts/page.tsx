@@ -35,6 +35,7 @@ type KeyRow = {
   personality: string
   created_at: string
   response_delay: number
+  matching_enabled: boolean
   immediate_match_enabled: boolean
   follow_up_message_enabled: boolean
   active_greeting_enabled: boolean
@@ -117,10 +118,10 @@ export default function SystemPromptsPage() {
                 <TableHead>Gender</TableHead>
                 <TableHead>Personality</TableHead>
                 <TableHead>Response Delay</TableHead>
+                <TableHead>Matching Enabled</TableHead>
                 <TableHead>Immediate Match</TableHead>
                 <TableHead>Follow-up</TableHead>
                 <TableHead>Greeting</TableHead>
-                <TableHead>Last updated</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -147,6 +148,16 @@ export default function SystemPromptsPage() {
                         <Clock className="h-4 w-4" />
                         {k.response_delay > 0 ? <span>{k.response_delay}s</span> : <span className="text-muted-foreground/60">Instant</span>}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      {k.matching_enabled ? (
+                        <div className="flex items-center gap-1.5 text-sm">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-muted-foreground">Enabled</span>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-muted-foreground/60">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       {k.immediate_match_enabled ? (
@@ -178,7 +189,6 @@ export default function SystemPromptsPage() {
                         <span className="text-sm text-muted-foreground/60">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{new Date(k.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
                       <Link
                         href={`/admin/system-prompts/manage?gender=${encodeURIComponent(k.gender)}&personality=${encodeURIComponent(k.personality)}`}

@@ -107,13 +107,13 @@ export default function UserDetail() {
     setLoading(false)
   }
 
-  const softDeleteUser = async () => {
+  const hardDeleteUser = async () => {
     try {
-      const res = await fetch(`/api/admin/users/${encodeURIComponent(String(id))}/soft-delete`, {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(String(id))}/hard-delete`, {
         method: "POST",
       })
       if (!res.ok) throw new Error("Failed to delete user")
-      toast.success("User soft deleted")
+      toast.success("User deleted")
       // Optionally redirect or refresh
       void fetchUser()
     } catch (err) {
@@ -411,7 +411,7 @@ export default function UserDetail() {
                     <div className="flex items-center justify-between rounded-lg border border-destructive/20 bg-destructive/5 p-3">
                       <div className="text-sm">
                         <div className="font-medium text-destructive">Delete User</div>
-                        <div className="text-muted-foreground text-xs">Soft delete profile & sign out</div>
+                        <div className="text-muted-foreground text-xs">Permanently deletes user and all related data</div>
                       </div>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
@@ -422,14 +422,14 @@ export default function UserDetail() {
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                        <AlertDialogTitle>Delete user?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          This will soft delete the user profile. They can sign up again with a new account using the same email.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
+                            <AlertDialogTitle>Delete user permanently?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This will permanently delete the user and cascade-delete their related data. This cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
                           <AlertDialogFooter>
                             <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={softDeleteUser}>Delete</AlertDialogAction>
+                            <AlertDialogAction onClick={hardDeleteUser}>Delete</AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>
