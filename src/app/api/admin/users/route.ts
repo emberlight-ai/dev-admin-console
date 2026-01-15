@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   if (!isAdminRequest(req)) return jsonError('Unauthorized', 401);
 
   const url = new URL(req.url);
-  const mode = (url.searchParams.get('mode') ?? 'list').trim(); // list | chart | count
+  const mode = (url.searchParams.get('mode') ?? 'list').trim(); // list | chart | count | search
   const isDigital = url.searchParams.get('is_digital_human');
 
   const isDigitalBool =
@@ -35,6 +35,27 @@ export async function GET(req: NextRequest) {
     const { count, error } = await q;
     if (error) return jsonError(error.message, 500);
     return NextResponse.json({ count: count ?? 0 });
+  }
+
+  if (mode === 'search') {
+    const q = (url.searchParams.get('q') ?? '').trim();
+    const limitRaw = url.searchParams.get('limit');
+    const limit = Math.min(Math.max(Number(limitRaw ?? 20) || 20, 1), 50);
+    if (!q) return NextResponse.json({ data: [] });
+
+    let qq = supabaseAdmin
+      .from('users')
+      .select('userid,username,avatar,is_digital_human,deleted_at')
+      .is('deleted_at', null)
+      .ilike('username', `${q}%`)
+      .order('username', { ascending: true })
+      .limit(limit);
+
+    if (isDigitalBool !== null) qq = qq.eq('is_digital_human', isDigitalBool);
+
+    const { data, error } = await qq;
+    if (error) return jsonError(error.message, 500);
+    return NextResponse.json({ data: data ?? [] });
   }
 
   if (mode === 'chart') {

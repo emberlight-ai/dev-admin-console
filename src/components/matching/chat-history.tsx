@@ -36,6 +36,13 @@ interface MatchedUser {
   username: string;
 }
 
+type UserSearchResult = {
+  userid: string;
+  username: string;
+  avatar?: string | null;
+  is_digital_human?: boolean;
+};
+
 function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: string, matchPartnerId: string, currentUserId: string }) {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -117,16 +124,16 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
       });
 
       if (error) throw error;
-      
+
       // Optimistically add message
       setMessages(prev => {
         const newMsg = data as Message;
-         if (prev.some((msg) => msg.id === newMsg.id)) {
-            return prev;
-          }
-          return [...prev, newMsg];
+        if (prev.some((msg) => msg.id === newMsg.id)) {
+          return prev;
+        }
+        return [...prev, newMsg];
       });
-      
+
       setInputText('');
     } catch (err: unknown) {
       toast.error('Failed to send message.');
@@ -139,9 +146,9 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
   return (
     <div className="flex flex-col h-[600px] border rounded-md">
       <div className="p-3 border-b bg-muted/30 flex items-center justify-between">
-         <span className="font-medium text-sm">
-            Chatting with <span className="text-primary">{/* We might want to pass username here if needed */}Partner</span>
-         </span>
+        <span className="font-medium text-sm">
+          Chatting with <span className="text-primary">{/* We might want to pass username here if needed */}Partner</span>
+        </span>
         <span className="text-xs text-muted-foreground flex items-center gap-1">
           Match ID
           <Button
@@ -159,7 +166,7 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
           </Button>
         </span>
       </div>
-      
+
       <ScrollArea className="flex-1 min-h-0">
         <div className="space-y-4 p-4">
           {loading ? (
@@ -220,78 +227,188 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
   const [matches, setMatches] = React.useState<Record<string, string>>({}); // partnerId -> matchId
   const [loading, setLoading] = React.useState(true);
 
-  React.useEffect(() => {
-    const fetchMatches = async () => {
-        setLoading(true);
-        const supabase = getSupabase();
-        
-        // Fetch matches where current user is A or B
-        const { data: matchesData, error: matchesError } = await supabase
-            .from('user_matches')
-            .select('id, user_a, user_b')
-            .or(`user_a.eq.${currentUserId},user_b.eq.${currentUserId}`);
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [searching, setSearching] = React.useState(false);
+  const [searchResults, setSearchResults] = React.useState<UserSearchResult[]>([]);
+  const [selectedSearchUserId, setSelectedSearchUserId] = React.useState<string | null>(null);
+  const [sendingMatchRequest, setSendingMatchRequest] = React.useState(false);
 
-        if (matchesError) {
-            console.error('Error fetching matches:', matchesError);
-            toast.error('Failed to fetch matches');
-            setLoading(false);
-            return;
-        }
+  const fetchMatches = React.useCallback(async () => {
+    setLoading(true);
+    const supabase = getSupabase();
 
-        if (!matchesData || matchesData.length === 0) {
-             setLoading(false);
-             return;
-        }
+    // Fetch matches where current user is A or B
+    const { data: matchesData, error: matchesError } = await supabase
+      .from('user_matches')
+      .select('id, user_a, user_b')
+      .or(`user_a.eq.${currentUserId},user_b.eq.${currentUserId}`);
 
-        const partnerIds: string[] = [];
-        const matchesMap: Record<string, string> = {};
-
-        matchesData.forEach(match => {
-            const partnerId = match.user_a === currentUserId ? match.user_b : match.user_a;
-            partnerIds.push(partnerId);
-            matchesMap[partnerId] = match.id;
-        });
-
-        setMatches(matchesMap);
-
-        // Fetch user details for partners
-        if (partnerIds.length > 0) {
-             const { data: usersData, error: usersError } = await supabase
-            .from('users')
-            .select('userid, username')
-            .in('userid', partnerIds);
-            
-            if (usersError) {
-                console.error('Error fetching matched users:', usersError);
-                toast.error('Failed to fetch matched users details');
-            } else {
-                setMatchedUsers(usersData as MatchedUser[] || []);
-                // Select first match by default if available
-                if (usersData && usersData.length > 0) {
-                    setSelectedPartnerId(usersData[0].userid);
-                }
-            }
-        }
-        setLoading(false);
-    };
-
-    if (currentUserId) {
-        fetchMatches();
+    if (matchesError) {
+      console.error('Error fetching matches:', matchesError);
+      toast.error('Failed to fetch matches');
+      setLoading(false);
+      return;
     }
+
+    if (!matchesData || matchesData.length === 0) {
+      setLoading(false);
+      return;
+    }
+
+    const partnerIds: string[] = [];
+    const matchesMap: Record<string, string> = {};
+
+    matchesData.forEach(match => {
+      const partnerId = match.user_a === currentUserId ? match.user_b : match.user_a;
+      partnerIds.push(partnerId);
+      matchesMap[partnerId] = match.id;
+    });
+
+    setMatches(matchesMap);
+
+    // Fetch user details for partners
+    if (partnerIds.length > 0) {
+      const { data: usersData, error: usersError } = await supabase
+        .from('users')
+        .select('userid, username')
+        .in('userid', partnerIds);
+
+      if (usersError) {
+        console.error('Error fetching matched users:', usersError);
+        toast.error('Failed to fetch matched users details');
+      } else {
+        setMatchedUsers(usersData as MatchedUser[] || []);
+        // Select first match by default if available
+        if (usersData && usersData.length > 0) {
+          setSelectedPartnerId(usersData[0].userid);
+        }
+      }
+    }
+    setLoading(false);
   }, [currentUserId]);
 
+  React.useEffect(() => {
+    if (currentUserId) {
+      void fetchMatches();
+    }
+  }, [currentUserId, fetchMatches]);
+
+  const searchUsers = async () => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      setSelectedSearchUserId(null);
+      return;
+    }
+    setSearching(true);
+    try {
+      const res = await fetch(
+        `/api/admin/users?mode=search&q=${encodeURIComponent(q)}&is_digital_human=false&limit=20`
+      );
+      const json = (await res.json()) as { data?: UserSearchResult[]; error?: string };
+      if (!res.ok) throw new Error(json.error || 'Failed to search users');
+      const results = (json.data ?? []).filter((u) => u.userid !== currentUserId);
+      setSearchResults(results);
+      setSelectedSearchUserId(results[0]?.userid ?? null);
+    } catch (err: unknown) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : 'Failed to search users');
+      setSearchResults([]);
+      setSelectedSearchUserId(null);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const sendMatchRequest = async () => {
+    if (!selectedSearchUserId) return;
+    setSendingMatchRequest(true);
+    try {
+      const res = await fetch('/api/admin/matching/send-match-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from_user_id: currentUserId,
+          target_user_id: selectedSearchUserId,
+        }),
+      });
+      const json = (await res.json()) as { type?: 'match' | 'request'; id?: string; error?: string };
+      if (!res.ok) throw new Error(json.error || 'Failed to send match request');
+
+      if (json.type === 'match') {
+        toast.success(`Match created: ${json.id}`);
+        await fetchMatches();
+      } else {
+        toast.success(`Match request sent: ${json.id}`);
+      }
+    } catch (err: unknown) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : 'Failed to send match request');
+    } finally {
+      setSendingMatchRequest(false);
+    }
+  };
+
   if (loading) {
-      return <div className="text-sm text-muted-foreground p-4">Loading matches...</div>;
+    return <div className="text-sm text-muted-foreground p-4">Loading matches...</div>;
   }
 
   if (matchedUsers.length === 0) {
-      return <div className="text-sm text-muted-foreground p-4">No matches found for this user.</div>;
+    return <div className="text-sm text-muted-foreground p-4">No matches found for this user.</div>;
   }
 
   return (
     <div className="space-y-4">
+      <div className="rounded-md border p-3">
+        <div className="text-sm font-medium">Send Match Request</div>
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search real user by username prefix…"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void searchUsers();
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={searchUsers}
+            disabled={searching || !searchQuery.trim()}
+          >
+            {searching ? 'Searching…' : 'Search'}
+          </Button>
+        </div>
+
+        {searchResults.length ? (
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="w-full max-w-xs">
+              <Select value={selectedSearchUserId || ''} onValueChange={setSelectedSearchUserId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a real user" />
+                </SelectTrigger>
+                <SelectContent>
+                  {searchResults.map((u) => (
+                    <SelectItem key={u.userid} value={u.userid}>
+                      {u.username || u.userid}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              type="button"
+              onClick={sendMatchRequest}
+              disabled={!selectedSearchUserId || sendingMatchRequest}
+            >
+              + Send Match Request
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
       <div className="w-full max-w-xs">
-          <label className="text-sm font-medium mb-1 block">Select Partner</label>
+        <label className="text-sm font-medium mb-1 block">Select Partner</label>
         <Select value={selectedPartnerId || ''} onValueChange={setSelectedPartnerId}>
           <SelectTrigger>
             <SelectValue placeholder="Select a matched user" />
@@ -307,10 +424,10 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
       </div>
 
       {selectedPartnerId && matches[selectedPartnerId] && (
-        <ChatInterface 
-            matchId={matches[selectedPartnerId]} 
-            matchPartnerId={selectedPartnerId} 
-            currentUserId={currentUserId} 
+        <ChatInterface
+          matchId={matches[selectedPartnerId]}
+          matchPartnerId={selectedPartnerId}
+          currentUserId={currentUserId}
         />
       )}
     </div>

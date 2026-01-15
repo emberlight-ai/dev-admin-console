@@ -54,3 +54,28 @@ as $$
   offset greatest(start_index, 0)
   limit least(greatest(limit_count, 0), 500);
 $$;
+
+-- Soft-delete a post (owner-only)
+create or replace function public.rpc_delete_post(
+  post_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'authentication required';
+  end if;
+  if post_id is null then
+    raise exception 'post_id is required';
+  end if;
+
+  update public.user_posts
+  set deleted_at = now()
+  where id = post_id
+    and userid = auth.uid()
+    and deleted_at is null;
+end;
+$$;

@@ -204,6 +204,20 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     ],
   },
   {
+    id: 'ios.posts.delete',
+    audience: 'ios',
+    method: 'POST',
+    path: '/rest/v1/rpc/rpc_delete_post',
+    summary: 'Delete a post (soft delete)',
+    description:
+      'Soft-deletes a post by setting user_posts.deleted_at = now(). Only the post owner (auth.uid()) can delete.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: SUPABASE_URL,
+    defaultHeaders: supabaseAuthHeaders,
+    requestExample: { post_id: '<post_uuid>' },
+    responseExample: null, // void
+  },
+  {
     id: 'ios.earth.locations',
     audience: 'ios',
     method: 'POST',

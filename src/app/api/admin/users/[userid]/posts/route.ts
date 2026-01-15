@@ -20,7 +20,6 @@ export async function GET(
     .from('user_posts')
     .select('*')
     .eq('userid', userid)
-    .is('deleted_at', null)
     .order('occurred_at', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false });
 

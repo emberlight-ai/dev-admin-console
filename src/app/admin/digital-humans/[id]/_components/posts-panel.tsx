@@ -9,6 +9,7 @@ import { LocationAutocomplete } from "@/components/location-autocomplete"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -298,8 +299,9 @@ export function PostsPanel({
         <div className="divide-y">
           {!loading
             ? posts.map((p) => (
-                <div key={p.id} className="p-4">
-                  <div className="flex items-center justify-between gap-3">
+              <div key={p.id} className="p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
                     <div className="text-xs text-muted-foreground">
                       {new Date(p.occurred_at ?? p.created_at).toLocaleDateString("en-US", {
                         year: "numeric",
@@ -307,35 +309,41 @@ export function PostsPanel({
                         day: "numeric",
                       })}
                     </div>
-                    <Button variant="outline" size="sm" className="gap-2" onClick={() => openPostEditor(p)}>
-                      <Pencil className="h-4 w-4" />
-                      Edit
-                    </Button>
+                    {p.deleted_at ? (
+                      <Badge variant="secondary" className="text-[10px] h-5">
+                        Deleted
+                      </Badge>
+                    ) : null}
                   </div>
-                  {p.location_name || (p.longitude != null && p.latitude != null) ? (
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {p.location_name
-                        ? p.location_name
-                        : `lon ${Number(p.longitude).toFixed(4)} · lat ${Number(p.latitude).toFixed(4)}`}
-                    </div>
-                  ) : null}
-                  <div className="mt-2 text-sm">{p.description ?? "—"}</div>
-                  {p.photos?.length ? (
-                    <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
-                      {p.photos.slice(0, 6).map((url) => (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          key={url}
-                          src={url}
-                          alt="post"
-                          className="h-28 w-full cursor-zoom-in rounded-md object-cover transition-transform duration-200 hover:scale-[1.03]"
-                          onClick={() => onZoom(url)}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
+                  <Button variant="outline" size="sm" className="gap-2" onClick={() => openPostEditor(p)}>
+                    <Pencil className="h-4 w-4" />
+                    Edit
+                  </Button>
                 </div>
-              ))
+                {p.location_name || (p.longitude != null && p.latitude != null) ? (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {p.location_name
+                      ? p.location_name
+                      : `lon ${Number(p.longitude).toFixed(4)} · lat ${Number(p.latitude).toFixed(4)}`}
+                  </div>
+                ) : null}
+                <div className="mt-2 text-sm">{p.description ?? "—"}</div>
+                {p.photos?.length ? (
+                  <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
+                    {p.photos.slice(0, 6).map((url) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={url}
+                        src={url}
+                        alt="post"
+                        className="h-28 w-full cursor-zoom-in rounded-md object-cover transition-transform duration-200 hover:scale-[1.03]"
+                        onClick={() => onZoom(url)}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ))
             : null}
         </div>
       </div>

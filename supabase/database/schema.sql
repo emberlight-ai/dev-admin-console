@@ -162,7 +162,7 @@ create policy user_posts_update_owner
 on public.user_posts
 for update
 to authenticated
-using (userid = auth.uid() and deleted_at is null)
+using (userid = auth.uid())
 with check (userid = auth.uid());
 
 drop policy if exists user_posts_delete_owner on public.user_posts;

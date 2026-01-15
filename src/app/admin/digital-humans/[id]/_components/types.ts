@@ -26,6 +26,7 @@ export type DbPost = {
   location_name?: string | null
   longitude?: number | null
   latitude?: number | null
+  deleted_at?: string | null
   created_at: string
 }
 
