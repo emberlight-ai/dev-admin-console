@@ -3,13 +3,31 @@
 import * as React from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { ChevronLeft } from "lucide-react"
+import { CheckCircle2, ChevronLeft, FileText, Settings, XCircle } from "lucide-react"
+import {
+  Background,
+  Controls,
+  Handle,
+  Position,
+  ReactFlow,
+  type Node,
+  type NodeTypes,
+  type NodeProps,
+} from "@xyflow/react"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 const PLACEHOLDER_RE = /<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot_profile>/i
 
@@ -25,6 +43,50 @@ export type SystemPromptLatest = {
   max_follow_ups: number
   active_greeting_enabled: boolean
   active_greeting_prompt: string
+}
+
+type WorkflowNodeData = Record<string, unknown> & {
+  title: string
+  description?: string
+  children: React.ReactNode
+  onOpenSettings?: () => void
+}
+type WorkflowGraphNode = Node<WorkflowNodeData>
+
+function WorkflowNode({ data }: NodeProps<WorkflowGraphNode>) {
+  const onSettings = data.onOpenSettings
+  return (
+    <Card className="w-[320px] p-4 shadow-sm">
+      <Handle type="target" position={Position.Left} />
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold">{data.title}</div>
+          {data.description ? (
+            <div className="text-xs text-muted-foreground">{data.description}</div>
+          ) : null}
+          </div>
+          {onSettings ? (
+            <button
+              type="button"
+              className="nodrag inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background p-0 leading-none hover:bg-muted"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                onSettings()
+              }}
+              aria-label="Open settings"
+              title="Edit"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+        <div>{data.children}</div>
+      </div>
+      <Handle type="source" position={Position.Right} />
+    </Card>
+  )
 }
 
 export function SystemPromptForm({
@@ -62,6 +124,36 @@ export function SystemPromptForm({
   const [activeGreetingEnabled, setActiveGreetingEnabled] = React.useState(false)
   const [activeGreetingPrompt, setActiveGreetingPrompt] = React.useState("")
 
+  type PromptSnapshot = {
+    gender: string
+    personality: string
+    systemPrompt: string
+    responseDelay: number
+    matchingEnabled: boolean
+    immediateMatchEnabled: boolean
+    followUpEnabled: boolean
+    followUpPrompt: string
+    followUpDelay: number
+    maxFollowUps: number
+    activeGreetingEnabled: boolean
+    activeGreetingPrompt: string
+  }
+
+  const [initialSnapshot, setInitialSnapshot] = React.useState<PromptSnapshot | null>(null)
+
+  const [settingsOpen, setSettingsOpen] = React.useState(false)
+  const [settingsNodeId, setSettingsNodeId] = React.useState<
+    "identity" | "matching" | "greeting" | "reply" | "followup" | null
+  >(null)
+
+  const openSettings = React.useCallback(
+    (id: "identity" | "matching" | "greeting" | "reply" | "followup") => {
+      setSettingsNodeId(id)
+      setSettingsOpen(true)
+    },
+    []
+  )
+
   React.useEffect(() => {
     if (!isEdit) return
     const g = (gender || "").trim()
@@ -90,6 +182,77 @@ export function SystemPromptForm({
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEdit])
+
+  // Establish baseline for dirty-check once initial values are loaded (edit) or on first render (create).
+  React.useEffect(() => {
+    if (loading) return
+    if (initialSnapshot) return
+    setInitialSnapshot({
+      gender: gender.trim(),
+      personality: personality.trim(),
+      systemPrompt,
+      responseDelay,
+      matchingEnabled,
+      immediateMatchEnabled,
+      followUpEnabled,
+      followUpPrompt,
+      followUpDelay,
+      maxFollowUps,
+      activeGreetingEnabled,
+      activeGreetingPrompt,
+    })
+  }, [
+    activeGreetingEnabled,
+    activeGreetingPrompt,
+    followUpDelay,
+    followUpEnabled,
+    followUpPrompt,
+    gender,
+    immediateMatchEnabled,
+    initialSnapshot,
+    loading,
+    matchingEnabled,
+    maxFollowUps,
+    personality,
+    responseDelay,
+    systemPrompt,
+  ])
+
+  const isDirty = React.useMemo(() => {
+    if (!initialSnapshot) return false
+    const curr: PromptSnapshot = {
+      gender: gender.trim(),
+      personality: personality.trim(),
+      systemPrompt,
+      responseDelay,
+      matchingEnabled,
+      immediateMatchEnabled,
+      followUpEnabled,
+      followUpPrompt,
+      followUpDelay,
+      maxFollowUps,
+      activeGreetingEnabled,
+      activeGreetingPrompt,
+    }
+    return Object.keys(curr).some((k) => {
+      const key = k as keyof PromptSnapshot
+      return curr[key] !== initialSnapshot[key]
+    })
+  }, [
+    activeGreetingEnabled,
+    activeGreetingPrompt,
+    followUpDelay,
+    followUpEnabled,
+    followUpPrompt,
+    gender,
+    immediateMatchEnabled,
+    initialSnapshot,
+    matchingEnabled,
+    maxFollowUps,
+    personality,
+    responseDelay,
+    systemPrompt,
+  ])
 
   const save = async () => {
     const g = gender.trim()
@@ -158,116 +321,413 @@ export function SystemPromptForm({
     }
   }
 
+  const nodeTypes = React.useMemo<NodeTypes>(() => {
+    return { workflow: WorkflowNode }
+  }, [])
+
+  const nodes = React.useMemo<WorkflowGraphNode[]>(() => {
+    const systemPromptPreview = systemPrompt.trim()
+      ? systemPrompt.trim().split(/\r?\n/).slice(0, 3).join("\n")
+      : "—"
+    const greetingPreview = activeGreetingPrompt.trim()
+      ? activeGreetingPrompt.trim().split(/\r?\n/).slice(0, 2).join("\n")
+      : "—"
+    const followUpPreview = followUpPrompt.trim()
+      ? followUpPrompt.trim().split(/\r?\n/).slice(0, 2).join("\n")
+      : "—"
+
+    const StatusIcon = ({ ok }: { ok: boolean }) =>
+      ok ? (
+        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+      ) : (
+        <XCircle className="h-4 w-4 text-muted-foreground" />
+      )
+
+    const PromptPreview = ({ text }: { text: string }) => (
+      <div className="rounded-md border bg-muted/20 p-2 text-xs whitespace-pre-wrap">
+        <div className="mb-1 flex items-center gap-2 text-muted-foreground">
+          <FileText className="h-3.5 w-3.5" />
+          <span className="font-medium">Preview</span>
+        </div>
+        {text || "—"}
+      </div>
+    )
+
+    return [
+      {
+        id: "matching",
+        type: "workflow",
+        position: { x: 40, y: 170 },
+        data: {
+          title: "1) Matching",
+          description: "Control whether this persona appears in the feed and whether matches are instant.",
+          onOpenSettings: () => openSettings("matching"),
+          children: (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Matching Enabled</div>
+                  <div className="text-xs text-muted-foreground">Appears in swipe feed</div>
+                </div>
+                <StatusIcon ok={matchingEnabled} />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Immediate Match</div>
+                  <div className="text-xs text-muted-foreground">No request, auto match</div>
+                </div>
+                <StatusIcon ok={immediateMatchEnabled} />
+              </div>
+            </div>
+          ),
+        },
+      },
+      {
+        id: "greeting",
+        type: "workflow",
+        position: { x: 420, y: 170 },
+        data: {
+          title: "2) Greeting",
+          description: "Optional first message sent automatically when enabled.",
+          onOpenSettings: () => openSettings("greeting"),
+          children: (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Active Greeting</div>
+                  <div className="text-xs text-muted-foreground">Send first message on match</div>
+                </div>
+                <StatusIcon ok={activeGreetingEnabled} />
+              </div>
+
+              <PromptPreview text={greetingPreview} />
+            </div>
+          ),
+        },
+      },
+      {
+        id: "reply",
+        type: "workflow",
+        position: { x: 800, y: 170 },
+        data: {
+          title: "3) Reply",
+          description: "Core response behavior: delay + system prompt template.",
+          onOpenSettings: () => openSettings("reply"),
+          children: (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Response Delay</div>
+                  <div className="text-xs text-muted-foreground">Seconds</div>
+                </div>
+                <div className="text-sm font-semibold tabular-nums">{responseDelay}</div>
+              </div>
+              <PromptPreview text={systemPromptPreview} />
+            </div>
+          ),
+        },
+      },
+      {
+        id: "followup",
+        type: "workflow",
+        position: { x: 1180, y: 170 },
+        data: {
+          title: "4) Follow Up Reply",
+          description: "Automated follow-ups when the user doesn’t respond.",
+          onOpenSettings: () => openSettings("followup"),
+          children: (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Enable Follow-ups</div>
+                  <div className="text-xs text-muted-foreground">Schedule extra nudges</div>
+                </div>
+                <StatusIcon ok={followUpEnabled} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-md border bg-muted/20 p-2">
+                  <div className="text-xs text-muted-foreground">Wait (sec)</div>
+                  <div className="text-sm font-semibold tabular-nums">{followUpDelay}</div>
+                </div>
+                <div className="rounded-md border bg-muted/20 p-2">
+                  <div className="text-xs text-muted-foreground">Max</div>
+                  <div className="text-sm font-semibold tabular-nums">{maxFollowUps}</div>
+                </div>
+              </div>
+
+              <PromptPreview text={followUpPreview} />
+            </div>
+          ),
+        },
+      },
+    ]
+  }, [
+    activeGreetingEnabled,
+    activeGreetingPrompt,
+    followUpDelay,
+    followUpEnabled,
+    followUpPrompt,
+    openSettings,
+    immediateMatchEnabled,
+    matchingEnabled,
+    maxFollowUps,
+    responseDelay,
+    systemPrompt,
+  ])
+
+  const edges = React.useMemo(() => {
+    return [
+      { id: "e1", source: "matching", target: "greeting", animated: true },
+      { id: "e2", source: "greeting", target: "reply", animated: true },
+      { id: "e3", source: "reply", target: "followup", animated: true },
+    ]
+  }, [])
+
   if (loading) return <div className="p-10 text-center">Loading...</div>
 
   return (
-    <div className={variant === "page" ? "space-y-6 max-w-4xl mx-auto pb-20" : "space-y-6"}>
+    <div className={variant === "page" ? "space-y-6 w-full pb-20" : "space-y-6"}>
       {variant === "page" ? (
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.back()}>
-            <ChevronLeft className="w-5 h-5" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              {isEdit ? `Edit Prompt: ${gender} - ${personality}` : "Create Prompt"}
-            </h1>
-            <p className="text-sm text-muted-foreground">Define how the digital human behaves and automated responses.</p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" onClick={() => router.back()}>
+              <ChevronLeft className="w-5 h-5" />
+            </Button>
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight">
+                {isEdit ? `Edit Prompt: ${gender} - ${personality}` : "Create Prompt"}
+              </h1>
+              <p className="text-sm text-muted-foreground">Define how the digital human behaves and automated responses.</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => openSettings("identity")}
+              disabled={saving}
+            >
+              <Settings className="h-4 w-4" />
+              Identity
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (variant === "page") router.back()
+                else onCancel?.()
+              }}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button onClick={save} disabled={saving || loading || !isDirty}>
+              {saving ? "Saving..." : "Save Changes"}
+            </Button>
           </div>
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card className="p-6 space-y-4 h-fit">
-          <h3 className="font-medium border-b pb-2">Core Identity</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Gender</Label>
-              <select
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                value={gender}
-                onChange={(e) => setGender(e.target.value)}
-                disabled={disableKeyEdit}
-              >
-                <option value="Female">Female</option>
-                <option value="Male">Male</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>Personality</Label>
-              <Input
-                value={personality}
-                onChange={(e) => setPersonality(e.target.value)}
-                placeholder="e.g. calm_playboy"
-                disabled={disableKeyEdit}
-              />
-            </div>
-          </div>
+      <Card className="p-0 overflow-hidden">
+        <div className="p-4 border-b">
+          <div className="text-sm font-medium">Behavior Workflow</div>
+          <div className="text-xs text-muted-foreground">Matching → Greeting → Reply → Follow Up</div>
+        </div>
+        <div className="system-prompt-flow h-[520px] w-full">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            fitView
+            nodesDraggable
+            nodesConnectable={false}
+            elementsSelectable
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background gap={18} size={1} />
+            <Controls />
+          </ReactFlow>
+        </div>
+      </Card>
 
-          <div className="space-y-2">
-            <Label>Initial Response Delay (seconds)</Label>
-            <Input
-              type="number"
-              min={0}
-              max={86400}
-              value={responseDelay}
-              onChange={(e) => setResponseDelay(Number(e.target.value))}
-            />
-            <p className="text-xs text-muted-foreground">Artificial delay before replying to user message (0-86400).</p>
-          </div>
+      {/* Make ReactFlow controls visible in dark mode (and consistent with shadcn theme). */}
+      <style jsx global>{`
+        .system-prompt-flow .react-flow__controls {
+          box-shadow: none;
+        }
+        .system-prompt-flow .react-flow__controls button {
+          background: hsl(var(--background));
+          border: 1px solid hsl(var(--border));
+          color: hsl(var(--foreground));
+        }
+        .system-prompt-flow .react-flow__controls button:hover {
+          background: hsl(var(--muted));
+        }
+        .system-prompt-flow .react-flow__controls button svg {
+          fill: currentColor;
+          stroke: currentColor;
+        }
+      `}</style>
 
-          <div className="border-t pt-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium">Matching Enabled</div>
-                <div className="text-xs text-muted-foreground">
-                  If enabled, this digital human will appear in the matching feed.
+      <Dialog
+        open={settingsOpen}
+        onOpenChange={(open) => {
+          setSettingsOpen(open)
+          if (!open) setSettingsNodeId(null)
+        }}
+      >
+        <DialogContent className="max-w-3xl p-0">
+          <DialogHeader>
+            <div className="p-6 pb-4">
+              <DialogTitle>
+                {settingsNodeId === "identity"
+                  ? "Core Identity"
+                  : settingsNodeId === "matching"
+                  ? "Matching Settings"
+                  : settingsNodeId === "greeting"
+                    ? "Greeting Settings"
+                    : settingsNodeId === "reply"
+                      ? "Reply Settings"
+                      : settingsNodeId === "followup"
+                        ? "Follow-up Settings"
+                        : "Settings"}
+              </DialogTitle>
+            </div>
+          </DialogHeader>
+
+          <div className="max-h-[75vh] overflow-auto px-6 pb-6">
+          {settingsNodeId === "identity" ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Gender</Label>
+                  <select
+                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                    value={gender}
+                    onChange={(e) => setGender(e.target.value)}
+                    disabled={disableKeyEdit}
+                  >
+                    <option value="Female">Female</option>
+                    <option value="Male">Male</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Personality</Label>
+                  <Input
+                    value={personality}
+                    onChange={(e) => setPersonality(e.target.value)}
+                    placeholder="e.g. calm_playboy"
+                    disabled={disableKeyEdit}
+                  />
                 </div>
               </div>
-              <input
-                type="checkbox"
-                id="enable-matching"
-                className="h-4 w-4 rounded border-gray-300 accent-primary"
-                checked={matchingEnabled}
-                onChange={(e) => setMatchingEnabled(e.target.checked)}
-              />
+              <div className="text-xs text-muted-foreground">
+                These keys control which prompt template you are editing/creating.
+              </div>
             </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium">Immediate Match</div>
+          ) : null}
+
+          {settingsNodeId === "matching" ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Matching Enabled</div>
+                  <div className="text-xs text-muted-foreground">Appears in the matching feed</div>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-gray-300 accent-primary"
+                  checked={matchingEnabled}
+                  onChange={(e) => setMatchingEnabled(e.target.checked)}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Immediate Match</div>
+                  <div className="text-xs text-muted-foreground">Create match instantly</div>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-gray-300 accent-primary"
+                  checked={immediateMatchEnabled}
+                  onChange={(e) => setImmediateMatchEnabled(e.target.checked)}
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {settingsNodeId === "greeting" ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Active Greeting</div>
+                  <div className="text-xs text-muted-foreground">Send first message on match</div>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-gray-300 accent-primary"
+                  checked={activeGreetingEnabled}
+                  onChange={(e) => setActiveGreetingEnabled(e.target.checked)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Greeting Prompt</Label>
+                <Textarea
+                  rows={10}
+                  className="max-h-[45vh] overflow-auto"
+                  value={activeGreetingPrompt}
+                  onChange={(e) => setActiveGreetingPrompt(e.target.value)}
+                  placeholder="e.g. When a match is created, send a warm, casual first message to break the ice."
+                  disabled={!activeGreetingEnabled}
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {settingsNodeId === "reply" ? (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Initial Response Delay (seconds)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={86400}
+                  value={responseDelay}
+                  onChange={(e) => setResponseDelay(Number(e.target.value))}
+                />
+                <div className="text-xs text-muted-foreground">0–86400 seconds</div>
+              </div>
+              <div className="space-y-2">
+                <Label>System Prompt Template</Label>
+                <Textarea
+                  rows={variant === "dialog" ? 12 : 16}
+                  className="font-mono text-sm max-h-[45vh] overflow-auto"
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  placeholder={`Include:\n<bot_profile>\nBOT_PROFILE_DETAILS\n</bot_profile>`}
+                />
                 <div className="text-xs text-muted-foreground">
-                  If enabled, matching this digital human creates a match instantly (no request).
+                  Required placeholder: <code className="rounded bg-muted px-1 py-0.5">BOT_PROFILE_DETAILS</code>
                 </div>
               </div>
-              <input
-                type="checkbox"
-                id="enable-imm"
-                className="h-4 w-4 rounded border-gray-300 accent-primary"
-                checked={immediateMatchEnabled}
-                onChange={(e) => setImmediateMatchEnabled(e.target.checked)}
-              />
             </div>
-          </div>
-        </Card>
+          ) : null}
 
-        <Card className="p-6 space-y-4 h-fit">
-          <h3 className="font-medium border-b pb-2 flex items-center justify-between">
-            <span>Follow-up Automation</span>
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="enable-fu"
-                className="h-4 w-4 rounded border-gray-300 accent-primary"
-                checked={followUpEnabled}
-                onChange={(e) => setFollowUpEnabled(e.target.checked)}
-              />
-              <label htmlFor="enable-fu" className="text-sm cursor-pointer select-none">
-                Enable
-              </label>
-            </div>
-          </h3>
-
-          {followUpEnabled ? (
-            <>
+          {settingsNodeId === "followup" ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Enable Follow-ups</div>
+                  <div className="text-xs text-muted-foreground">Schedule extra nudges</div>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-gray-300 accent-primary"
+                  checked={followUpEnabled}
+                  onChange={(e) => setFollowUpEnabled(e.target.checked)}
+                />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Wait Time (seconds)</Label>
@@ -276,6 +736,7 @@ export function SystemPromptForm({
                     min={60}
                     value={followUpDelay}
                     onChange={(e) => setFollowUpDelay(Number(e.target.value))}
+                    disabled={!followUpEnabled}
                   />
                 </div>
                 <div className="space-y-2">
@@ -286,92 +747,32 @@ export function SystemPromptForm({
                     max={10}
                     value={maxFollowUps}
                     onChange={(e) => setMaxFollowUps(Number(e.target.value))}
+                    disabled={!followUpEnabled}
                   />
                 </div>
               </div>
               <div className="space-y-2">
                 <Label>Follow-up Instruction Prompt</Label>
                 <Textarea
-                  rows={4}
+                  rows={10}
+                  className="max-h-[45vh] overflow-auto"
                   value={followUpPrompt}
                   onChange={(e) => setFollowUpPrompt(e.target.value)}
                   placeholder="e.g. The user hasn't replied. Send a playful message to get their attention."
+                  disabled={!followUpEnabled}
                 />
-                <p className="text-xs text-muted-foreground">Instruction given to the AI to generate the follow-up.</p>
               </div>
-            </>
-          ) : (
-            <div className="text-sm text-muted-foreground py-8 text-center italic">Follow-ups are disabled for this persona.</div>
-          )}
-        </Card>
-      </div>
+            </div>
+          ) : null}
 
-      <Card className="p-6 space-y-4">
-        <h3 className="font-medium border-b pb-2 flex items-center justify-between">
-          <span>Active Greeting</span>
-          <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              id="enable-greeting"
-              className="h-4 w-4 rounded border-gray-300 accent-primary"
-              checked={activeGreetingEnabled}
-              onChange={(e) => setActiveGreetingEnabled(e.target.checked)}
-            />
-            <label htmlFor="enable-greeting" className="text-sm cursor-pointer select-none">
-              Enable
-            </label>
+          <DialogFooter className="pt-6">
+            <DialogClose asChild>
+              <Button>Done</Button>
+            </DialogClose>
+          </DialogFooter>
           </div>
-        </h3>
-
-        {activeGreetingEnabled ? (
-          <div className="space-y-2">
-            <Label>Greeting Instruction Prompt</Label>
-            <Textarea
-              rows={4}
-              value={activeGreetingPrompt}
-              onChange={(e) => setActiveGreetingPrompt(e.target.value)}
-              placeholder="e.g. When a match is created, send a warm, casual first message to break the ice."
-            />
-            <p className="text-xs text-muted-foreground">
-              Instruction given to the AI to generate the first message without the user prompting.
-            </p>
-          </div>
-        ) : (
-          <div className="text-sm text-muted-foreground py-6 text-center italic">Active greetings are disabled for this persona.</div>
-        )}
-      </Card>
-
-      <Card className="p-6 space-y-4">
-        <div className="space-y-2">
-          <Label>System Prompt Template</Label>
-          <Textarea
-            rows={variant === "dialog" ? 12 : 20}
-            className="font-mono text-sm max-h-[600px]"
-            value={systemPrompt}
-            onChange={(e) => setSystemPrompt(e.target.value)}
-            placeholder={`Include:\n<bot_profile>\nBOT_PROFILE_DETAILS\n</bot_profile>`}
-          />
-          <div className="text-xs text-muted-foreground">
-            Required placeholder: <code className="rounded bg-muted px-1 py-0.5">BOT_PROFILE_DETAILS</code>
-          </div>
-        </div>
-      </Card>
-
-      <div className="flex justify-end gap-3 pt-2">
-        <Button
-          variant="outline"
-          onClick={() => {
-            if (variant === "page") router.back()
-            else onCancel?.()
-          }}
-          disabled={saving}
-        >
-          Cancel
-        </Button>
-        <Button onClick={save} disabled={saving}>
-          {saving ? "Saving..." : "Save Changes"}
-        </Button>
-      </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
