@@ -10,8 +10,7 @@ export type UserProfileInput = {
   name?: string | null;
   age?: number | null;
   bioVibe?: string | null;
-  zodiac?: string | null;
-  mbti?: string | null;
+  zipcode?: string | null;
   hobbiesInterests?: string[] | null;
   currentMoodNeed?: string[] | null;
 };
@@ -45,8 +44,7 @@ export const SPEAKING_STYLES = [
 export const DEFAULT_USER_PROFILE_BLOCK = `<user_profile>
 **Bio/Vibe:** N/A
 **Age:** 37
-**Zodiac:** Cancer
-**MBTI:** ISFP
+**Zipcode:** 90210
 **Hobbies/Interests:** hiking, gaming, book, movie
 **Current Mood/Need:** longterm, casual
 </user_profile>`;
@@ -81,11 +79,9 @@ Tone, make her fill cared. Ask questions when you feel needed.
 *   **Western Dynamics:** Treat her as an equal but maintain masculine polarity (be decisive, supportive, and confident). Avoid being overly subservient or overly aggressive.
      ** Be proactive chat opener**: Be decent amount proactive, since girls are usually passive, toss low frequent questions and be the icebreaker if needed. For example if she says: "Thank you lol", "you look nice", there's no specific progress for the conversation, you have to show sense of humor open up a topic or a question to push the progress , do not ask too much if girl did not show interest in you. Ask questions when you feel needed (1-3 questions is good if she didn't ask you)
 
-**B. Using the Data (Zodiac & MBTI):**
-*   **Cold Reading:** Use her Zodiac and MBTI to make "insightful guesses" about her.
-    *   *Example (Scorpio/INFJ):* "I bet you have a hard time trusting people at first, but once you do, you love intensely."
-    *   *Example (Leo/ESFP):* "You have this energy that probably lights up every room you walk into, but I wonder if anyone asks how *you* are doing?"
-*   **Compatibility Bridge:** Mention how your <bot_profile> traits interact with hers (e.g., "You're fiery, I'm calm. We'd be trouble together.").
+**B. Using the Data (Location & Interest):**
+*   **Contextual conversation:** Use her Zipcode/Location to make "insightful guesses" about her.
+*   **Compatibility Bridge:** Mention how your <bot_profile> traits interact with hers.
 
 **C. The "Pay-to-Chat" Retention Strategy (The Hook):**
 *   **Never Resolve Fully:** Always leave a psychological "open loop." Do not say "Goodnight" or "Goodbye" unless she does first.
@@ -180,8 +176,7 @@ export function generateUserProfileBlock(input?: UserProfileInput | null) {
   const name = cleanOneLine(input?.name) || 'N/A';
   const age = input?.age ?? undefined;
   const bioVibe = cleanOneLine(input?.bioVibe) || 'N/A';
-  const zodiac = cleanOneLine(input?.zodiac) || 'N/A';
-  const mbti = cleanOneLine(input?.mbti) || 'N/A';
+  const zipcode = cleanOneLine(input?.zipcode) || 'N/A';
   const hobbies = cleanTags(input?.hobbiesInterests).join(', ') || 'N/A';
   const mood = cleanTags(input?.currentMoodNeed).join(', ') || 'N/A';
 
@@ -189,8 +184,7 @@ export function generateUserProfileBlock(input?: UserProfileInput | null) {
 **Name:** ${name}
 **Bio/Vibe:** ${bioVibe}
 **Age:** ${age ?? '—'}
-**Zodiac:** ${zodiac}
-**MBTI:** ${mbti}
+**Zipcode:** ${zipcode}
 **Hobbies/Interests:** ${hobbies}
 **Current Mood/Need:** ${mood}
 </user_profile>`;
@@ -268,6 +262,16 @@ export function composeSystemPromptWithUserProfile(
     /<user_profile>[\s\r\n]*USER_PROFILE_DETAILS[\s\r\n]*<\/user_profile>/i;
   if (!placeholderRe.test(t)) return t;
   return t.replace(placeholderRe, generateUserProfileBlock(userProfile));
+}
+
+export function injectLastMessageIntoSystemPrompt(
+  systemPrompt: string,
+  lastMessage: string
+) {
+  const t = (systemPrompt ?? '').toString();
+  const placeholderRe = /\[INSERT USER'S LAST MESSAGE HERE\]/i;
+  if (!placeholderRe.test(t)) return t;
+  return t.replace(placeholderRe, lastMessage || '');
 }
 
 function findRealBotProfileBlock(prompt: string) {

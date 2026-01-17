@@ -15,7 +15,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { composeSystemPromptWithUserProfile, type UserProfileInput } from "@/lib/botProfile"
+import {
+  composeSystemPromptWithUserProfile,
+  injectLastMessageIntoSystemPrompt,
+  type UserProfileInput,
+} from "@/lib/botProfile"
 
 import type { ChatMessage } from "./types"
 
@@ -41,6 +45,7 @@ export function ChatPanel({
   const [showTestUserSettings, setShowTestUserSettings] = React.useState(false)
   const [testUserName, setTestUserName] = React.useState("")
   const [testUserAge, setTestUserAge] = React.useState("")
+  const [testUserZipcode, setTestUserZipcode] = React.useState("")
   const [testUserHobbies, setTestUserHobbies] = React.useState<string[]>([])
   const [testUserMoodNeed, setTestUserMoodNeed] = React.useState<string[]>([])
 
@@ -54,11 +59,13 @@ export function ChatPanel({
         const parsed = JSON.parse(stored) as {
           name?: string
           age?: string
+          zipcode?: string
           hobbies?: string[]
           moodNeed?: string[]
         }
         if (parsed.name) setTestUserName(parsed.name)
         if (parsed.age) setTestUserAge(parsed.age)
+        if (parsed.zipcode) setTestUserZipcode(parsed.zipcode)
         if (Array.isArray(parsed.hobbies)) setTestUserHobbies(parsed.hobbies)
         if (Array.isArray(parsed.moodNeed)) setTestUserMoodNeed(parsed.moodNeed)
       }
@@ -73,6 +80,7 @@ export function ChatPanel({
       const toStore = {
         name: testUserName,
         age: testUserAge,
+        zipcode: testUserZipcode,
         hobbies: testUserHobbies,
         moodNeed: testUserMoodNeed,
       }
@@ -80,17 +88,18 @@ export function ChatPanel({
     } catch (err) {
       console.error("Failed to save test user profile to localStorage", err)
     }
-  }, [testUserName, testUserAge, testUserHobbies, testUserMoodNeed])
+  }, [testUserName, testUserAge, testUserZipcode, testUserHobbies, testUserMoodNeed])
 
   const effectiveSystemPrompt = React.useMemo(() => {
     return getEffectiveSystemPrompt(
       systemPrompt,
       testUserName,
       testUserAge,
+      testUserZipcode,
       testUserHobbies,
       testUserMoodNeed
     )
-  }, [systemPrompt, testUserName, testUserAge, testUserHobbies, testUserMoodNeed])
+  }, [systemPrompt, testUserName, testUserAge, testUserZipcode, testUserHobbies, testUserMoodNeed])
 
   React.useEffect(() => {
     onEffectiveSystemPromptChange?.(effectiveSystemPrompt)
@@ -104,6 +113,7 @@ export function ChatPanel({
   const resetTestUserProfile = () => {
     setTestUserName("")
     setTestUserAge("")
+    setTestUserZipcode("")
     setTestUserHobbies([])
     setTestUserMoodNeed([])
     try {
@@ -143,12 +153,18 @@ export function ChatPanel({
     setChatLoading(true)
 
     try {
-      const effectiveSystemPrompt = getEffectiveSystemPrompt(
+      let effectiveSystemPrompt = getEffectiveSystemPrompt(
         systemPrompt,
         testUserName,
         testUserAge,
+        testUserZipcode,
         testUserHobbies,
         testUserMoodNeed
+      )
+
+      effectiveSystemPrompt = injectLastMessageIntoSystemPrompt(
+        effectiveSystemPrompt,
+        newMessage.parts[0].text
       )
 
       const response = await fetch("/api/chat", {
@@ -259,6 +275,14 @@ export function ChatPanel({
                 value={testUserAge}
                 onChange={(e) => setTestUserAge(e.target.value)}
                 placeholder="e.g. 37"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Zipcode</Label>
+              <Input
+                value={testUserZipcode}
+                onChange={(e) => setTestUserZipcode(e.target.value)}
+                placeholder="e.g. 90210"
               />
             </div>
             <TagInput
@@ -403,12 +427,14 @@ function getEffectiveSystemPrompt(
   systemPrompt: string | null | undefined,
   testUserName: string,
   testUserAge: string,
+  testUserZipcode: string,
   testUserHobbies: string[],
   testUserMoodNeed: string[]
 ) {
   const userProfile: UserProfileInput = {
     name: testUserName.trim() || null,
     age: testUserAge.trim() ? Number(testUserAge) : null,
+    zipcode: testUserZipcode.trim() || null,
     hobbiesInterests: testUserHobbies,
     currentMoodNeed: testUserMoodNeed,
   }

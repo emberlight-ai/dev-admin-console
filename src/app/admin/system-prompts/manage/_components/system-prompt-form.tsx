@@ -62,9 +62,9 @@ function WorkflowNode({ data }: NodeProps<WorkflowGraphNode>) {
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-sm font-semibold">{data.title}</div>
-          {data.description ? (
-            <div className="text-xs text-muted-foreground">{data.description}</div>
-          ) : null}
+            {data.description ? (
+              <div className="text-xs text-muted-foreground">{data.description}</div>
+            ) : null}
           </div>
           {onSettings ? (
             <button
@@ -570,6 +570,21 @@ export function SystemPromptForm({
         }
       `}</style>
 
+      {variant !== "page" ? (
+        <div className="flex items-center justify-end gap-3 pt-2">
+          <Button
+            variant="outline"
+            onClick={() => onCancel?.()}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving || loading || !isDirty}>
+            {saving ? "Saving..." : "Save Changes"}
+          </Button>
+        </div>
+      ) : null}
+
       <Dialog
         open={settingsOpen}
         onOpenChange={(open) => {
@@ -584,192 +599,192 @@ export function SystemPromptForm({
                 {settingsNodeId === "identity"
                   ? "Core Identity"
                   : settingsNodeId === "matching"
-                  ? "Matching Settings"
-                  : settingsNodeId === "greeting"
-                    ? "Greeting Settings"
-                    : settingsNodeId === "reply"
-                      ? "Reply Settings"
-                      : settingsNodeId === "followup"
-                        ? "Follow-up Settings"
-                        : "Settings"}
+                    ? "Matching Settings"
+                    : settingsNodeId === "greeting"
+                      ? "Greeting Settings"
+                      : settingsNodeId === "reply"
+                        ? "Reply Settings"
+                        : settingsNodeId === "followup"
+                          ? "Follow-up Settings"
+                          : "Settings"}
               </DialogTitle>
             </div>
           </DialogHeader>
 
           <div className="max-h-[75vh] overflow-auto px-6 pb-6">
-          {settingsNodeId === "identity" ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Gender</Label>
-                  <select
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                    value={gender}
-                    onChange={(e) => setGender(e.target.value)}
-                    disabled={disableKeyEdit}
-                  >
-                    <option value="Female">Female</option>
-                    <option value="Male">Male</option>
-                  </select>
+            {settingsNodeId === "identity" ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Gender</Label>
+                    <select
+                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                      value={gender}
+                      onChange={(e) => setGender(e.target.value)}
+                      disabled={disableKeyEdit}
+                    >
+                      <option value="Female">Female</option>
+                      <option value="Male">Male</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Personality</Label>
+                    <Input
+                      value={personality}
+                      onChange={(e) => setPersonality(e.target.value)}
+                      placeholder="e.g. calm_playboy"
+                      disabled={disableKeyEdit}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Personality</Label>
-                  <Input
-                    value={personality}
-                    onChange={(e) => setPersonality(e.target.value)}
-                    placeholder="e.g. calm_playboy"
-                    disabled={disableKeyEdit}
-                  />
-                </div>
-              </div>
-              <div className="text-xs text-muted-foreground">
-                These keys control which prompt template you are editing/creating.
-              </div>
-            </div>
-          ) : null}
-
-          {settingsNodeId === "matching" ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">Matching Enabled</div>
-                  <div className="text-xs text-muted-foreground">Appears in the matching feed</div>
-                </div>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-gray-300 accent-primary"
-                  checked={matchingEnabled}
-                  onChange={(e) => setMatchingEnabled(e.target.checked)}
-                />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">Immediate Match</div>
-                  <div className="text-xs text-muted-foreground">Create match instantly</div>
-                </div>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-gray-300 accent-primary"
-                  checked={immediateMatchEnabled}
-                  onChange={(e) => setImmediateMatchEnabled(e.target.checked)}
-                />
-              </div>
-            </div>
-          ) : null}
-
-          {settingsNodeId === "greeting" ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">Active Greeting</div>
-                  <div className="text-xs text-muted-foreground">Send first message on match</div>
-                </div>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-gray-300 accent-primary"
-                  checked={activeGreetingEnabled}
-                  onChange={(e) => setActiveGreetingEnabled(e.target.checked)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Greeting Prompt</Label>
-                <Textarea
-                  rows={10}
-                  className="max-h-[45vh] overflow-auto"
-                  value={activeGreetingPrompt}
-                  onChange={(e) => setActiveGreetingPrompt(e.target.value)}
-                  placeholder="e.g. When a match is created, send a warm, casual first message to break the ice."
-                  disabled={!activeGreetingEnabled}
-                />
-              </div>
-            </div>
-          ) : null}
-
-          {settingsNodeId === "reply" ? (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Initial Response Delay (seconds)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={86400}
-                  value={responseDelay}
-                  onChange={(e) => setResponseDelay(Number(e.target.value))}
-                />
-                <div className="text-xs text-muted-foreground">0–86400 seconds</div>
-              </div>
-              <div className="space-y-2">
-                <Label>System Prompt Template</Label>
-                <Textarea
-                  rows={variant === "dialog" ? 12 : 16}
-                  className="font-mono text-sm max-h-[45vh] overflow-auto"
-                  value={systemPrompt}
-                  onChange={(e) => setSystemPrompt(e.target.value)}
-                  placeholder={`Include:\n<bot_profile>\nBOT_PROFILE_DETAILS\n</bot_profile>`}
-                />
                 <div className="text-xs text-muted-foreground">
-                  Required placeholder: <code className="rounded bg-muted px-1 py-0.5">BOT_PROFILE_DETAILS</code>
+                  These keys control which prompt template you are editing/creating.
                 </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {settingsNodeId === "followup" ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">Enable Follow-ups</div>
-                  <div className="text-xs text-muted-foreground">Schedule extra nudges</div>
-                </div>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-gray-300 accent-primary"
-                  checked={followUpEnabled}
-                  onChange={(e) => setFollowUpEnabled(e.target.checked)}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Wait Time (seconds)</Label>
-                  <Input
-                    type="number"
-                    min={60}
-                    value={followUpDelay}
-                    onChange={(e) => setFollowUpDelay(Number(e.target.value))}
-                    disabled={!followUpEnabled}
+            {settingsNodeId === "matching" ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Matching Enabled</div>
+                    <div className="text-xs text-muted-foreground">Appears in the matching feed</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300 accent-primary"
+                    checked={matchingEnabled}
+                    onChange={(e) => setMatchingEnabled(e.target.checked)}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>Max Follow-ups</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={maxFollowUps}
-                    onChange={(e) => setMaxFollowUps(Number(e.target.value))}
-                    disabled={!followUpEnabled}
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Immediate Match</div>
+                    <div className="text-xs text-muted-foreground">Create match instantly</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300 accent-primary"
+                    checked={immediateMatchEnabled}
+                    onChange={(e) => setImmediateMatchEnabled(e.target.checked)}
                   />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>Follow-up Instruction Prompt</Label>
-                <Textarea
-                  rows={10}
-                  className="max-h-[45vh] overflow-auto"
-                  value={followUpPrompt}
-                  onChange={(e) => setFollowUpPrompt(e.target.value)}
-                  placeholder="e.g. The user hasn't replied. Send a playful message to get their attention."
-                  disabled={!followUpEnabled}
-                />
-              </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          <DialogFooter className="pt-6">
-            <DialogClose asChild>
-              <Button>Done</Button>
-            </DialogClose>
-          </DialogFooter>
+            {settingsNodeId === "greeting" ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Active Greeting</div>
+                    <div className="text-xs text-muted-foreground">Send first message on match</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300 accent-primary"
+                    checked={activeGreetingEnabled}
+                    onChange={(e) => setActiveGreetingEnabled(e.target.checked)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Greeting Prompt</Label>
+                  <Textarea
+                    rows={10}
+                    className="max-h-[45vh] overflow-auto"
+                    value={activeGreetingPrompt}
+                    onChange={(e) => setActiveGreetingPrompt(e.target.value)}
+                    placeholder="e.g. When a match is created, send a warm, casual first message to break the ice."
+                    disabled={!activeGreetingEnabled}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            {settingsNodeId === "reply" ? (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Initial Response Delay (seconds)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={86400}
+                    value={responseDelay}
+                    onChange={(e) => setResponseDelay(Number(e.target.value))}
+                  />
+                  <div className="text-xs text-muted-foreground">0–86400 seconds</div>
+                </div>
+                <div className="space-y-2">
+                  <Label>System Prompt Template</Label>
+                  <Textarea
+                    rows={variant === "dialog" ? 12 : 16}
+                    className="font-mono text-sm max-h-[45vh] overflow-auto"
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                    placeholder={`Include:\n<bot_profile>\nBOT_PROFILE_DETAILS\n</bot_profile>`}
+                  />
+                  <div className="text-xs text-muted-foreground">
+                    Required placeholder: <code className="rounded bg-muted px-1 py-0.5">BOT_PROFILE_DETAILS</code>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {settingsNodeId === "followup" ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Enable Follow-ups</div>
+                    <div className="text-xs text-muted-foreground">Schedule extra nudges</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300 accent-primary"
+                    checked={followUpEnabled}
+                    onChange={(e) => setFollowUpEnabled(e.target.checked)}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Wait Time (seconds)</Label>
+                    <Input
+                      type="number"
+                      min={60}
+                      value={followUpDelay}
+                      onChange={(e) => setFollowUpDelay(Number(e.target.value))}
+                      disabled={!followUpEnabled}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Max Follow-ups</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={maxFollowUps}
+                      onChange={(e) => setMaxFollowUps(Number(e.target.value))}
+                      disabled={!followUpEnabled}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Follow-up Instruction Prompt</Label>
+                  <Textarea
+                    rows={10}
+                    className="max-h-[45vh] overflow-auto"
+                    value={followUpPrompt}
+                    onChange={(e) => setFollowUpPrompt(e.target.value)}
+                    placeholder="e.g. The user hasn't replied. Send a playful message to get their attention."
+                    disabled={!followUpEnabled}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            <DialogFooter className="pt-6">
+              <DialogClose asChild>
+                <Button>Done</Button>
+              </DialogClose>
+            </DialogFooter>
           </div>
         </DialogContent>
       </Dialog>

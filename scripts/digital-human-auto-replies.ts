@@ -1,7 +1,12 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai'
 import 'dotenv/config'
-import { composeSystemPromptFromTemplate, type BotProfileInput } from '../src/lib/botProfile'
+import {
+  composeSystemPromptFromTemplate,
+  composeSystemPromptWithUserProfile,
+  type BotProfileInput,
+  type UserProfileInput,
+} from '../src/lib/botProfile'
 
 // ---- Env / clients ----
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
@@ -37,6 +42,9 @@ interface UserRow {
   age: number | null
   bio: string | null
   profession: string | null
+  zipcode: string | null
+  hobbies: string[] | null
+  mood_need: string[] | null
 }
 
 interface UserMatchRow {
@@ -134,7 +142,9 @@ async function getUserRow(userid: UUID): Promise<UserRow | null> {
 
   const { data, error } = await supabase
     .from('users')
-    .select('userid, is_digital_human, username, personality, bio, gender, age, profession')
+    .select(
+      'userid, is_digital_human, username, personality, bio, gender, age, profession, zipcode, hobbies, mood_need'
+    )
     .eq('userid', userid)
     .single()
 
@@ -285,11 +295,18 @@ async function processPendingConversations() {
       continue
     }
 
-    await processConversation(c, bot)
+    const humanUser = await getUserRow(otherUserId)
+    if (!humanUser) continue
+
+    await processConversation(c, bot, humanUser)
   }
 }
 
-function composeSystemInstruction(targetBot: UserRow, promptConfig: CachedPrompt | undefined): string {
+function composeSystemInstruction(
+  targetBot: UserRow,
+  humanUser: UserRow,
+  promptConfig: CachedPrompt | undefined
+): string {
   if (promptConfig) {
     const botProfile: BotProfileInput = {
       name: targetBot.username ?? 'Digital Human',
@@ -298,7 +315,18 @@ function composeSystemInstruction(targetBot: UserRow, promptConfig: CachedPrompt
       bio: targetBot.bio ?? undefined,
       background: targetBot.bio ?? undefined,
     }
-    return composeSystemPromptFromTemplate(promptConfig.template, botProfile)
+    const userProfile: UserProfileInput = {
+      name: humanUser.username,
+      age: humanUser.age,
+      zipcode: humanUser.zipcode,
+      hobbiesInterests: humanUser.hobbies,
+      currentMoodNeed: humanUser.mood_need,
+      bioVibe: humanUser.bio,
+    }
+
+    let prompt = composeSystemPromptFromTemplate(promptConfig.template, botProfile)
+    prompt = composeSystemPromptWithUserProfile(prompt, userProfile)
+    return prompt
   }
 
   return `
@@ -314,7 +342,11 @@ reply directly with the text content.
 `
 }
 
-async function processConversation(state: UserMatchAiStateConversationCandidateRow, targetBot: UserRow) {
+async function processConversation(
+  state: UserMatchAiStateConversationCandidateRow,
+  targetBot: UserRow,
+  humanUser: UserRow
+) {
   const matchId = state.match_id
   const lockTime = new Date(Date.now() + LOCK_DURATION_SECONDS * 1000)
 
@@ -339,7 +371,7 @@ async function processConversation(state: UserMatchAiStateConversationCandidateR
     const checkpointId = latestUserMessage?.id ?? state.last_message_id
 
     const promptConfig = getPromptConfigForUser(targetBot)
-    const finalSystemInstruction = composeSystemInstruction(targetBot, promptConfig)
+    const finalSystemInstruction = composeSystemInstruction(targetBot, humanUser, promptConfig)
 
     if (!state.scheduled_response_at && state.last_message_id !== state.ai_last_processed_message_id) {
       const delaySeconds = promptConfig?.responseDelay || 0
