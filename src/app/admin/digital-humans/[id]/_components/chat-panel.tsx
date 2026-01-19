@@ -46,8 +46,8 @@ export function ChatPanel({
   const [testUserName, setTestUserName] = React.useState("")
   const [testUserAge, setTestUserAge] = React.useState("")
   const [testUserZipcode, setTestUserZipcode] = React.useState("")
-  const [testUserHobbies, setTestUserHobbies] = React.useState<string[]>([])
-  const [testUserMoodNeed, setTestUserMoodNeed] = React.useState<string[]>([])
+  const [testUserBio, setTestUserBio] = React.useState("")
+  const [testUserProfession, setTestUserProfession] = React.useState("")
 
   const STORAGE_KEY = "chat-test-user-profile"
 
@@ -60,14 +60,14 @@ export function ChatPanel({
           name?: string
           age?: string
           zipcode?: string
-          hobbies?: string[]
-          moodNeed?: string[]
+          bio?: string
+          profession?: string
         }
         if (parsed.name) setTestUserName(parsed.name)
         if (parsed.age) setTestUserAge(parsed.age)
         if (parsed.zipcode) setTestUserZipcode(parsed.zipcode)
-        if (Array.isArray(parsed.hobbies)) setTestUserHobbies(parsed.hobbies)
-        if (Array.isArray(parsed.moodNeed)) setTestUserMoodNeed(parsed.moodNeed)
+        if (parsed.bio) setTestUserBio(parsed.bio)
+        if (parsed.profession) setTestUserProfession(parsed.profession)
       }
     } catch (err) {
       console.error("Failed to load test user profile from localStorage", err)
@@ -81,14 +81,14 @@ export function ChatPanel({
         name: testUserName,
         age: testUserAge,
         zipcode: testUserZipcode,
-        hobbies: testUserHobbies,
-        moodNeed: testUserMoodNeed,
+        bio: testUserBio,
+        profession: testUserProfession,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore))
     } catch (err) {
       console.error("Failed to save test user profile to localStorage", err)
     }
-  }, [testUserName, testUserAge, testUserZipcode, testUserHobbies, testUserMoodNeed])
+  }, [testUserName, testUserAge, testUserZipcode, testUserBio, testUserProfession])
 
   const effectiveSystemPrompt = React.useMemo(() => {
     return getEffectiveSystemPrompt(
@@ -96,10 +96,10 @@ export function ChatPanel({
       testUserName,
       testUserAge,
       testUserZipcode,
-      testUserHobbies,
-      testUserMoodNeed
+      testUserBio,
+      testUserProfession
     )
-  }, [systemPrompt, testUserName, testUserAge, testUserZipcode, testUserHobbies, testUserMoodNeed])
+  }, [systemPrompt, testUserName, testUserAge, testUserZipcode, testUserBio, testUserProfession])
 
   React.useEffect(() => {
     onEffectiveSystemPromptChange?.(effectiveSystemPrompt)
@@ -114,8 +114,8 @@ export function ChatPanel({
     setTestUserName("")
     setTestUserAge("")
     setTestUserZipcode("")
-    setTestUserHobbies([])
-    setTestUserMoodNeed([])
+    setTestUserBio("")
+    setTestUserProfession("")
     try {
       localStorage.removeItem(STORAGE_KEY)
     } catch (err) {
@@ -158,8 +158,8 @@ export function ChatPanel({
         testUserName,
         testUserAge,
         testUserZipcode,
-        testUserHobbies,
-        testUserMoodNeed
+        testUserBio,
+        testUserProfession
       )
 
       effectiveSystemPrompt = injectLastMessageIntoSystemPrompt(
@@ -285,18 +285,22 @@ export function ChatPanel({
                 placeholder="e.g. 90210"
               />
             </div>
-            <TagInput
-              label="Hobbies/Interests"
-              placeholder="Add a hobby and press Enter…"
-              value={testUserHobbies}
-              onChange={setTestUserHobbies}
-            />
-            <TagInput
-              label="Current Mood/Need"
-              placeholder="Add a mood and press Enter…"
-              value={testUserMoodNeed}
-              onChange={setTestUserMoodNeed}
-            />
+            <div className="space-y-2">
+              <Label>Bio</Label>
+              <Input
+                value={testUserBio}
+                onChange={(e) => setTestUserBio(e.target.value)}
+                placeholder="e.g. Love hiking and coffee"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Profession</Label>
+              <Input
+                value={testUserProfession}
+                onChange={(e) => setTestUserProfession(e.target.value)}
+                placeholder="e.g. Software Engineer"
+              />
+            </div>
           </div>
           <div className="mt-2 text-xs text-muted-foreground">
             If your template contains <code className="rounded bg-muted px-1 py-0.5">USER_PROFILE_DETAILS</code>, these
@@ -428,15 +432,15 @@ function getEffectiveSystemPrompt(
   testUserName: string,
   testUserAge: string,
   testUserZipcode: string,
-  testUserHobbies: string[],
-  testUserMoodNeed: string[]
+  testUserBio: string,
+  testUserProfession: string
 ) {
   const userProfile: UserProfileInput = {
-    name: testUserName.trim() || null,
+    username: testUserName.trim() || null,
     age: testUserAge.trim() ? Number(testUserAge) : null,
     zipcode: testUserZipcode.trim() || null,
-    hobbiesInterests: testUserHobbies,
-    currentMoodNeed: testUserMoodNeed,
+    bio: testUserBio.trim() || null,
+    profession: testUserProfession.trim() || null,
   }
   return composeSystemPromptWithUserProfile(systemPrompt ?? "", userProfile)
 }

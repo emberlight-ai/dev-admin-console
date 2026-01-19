@@ -7,12 +7,11 @@ export type BotProfileInput = {
 };
 
 export type UserProfileInput = {
-  name?: string | null;
+  username?: string | null;
   age?: number | null;
-  bioVibe?: string | null;
+  bio?: string | null;
   zipcode?: string | null;
-  hobbiesInterests?: string[] | null;
-  currentMoodNeed?: string[] | null;
+  profession?: string | null;
 };
 
 export const PERSONALITY_TRAITS = [
@@ -42,11 +41,11 @@ export const SPEAKING_STYLES = [
 ] as const;
 
 export const DEFAULT_USER_PROFILE_BLOCK = `<user_profile>
-**Bio/Vibe:** N/A
+**Username:** N/A
+**Bio:** N/A
 **Age:** 37
 **Zipcode:** 90210
-**Hobbies/Interests:** hiking, gaming, book, movie
-**Current Mood/Need:** longterm, casual
+**Profession:** N/A
 </user_profile>`;
 
 export const STATIC_SYSTEM_PROMPT_PREFIX = `### SYSTEM INSTRUCTIONS: THE IDEAL PARTNER PROJECT
@@ -173,20 +172,19 @@ function cleanTags(input?: string[] | null) {
 }
 
 export function generateUserProfileBlock(input?: UserProfileInput | null) {
-  const name = cleanOneLine(input?.name) || 'N/A';
+  const username = cleanOneLine(input?.username) || 'N/A';
   const age = input?.age ?? undefined;
-  const bioVibe = cleanOneLine(input?.bioVibe) || 'N/A';
+  const bio = cleanOneLine(input?.bio) || 'N/A';
   const zipcode = cleanOneLine(input?.zipcode) || 'N/A';
-  const hobbies = cleanTags(input?.hobbiesInterests).join(', ') || 'N/A';
-  const mood = cleanTags(input?.currentMoodNeed).join(', ') || 'N/A';
+  const profession = cleanOneLine(input?.profession) || 'N/A';
 
   return `<user_profile>
-**Name:** ${name}
-**Bio/Vibe:** ${bioVibe}
+**Username:** ${username}
+**Bio:** ${bio}
 **Age:** ${age ?? '—'}
 **Zipcode:** ${zipcode}
-**Hobbies/Interests:** ${hobbies}
-**Current Mood/Need:** ${mood}
+**Profession:** ${profession}
+**Current UTC Time:** ${new Date().toISOString()} (Need convert to user local time in chat context using Zipcode)
 </user_profile>`;
 }
 

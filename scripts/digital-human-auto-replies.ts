@@ -7,6 +7,7 @@ import {
   type BotProfileInput,
   type UserProfileInput,
 } from '../src/lib/botProfile'
+import { log } from 'console'
 
 // ---- Env / clients ----
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
@@ -43,8 +44,6 @@ interface UserRow {
   bio: string | null
   profession: string | null
   zipcode: string | null
-  hobbies: string[] | null
-  mood_need: string[] | null
 }
 
 interface UserMatchRow {
@@ -143,12 +142,19 @@ async function getUserRow(userid: UUID): Promise<UserRow | null> {
   const { data, error } = await supabase
     .from('users')
     .select(
-      'userid, is_digital_human, username, personality, bio, gender, age, profession, zipcode, hobbies, mood_need'
+      'userid, is_digital_human, username, personality, bio, gender, age, profession, zipcode'
     )
     .eq('userid', userid)
     .single()
 
-  if (error || !data) return null
+  if (error) {
+    console.error(`[dh-auto-replies] Error fetching user ${userid}:`, error)
+    return null
+  }
+  if (!data) {
+    console.warn(`[dh-auto-replies] User ${userid} not found`)
+    return null
+  }
   const row = data as unknown as UserRow
   userRowCache.set(userid, { value: row, expiresAt: Date.now() + USER_CACHE_TTL_MS })
   userIsDigitalHumanCache.set(userid, { value: Boolean(row.is_digital_human), expiresAt: Date.now() + USER_CACHE_TTL_MS })
@@ -248,6 +254,7 @@ async function processPendingConversations() {
 
   if (error) {
     console.error('[dh-auto-replies] Error fetching candidates:', error)
+    console.error('[dh-auto-replies] Error details:', JSON.stringify(error, null, 2))
     return
   }
 
@@ -295,7 +302,8 @@ async function processPendingConversations() {
       continue
     }
 
-    const humanUser = await getUserRow(otherUserId)
+    // The human user is the one who sent the message, not the other user
+    const humanUser = await getUserRow(c.last_message_sender_id)
     if (!humanUser) continue
 
     await processConversation(c, bot, humanUser)
@@ -316,12 +324,11 @@ function composeSystemInstruction(
       background: targetBot.bio ?? undefined,
     }
     const userProfile: UserProfileInput = {
-      name: humanUser.username,
+      username: humanUser.username,
       age: humanUser.age,
       zipcode: humanUser.zipcode,
-      hobbiesInterests: humanUser.hobbies,
-      currentMoodNeed: humanUser.mood_need,
-      bioVibe: humanUser.bio,
+      bio: humanUser.bio,
+      profession: humanUser.profession,
     }
 
     let prompt = composeSystemPromptFromTemplate(promptConfig.template, botProfile)
@@ -398,7 +405,6 @@ async function processConversation(
 
     const result = await model.generateContent(prompt)
     const responseText = result.response.text()
-
     const { error: sendError } = await supabase.rpc('rpc_send_message', {
       match_id: matchId,
       content: responseText,
@@ -417,6 +423,9 @@ async function processConversation(
       .eq('match_id', matchId)
   } catch (err) {
     console.error('[dh-auto-replies] Error processing match', matchId, err)
+    if (err instanceof Error) {
+      console.error('[dh-auto-replies] Error stack:', err.stack)
+    }
     await supabase.from('user_match_ai_state').update({ ai_locked_until: null }).eq('match_id', matchId)
   }
 }

@@ -1,7 +1,12 @@
 import { createClient } from '@supabase/supabase-js'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import 'dotenv/config'
-import { composeSystemPromptFromTemplate, type BotProfileInput } from '../src/lib/botProfile'
+import {
+  composeSystemPromptFromTemplate,
+  composeSystemPromptWithUserProfile,
+  type BotProfileInput,
+  type UserProfileInput,
+} from '../src/lib/botProfile'
 
 // ---- Env / clients ----
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
@@ -37,6 +42,12 @@ interface UserRow {
   age: number | null
   bio: string | null
   profession: string | null
+  zipcode: string | null
+}
+
+interface UserMatchRow {
+  user_a: UUID
+  user_b: UUID
 }
 
 interface UserMatchAiStateFollowUpCandidateRow {
@@ -46,6 +57,7 @@ interface UserMatchAiStateFollowUpCandidateRow {
   last_message_sender_id: UUID | null
   ai_follow_up_count: number | null
   ai_locked_until: string | null
+  match: UserMatchRow
 }
 
 interface MessageRow {
@@ -127,11 +139,18 @@ async function getUserRow(userid: UUID): Promise<UserRow | null> {
 
   const { data, error } = await supabase
     .from('users')
-    .select('userid, is_digital_human, username, gender, personality, age, bio, profession')
+    .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode')
     .eq('userid', userid)
     .single()
 
-  if (error || !data) return null
+  if (error) {
+    console.error(`[dh-followups] Error fetching user ${userid}:`, error)
+    return null
+  }
+  if (!data) {
+    console.warn(`[dh-followups] User ${userid} not found`)
+    return null
+  }
   const row = data as unknown as UserRow
   userRowCache.set(userid, { value: row, expiresAt: Date.now() + USER_CACHE_TTL_MS })
   userIsDigitalHumanCache.set(userid, { value: Boolean(row.is_digital_human), expiresAt: Date.now() + USER_CACHE_TTL_MS })
@@ -217,7 +236,11 @@ async function processFollowUps() {
       last_message_at,
       last_message_sender_id,
       ai_follow_up_count,
-      ai_locked_until
+      ai_locked_until,
+      match:user_matches!inner (
+        user_a,
+        user_b
+      )
     `
     )
     .lt('last_message_at', oneHourAgo)
@@ -241,6 +264,11 @@ async function processFollowUps() {
     const botUser = await getUserRow(c.last_message_sender_id)
     if (!botUser || !botUser.is_digital_human) continue
 
+    // Get the human user (the other user in the match)
+    const humanUserId = c.match.user_a === c.last_message_sender_id ? c.match.user_b : c.match.user_a
+    const humanUser = await getUserRow(humanUserId)
+    if (!humanUser) continue
+
     const promptConfig = getPromptConfigForUser(botUser)
     if (!promptConfig || !promptConfig.followUpEnabled || !promptConfig.followUpPrompt) continue
 
@@ -251,11 +279,16 @@ async function processFollowUps() {
     const lastMsgTime = new Date(c.last_message_at).getTime()
     if (now < lastMsgTime + delayMs) continue
 
-    await sendFollowUp(c, botUser, promptConfig)
+    await sendFollowUp(c, botUser, humanUser, promptConfig)
   }
 }
 
-async function sendFollowUp(state: UserMatchAiStateFollowUpCandidateRow, botUser: UserRow, config: CachedPrompt) {
+async function sendFollowUp(
+  state: UserMatchAiStateFollowUpCandidateRow,
+  botUser: UserRow,
+  humanUser: UserRow,
+  config: CachedPrompt
+) {
   const matchId = state.match_id
   const lockTime = new Date(Date.now() + LOCK_DURATION_SECONDS * 1000)
 
@@ -284,7 +317,17 @@ async function sendFollowUp(state: UserMatchAiStateFollowUpCandidateRow, botUser
     const msgRows = [...(messages ?? [])] as unknown as MessageRow[]
     const transcript = buildTranscript(msgRows, botUser.userid, botUser.username ?? 'Bot')
 
-    const systemText = composeSystemPromptFromTemplate(config.template, botProfile)
+    let systemText = composeSystemPromptFromTemplate(config.template, botProfile)
+    
+    const userProfile: UserProfileInput = {
+      username: humanUser.username,
+      age: humanUser.age,
+      zipcode: humanUser.zipcode,
+      bio: humanUser.bio,
+      profession: humanUser.profession,
+    }
+    systemText = composeSystemPromptWithUserProfile(systemText, userProfile)
+    
     const followUpInstruction =
       config.followUpPrompt || 'Send a casual follow-up message to re-engage the conversation.'
     const prompt = `${systemText}\n\nConversation so far:\n${transcript}\n\nThe user hasn't replied in a while.\nInstruction: ${followUpInstruction}\n\nWrite the follow-up as ${botUser.username ?? 'the bot'}. Reply with only the message text.`

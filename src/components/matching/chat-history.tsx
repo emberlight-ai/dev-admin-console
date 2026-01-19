@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Send, Loader2, ArrowRightLeft, Copy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 // Helper to get a client that definitely has the keys from the env
@@ -42,6 +43,13 @@ type UserSearchResult = {
   avatar?: string | null;
   is_digital_human?: boolean;
 };
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: string, matchPartnerId: string, currentUserId: string }) {
   const [messages, setMessages] = React.useState<Message[]>([]);
@@ -293,6 +301,41 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
     }
   }, [currentUserId, fetchMatches]);
 
+  // Debounced search effect
+  React.useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      setSelectedSearchUserId(null);
+      return;
+    }
+    // Clear selected user when search query changes
+    setSelectedSearchUserId(null);
+
+    const timeoutId = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await fetch(
+          `/api/admin/users?mode=search&q=${encodeURIComponent(q)}&is_digital_human=false&limit=20`
+        );
+        const json = (await res.json()) as { data?: UserSearchResult[]; error?: string };
+        if (!res.ok) throw new Error(json.error || 'Failed to search users');
+        const results = (json.data ?? []).filter((u) => u.userid !== currentUserId);
+        setSearchResults(results);
+        // Don't auto-select - let user choose
+      } catch (err: unknown) {
+        console.error(err);
+        toast.error(err instanceof Error ? err.message : 'Failed to search users');
+        setSearchResults([]);
+        setSelectedSearchUserId(null);
+      } finally {
+        setSearching(false);
+      }
+    }, 1000); // 1 second debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery, currentUserId]);
+
   const searchUsers = async () => {
     const q = searchQuery.trim();
     if (!q) {
@@ -309,7 +352,7 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
       if (!res.ok) throw new Error(json.error || 'Failed to search users');
       const results = (json.data ?? []).filter((u) => u.userid !== currentUserId);
       setSearchResults(results);
-      setSelectedSearchUserId(results[0]?.userid ?? null);
+      // Don't auto-select - let user choose
     } catch (err: unknown) {
       console.error(err);
       toast.error(err instanceof Error ? err.message : 'Failed to search users');
@@ -320,8 +363,8 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
     }
   };
 
-  const sendMatchRequest = async () => {
-    if (!selectedSearchUserId) return;
+  const sendMatchRequest = React.useCallback(async (userId: string) => {
+    if (!userId) return;
     setSendingMatchRequest(true);
     try {
       const res = await fetch('/api/admin/matching/send-match-request', {
@@ -329,7 +372,7 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           from_user_id: currentUserId,
-          target_user_id: selectedSearchUserId,
+          target_user_id: userId,
         }),
       });
       const json = (await res.json()) as { type?: 'match' | 'request'; id?: string; error?: string };
@@ -341,20 +384,21 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
       } else {
         toast.success(`Match request sent: ${json.id}`);
       }
+      // Clear search after successful invite
+      setSearchQuery('');
+      setSearchResults([]);
+      setSelectedSearchUserId(null);
     } catch (err: unknown) {
       console.error(err);
       toast.error(err instanceof Error ? err.message : 'Failed to send match request');
     } finally {
       setSendingMatchRequest(false);
     }
-  };
+  }, [currentUserId, fetchMatches]);
+
 
   if (loading) {
     return <div className="text-sm text-muted-foreground p-4">Loading matches...</div>;
-  }
-
-  if (matchedUsers.length === 0) {
-    return <div className="text-sm text-muted-foreground p-4">No matches found for this user.</div>;
   }
 
   return (
@@ -362,73 +406,85 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
       <div className="rounded-md border p-3">
         <div className="text-sm font-medium">Send Match Request</div>
         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search real user by username prefix…"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void searchUsers();
-            }}
-          />
+          <div className="flex-1 relative">
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search real user by username prefix…"
+            />
+            {searching && (
+              <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {searchResults.length > 0 && (
+              <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-auto">
+                {searchResults.map((u) => (
+                  <button
+                    key={u.userid}
+                    type="button"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent rounded-md"
+                    onClick={() => {
+                      setSelectedSearchUserId(u.userid);
+                      setSearchQuery(u.username || u.userid);
+                      setSearchResults([]);
+                    }}
+                  >
+                    <Avatar className="h-6 w-6 shrink-0">
+                      <AvatarImage src={u.avatar ?? undefined} alt={u.username} />
+                      <AvatarFallback className="text-xs">{initials(u.username || u.userid)}</AvatarFallback>
+                    </Avatar>
+                    <span className="truncate">{u.username || u.userid}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <Button
             type="button"
             variant="outline"
-            onClick={searchUsers}
-            disabled={searching || !searchQuery.trim()}
+            onClick={() => {
+              if (selectedSearchUserId) {
+                void sendMatchRequest(selectedSearchUserId);
+              } else {
+                void searchUsers();
+              }
+            }}
+            disabled={searching || (!searchQuery.trim() && !selectedSearchUserId) || sendingMatchRequest}
           >
-            {searching ? 'Searching…' : 'Search'}
+            {sendingMatchRequest ? 'Inviting…' : 'Invite Match'}
           </Button>
         </div>
+      </div>
 
-        {searchResults.length ? (
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="w-full max-w-xs">
-              <Select value={selectedSearchUserId || ''} onValueChange={setSelectedSearchUserId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a real user" />
-                </SelectTrigger>
-                <SelectContent>
-                  {searchResults.map((u) => (
-                    <SelectItem key={u.userid} value={u.userid}>
-                      {u.username || u.userid}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button
-              type="button"
-              onClick={sendMatchRequest}
-              disabled={!selectedSearchUserId || sendingMatchRequest}
-            >
-              + Send Match Request
-            </Button>
+      {matchedUsers.length > 0 ? (
+        <>
+          <div className="w-full max-w-xs">
+            <label className="text-sm font-medium mb-1 block">Select Partner</label>
+            <Select value={selectedPartnerId || ''} onValueChange={setSelectedPartnerId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a matched user" />
+              </SelectTrigger>
+              <SelectContent>
+                {matchedUsers.map((user) => (
+                  <SelectItem key={user.userid} value={user.userid}>
+                    {user.username || 'Unknown User'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        ) : null}
-      </div>
 
-      <div className="w-full max-w-xs">
-        <label className="text-sm font-medium mb-1 block">Select Partner</label>
-        <Select value={selectedPartnerId || ''} onValueChange={setSelectedPartnerId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select a matched user" />
-          </SelectTrigger>
-          <SelectContent>
-            {matchedUsers.map((user) => (
-              <SelectItem key={user.userid} value={user.userid}>
-                {user.username || 'Unknown User'}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {selectedPartnerId && matches[selectedPartnerId] && (
-        <ChatInterface
-          matchId={matches[selectedPartnerId]}
-          matchPartnerId={selectedPartnerId}
-          currentUserId={currentUserId}
-        />
+          {selectedPartnerId && matches[selectedPartnerId] && (
+            <ChatInterface
+              matchId={matches[selectedPartnerId]}
+              matchPartnerId={selectedPartnerId}
+              currentUserId={currentUserId}
+            />
+          )}
+        </>
+      ) : (
+        <div className="text-sm text-muted-foreground p-4">No matches found for this user.</div>
       )}
     </div>
   );

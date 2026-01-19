@@ -1,7 +1,12 @@
 import { createClient } from '@supabase/supabase-js'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import 'dotenv/config'
-import { composeSystemPromptFromTemplate, type BotProfileInput } from '../src/lib/botProfile'
+import {
+  composeSystemPromptFromTemplate,
+  composeSystemPromptWithUserProfile,
+  type BotProfileInput,
+  type UserProfileInput,
+} from '../src/lib/botProfile'
 
 // ---- Env / clients ----
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
@@ -37,6 +42,7 @@ interface UserRow {
   age: number | null
   bio: string | null
   profession: string | null
+  zipcode: string | null
 }
 
 interface UserMatchRow {
@@ -193,7 +199,7 @@ async function processGreetings() {
     const { user_a, user_b } = c.match
     const { data: users, error: usersErr } = await supabase
       .from('users')
-      .select('userid, is_digital_human, username, gender, personality, age, bio, profession')
+      .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode')
       .in('userid', [user_a, user_b])
 
     if (usersErr || !users || users.length < 2) continue
@@ -206,11 +212,11 @@ async function processGreetings() {
     const promptConfig = getPromptConfigForUser(botUser)
     if (!promptConfig || !promptConfig.activeGreetingEnabled) continue
 
-    await sendGreeting(c.match_id, botUser, promptConfig)
+    await sendGreeting(c.match_id, botUser, realUser, promptConfig)
   }
 }
 
-async function sendGreeting(matchId: UUID, botUser: UserRow, config: CachedPrompt) {
+async function sendGreeting(matchId: UUID, botUser: UserRow, realUser: UserRow, config: CachedPrompt) {
   const lockTime = new Date(Date.now() + LOCK_DURATION_SECONDS * 1000)
 
   const { error: lockError } = await supabase
@@ -231,7 +237,16 @@ async function sendGreeting(matchId: UUID, botUser: UserRow, config: CachedPromp
       background: botUser.bio ?? undefined,
     }
 
-    const systemText = composeSystemPromptFromTemplate(config.template, botProfile)
+    let systemText = composeSystemPromptFromTemplate(config.template, botProfile)
+    
+    const userProfile: UserProfileInput = {
+      username: realUser.username,
+      age: realUser.age,
+      zipcode: realUser.zipcode,
+      bio: realUser.bio,
+      profession: realUser.profession,
+    }
+    systemText = composeSystemPromptWithUserProfile(systemText, userProfile)
     const greetingPrompt =
       (config.activeGreetingPrompt || '').trim() ||
       'Send a short friendly greeting to start the conversation. Keep it natural and concise.'
