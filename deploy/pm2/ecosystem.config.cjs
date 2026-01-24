@@ -84,6 +84,24 @@ module.exports = {
       error_file: "/var/log/pm2/dh-followups.err.log",
       merge_logs: true,
     },
+    {
+      name: "dh-matches",
+      cwd: "/home/ubuntu/dev-admin-console",
+      script: "./node_modules/.bin/tsx",
+      args: "scripts/digital-human-matching-automation.ts",
+      env: {
+        NODE_ENV: "production",
+      },
+      exec_mode: "fork",
+      instances: 1,
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: "10s",
+      time: true,
+      out_file: "/var/log/pm2/dh-matches.out.log",
+      error_file: "/var/log/pm2/dh-matches.err.log",
+      merge_logs: true,
+    },
   ],
 };
 

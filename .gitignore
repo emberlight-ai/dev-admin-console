@@ -42,3 +42,6 @@ next-env.d.ts
 
 # ignore firebase auth key
 /supabase/firebase
+
+# ignore vscode settings
+.vscode

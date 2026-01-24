@@ -323,45 +323,32 @@ $$;
 -- Digital Humans RPCs
 
 -- 3. Function: Send match invites from digital humans to real users
-create or replace function public.send_digital_human_invites()
+create or replace function public.send_digital_human_invites(p_limit integer default null)
 returns integer
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  current_hour_pst integer;
-  active_start integer;
-  active_end integer;
-  max_invites integer;
   invites_per_run integer;
   invites_sent integer := 0;
   digital_human_id uuid;
   real_user_id uuid;
-  existing_count integer;
-  invite_count integer;
+  max_invites integer;
 begin
-  -- Check if we're within active hours (5 AM - 11:59 PM PST)
-  select extract(hour from (now() AT TIME ZONE 'America/Los_Angeles'))::integer into current_hour_pst;
-  select value::integer into active_start from public.digital_human_config where key = 'active_hour_start';
-  select value::integer into active_end from public.digital_human_config where key = 'active_hour_end';
-  
-  -- Default values if config is missing
-  active_start := coalesce(active_start, 5);
-  active_end := coalesce(active_end, 23);
-  
-  -- Return early if outside active hours
-  if current_hour_pst < active_start or current_hour_pst > active_end then
-    return 0;
+  -- Get configuration for max invites per user
+  select value::integer into max_invites from public.digital_human_config where key = 'max_invites_per_user';
+  max_invites := coalesce(max_invites, 5);
+
+  -- Determine how many to send: use p_limit if provided, otherwise fallback to config
+  if p_limit is not null then
+    invites_per_run := p_limit;
+  else
+    select value::integer into invites_per_run from public.digital_human_config where key = 'invites_per_cron_run';
+    invites_per_run := coalesce(invites_per_run, 5);
   end if;
   
-  -- Get configuration
-  select value::integer into max_invites from public.digital_human_config where key = 'max_invites_per_user';
-  select value::integer into invites_per_run from public.digital_human_config where key = 'invites_per_cron_run';
-  
-  -- Default values if config is missing
-  max_invites := coalesce(max_invites, 5);
-  invites_per_run := coalesce(invites_per_run, 5);
+  -- Loop to send invites
   
   -- Loop to send invites
   for i in 1..invites_per_run loop
@@ -431,16 +418,13 @@ end;
 $$;
 
 -- 4. Function: Process match requests for digital humans (accept/reject)
-create or replace function public.process_digital_human_requests()
+create or replace function public.process_digital_human_requests(p_limit integer default 3)
 returns table(accepted integer, rejected integer)
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  current_hour_pst integer;
-  active_start integer;
-  active_end integer;
   accept_rate numeric;
   request_record record;
   accepted_count integer := 0;
@@ -448,26 +432,11 @@ declare
   a uuid;
   b uuid;
 begin
-  -- Check if we're within active hours (5 AM - 11:59 PM PST)
-  select extract(hour from (now() AT TIME ZONE 'America/Los_Angeles'))::integer into current_hour_pst;
-  select value::integer into active_start from public.digital_human_config where key = 'active_hour_start';
-  select value::integer into active_end from public.digital_human_config where key = 'active_hour_end';
-  
-  -- Default values if config is missing
-  active_start := coalesce(active_start, 5);
-  active_end := coalesce(active_end, 23);
-  
-  -- Return early if outside active hours
-  if current_hour_pst < active_start or current_hour_pst > active_end then
-    return query select 0::integer, 0::integer;
-    return;
-  end if;
-  
   -- Get accept rate configuration
   select value::numeric into accept_rate from public.digital_human_config where key = 'accept_rate_percentage';
   accept_rate := coalesce(accept_rate, 30) / 100.0; -- Convert percentage to decimal
   
-  -- Process up to 3 pending requests where to_user_id is a digital human
+  -- Process up to p_limit pending requests where to_user_id is a digital human
   -- Random selection makes it more realistic (not all digital humans respond instantly)
   for request_record in
     select mr.id, mr.from_user_id, mr.to_user_id
@@ -476,7 +445,7 @@ begin
     where u.is_digital_human = true
       and u.deleted_at is null
     order by random()
-    limit 3
+    limit p_limit
     for update skip locked
   loop
     -- Randomly decide: accept (30%) or reject (70%)

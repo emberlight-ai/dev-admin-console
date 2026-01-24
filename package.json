@@ -10,9 +10,10 @@
     "pm2:dh:auto-replies:restart": "pm2 startOrRestart deploy/pm2/ecosystem.config.cjs --only dh-auto-replies --update-env && pm2 save",
     "pm2:dh:greetings:restart": "pm2 startOrRestart deploy/pm2/ecosystem.config.cjs --only dh-greetings --update-env && pm2 save",
     "pm2:dh:followups:restart": "pm2 startOrRestart deploy/pm2/ecosystem.config.cjs --only dh-followups --update-env && pm2 save",
-    "pm2:dh:stop": "pm2 stop dh-auto-replies dh-greetings dh-followups || true",
-    "pm2:dh:delete": "pm2 delete dh-auto-replies dh-greetings dh-followups || true",
-    "pm2:dh:logs": "pm2 logs dh-auto-replies dh-greetings dh-followups",
+    "pm2:dh:matches:restart": "pm2 startOrRestart deploy/pm2/ecosystem.config.cjs --only dh-matches --update-env && pm2 save",
+    "pm2:dh:stop": "pm2 stop dh-auto-replies dh-greetings dh-followups dh-matches || true",
+    "pm2:dh:delete": "pm2 delete dh-auto-replies dh-greetings dh-followups dh-matches || true",
+    "pm2:dh:logs": "pm2 logs dh-auto-replies dh-greetings dh-followups dh-matches",
     "pm2:save": "pm2 save"
   },
   "dependencies": {
