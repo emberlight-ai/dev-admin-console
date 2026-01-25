@@ -37,3 +37,21 @@ export async function getGeminiResponse(
   const response = await result.response;
   return response.text();
 }
+
+export async function generateGeminiContent(
+  prompt: string,
+  modelName: AllowedGeminiModel = 'gemini-2.5-flash'
+) {
+  const model = genAI.getGenerativeModel(
+    {
+      model: modelName,
+    },
+    {
+      baseUrl: baseUrl,
+    }
+  );
+
+  const result = await model.generateContent(prompt);
+  const response = await result.response;
+  return response.text();
+}

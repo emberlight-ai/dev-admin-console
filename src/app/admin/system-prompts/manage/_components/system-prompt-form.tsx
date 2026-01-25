@@ -29,6 +29,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
+import { composeSystemPromptFromTemplate } from "@/lib/botProfile"
+import { ChatPanel } from "./chat-panel"
+
 const PLACEHOLDER_RE = /<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot_profile>/i
 
 export type SystemPromptLatest = {
@@ -253,6 +256,21 @@ export function SystemPromptForm({
     responseDelay,
     systemPrompt,
   ])
+
+  const testSystemPrompt = React.useMemo(() => {
+    if (!systemPrompt) return ""
+    // Generate a dummy bot profile for testing
+    return composeSystemPromptFromTemplate(
+      systemPrompt,
+      {
+        name: "Test Bot",
+        age: 25,
+        archetype: "Virtual Companion",
+        bio: `A ${gender.toLowerCase()} ${personality.toLowerCase()} digital companion.`,
+      },
+      `${gender}:${personality}` // seed for consistency
+    )
+  }, [systemPrompt, gender, personality])
 
   const save = async () => {
     const g = gender.trim()
@@ -549,6 +567,22 @@ export function SystemPromptForm({
             <Controls />
           </ReactFlow>
         </div>
+      </Card>
+
+      <Card className="p-4">
+        <div className="mb-4">
+          <div className="text-sm font-medium">Test & Tuning</div>
+          <div className="text-xs text-muted-foreground">
+            Test the prompt with a random bot profile (Gender: {gender}, Personality: {personality}).
+          </div>
+        </div>
+        <ChatPanel
+          systemPrompt={testSystemPrompt}
+          activeGreetingEnabled={activeGreetingEnabled}
+          activeGreetingPrompt={activeGreetingPrompt}
+          followUpEnabled={followUpEnabled}
+          followUpPrompt={followUpPrompt}
+        />
       </Card>
 
       {/* Make ReactFlow controls visible in dark mode (and consistent with shadcn theme). */}

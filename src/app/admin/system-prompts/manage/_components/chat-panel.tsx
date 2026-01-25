@@ -21,7 +21,10 @@ import {
   type UserProfileInput,
 } from "@/lib/botProfile"
 
-import type { ChatMessage } from "./types"
+export interface ChatMessage {
+  role: "user" | "model"
+  parts: { text: string }[]
+}
 
 const MODEL_OPTIONS = [
   { value: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
@@ -32,9 +35,17 @@ const MODEL_OPTIONS = [
 export function ChatPanel({
   systemPrompt,
   onEffectiveSystemPromptChange,
+  activeGreetingEnabled,
+  activeGreetingPrompt,
+  followUpEnabled,
+  followUpPrompt,
 }: {
   systemPrompt?: string | null
   onEffectiveSystemPromptChange?: (prompt: string) => void
+  activeGreetingEnabled?: boolean
+  activeGreetingPrompt?: string
+  followUpEnabled?: boolean
+  followUpPrompt?: string
 }) {
   const [chatHistory, setChatHistory] = React.useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = React.useState("")
@@ -192,6 +203,97 @@ export function ChatPanel({
     }
   }
 
+  const handleSendGreeting = async () => {
+    if (!activeGreetingEnabled) return
+
+    setChatLoading(true)
+    // Clear history for a fresh greeting test
+    setChatHistory([])
+    setChatInput("")
+
+    try {
+      const effectiveSystemPrompt = getEffectiveSystemPrompt(
+        systemPrompt,
+        testUserName,
+        testUserAge,
+        testUserZipcode,
+        testUserBio,
+        testUserProfession
+      )
+
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemPrompt: effectiveSystemPrompt,
+          history: [],
+          message: "", // No user message for greeting
+          model,
+          mode: "greeting",
+          instruction: activeGreetingPrompt,
+        }),
+      })
+
+      const data = await response.json()
+      if (data.response) {
+        setChatHistory([{ role: "model", parts: [{ text: data.response }] }])
+      } else {
+        toast.error("Failed to generate greeting")
+      }
+    } catch (error) {
+      console.error(error)
+      toast.error("Error generating greeting")
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
+  const handleSendFollowUp = async () => {
+    if (!followUpEnabled) return
+    if (chatHistory.length === 0) {
+      toast.error("Need some conversation history to test follow-up")
+      return
+    }
+
+    setChatLoading(true)
+
+    try {
+      const effectiveSystemPrompt = getEffectiveSystemPrompt(
+        systemPrompt,
+        testUserName,
+        testUserAge,
+        testUserZipcode,
+        testUserBio,
+        testUserProfession
+      )
+
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemPrompt: effectiveSystemPrompt,
+          history: chatHistory,
+          message: "", // No user message for follow-up
+          model,
+          mode: "followup",
+          instruction: followUpPrompt,
+        }),
+      })
+
+      const data = await response.json()
+      if (data.response) {
+        setChatHistory((prev) => [...prev, { role: "model", parts: [{ text: data.response }] }])
+      } else {
+        toast.error("Failed to generate follow-up")
+      }
+    } catch (error) {
+      console.error(error)
+      toast.error("Error generating follow-up")
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
   return (
     <div className="mt-4 space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -249,6 +351,31 @@ export function ChatPanel({
           </Button>
         </div>
       </div>
+
+      {(activeGreetingEnabled || followUpEnabled) && (
+        <div className="flex flex-wrap gap-2">
+          {activeGreetingEnabled && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleSendGreeting}
+              disabled={chatLoading}
+            >
+              Test Greeting
+            </Button>
+          )}
+          {followUpEnabled && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleSendFollowUp}
+              disabled={chatLoading || chatHistory.length === 0}
+            >
+              Test Follow-up
+            </Button>
+          )}
+        </div>
+      )}
 
       {showTestUserSettings ? (
         <div className="rounded-lg border bg-muted/20 p-4">
@@ -359,74 +486,6 @@ export function ChatPanel({
   )
 }
 
-function TagInput({
-  label,
-  placeholder,
-  value,
-  onChange,
-}: {
-  label: string
-  placeholder?: string
-  value: string[]
-  onChange: (next: string[]) => void
-}) {
-  const [draft, setDraft] = React.useState("")
-
-  const add = React.useCallback(
-    (raw: string) => {
-      const v = raw.replace(/\s+/g, " ").trim()
-      if (!v) return
-      if (value.includes(v)) return
-      onChange([...value, v])
-    },
-    [onChange, value]
-  )
-
-  const remove = React.useCallback(
-    (t: string) => {
-      onChange(value.filter((x) => x !== t))
-    },
-    [onChange, value]
-  )
-
-  return (
-    <div className="space-y-2">
-      <Label>{label}</Label>
-      <div className="flex flex-wrap items-center gap-2 rounded-md border bg-background p-2">
-        {value.map((t) => (
-          <Badge key={t} variant="outline" className="gap-1">
-            {t}
-            <button
-              type="button"
-              className="ml-1 rounded px-1 text-muted-foreground hover:text-foreground"
-              onClick={() => remove(t)}
-              aria-label={`Remove ${t}`}
-            >
-              ×
-            </button>
-          </Badge>
-        ))}
-        <input
-          className="h-8 min-w-[160px] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={placeholder}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === ",") {
-              e.preventDefault()
-              add(draft)
-              setDraft("")
-            }
-            if (e.key === "Backspace" && !draft && value.length) {
-              remove(value[value.length - 1])
-            }
-          }}
-        />
-      </div>
-    </div>
-  )
-}
-
 function getEffectiveSystemPrompt(
   systemPrompt: string | null | undefined,
   testUserName: string,
@@ -444,4 +503,3 @@ function getEffectiveSystemPrompt(
   }
   return composeSystemPromptWithUserProfile(systemPrompt ?? "", userProfile)
 }
-

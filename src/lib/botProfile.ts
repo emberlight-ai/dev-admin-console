@@ -308,3 +308,54 @@ export function upsertBotProfile(systemPrompt: string, input: BotProfileInput) {
   if (!next) return block;
   return `${block}\n\n${next}`;
 }
+
+// ---- Shared Transcript Logic ----
+
+export interface SimpleMessage {
+  sender_id: string; // or UUID
+  content: string | null;
+  media_url?: string | null;
+}
+
+export function buildTranscript(
+  messages: SimpleMessage[],
+  botUserId: string,
+  botName: string
+) {
+  // Assume messages are already in display order (chronological)? 
+  // The script passes "chronological = [...messages].reverse()" where messages came from "rpc_get_messages" (usually desc).
+  // We will assume the input array IS chronological for this helper to be pure and simple.
+  
+  return messages
+    .map((m) => {
+      // If we don't have a strict "sender_id" match for bot, we might need logic.
+      // But usually we do.
+      const speaker = m.sender_id === botUserId ? botName : 'User';
+      const text = m.content || (m.media_url ? '[Image Sent]' : '');
+      return `${speaker}: ${text}`;
+    })
+    .join('\n');
+}
+
+export function composeSystemInstruction(
+  // We standardize on "Bot Profile" + "User Profile" + "Template"
+  // This replaces the script's specific function.
+  template: string,
+  botProfile: BotProfileInput,
+  userProfile: UserProfileInput,
+  forceDefaultPrefixSuffix = false 
+): string {
+  // 1. Fill Bot Profile
+  let prompt = composeSystemPromptFromTemplate(template, botProfile);
+  
+  // 2. Fill User Profile
+  prompt = composeSystemPromptWithUserProfile(prompt, userProfile);
+
+  // 3. (Optional) If the template is "bare", we might want to wrap it? 
+  // The script's `composeSystemInstruction` uses `composeSystemPromptFromTemplate` which handles the replacement.
+  // If the template itself came from the DB, it likely has the structure. 
+  // If `forceDefaultPrefixSuffix` is true, we might wrap it if missing?
+  // For now, we trust the template is the source of truth as per the script Logic.
+  
+  return prompt;
+}

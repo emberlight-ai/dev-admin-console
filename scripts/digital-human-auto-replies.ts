@@ -4,8 +4,11 @@ import 'dotenv/config'
 import {
   composeSystemPromptFromTemplate,
   composeSystemPromptWithUserProfile,
+  buildTranscript,
+  composeSystemInstruction,
   type BotProfileInput,
   type UserProfileInput,
+  type SimpleMessage,
 } from '../src/lib/botProfile'
 import { log } from 'console'
 
@@ -310,44 +313,6 @@ async function processPendingConversations() {
   }
 }
 
-function composeSystemInstruction(
-  targetBot: UserRow,
-  humanUser: UserRow,
-  promptConfig: CachedPrompt | undefined
-): string {
-  if (promptConfig) {
-    const botProfile: BotProfileInput = {
-      name: targetBot.username ?? 'Digital Human',
-      age: targetBot.age ?? undefined,
-      archetype: targetBot.profession ?? undefined,
-      bio: targetBot.bio ?? undefined,
-      background: targetBot.bio ?? undefined,
-    }
-    const userProfile: UserProfileInput = {
-      username: humanUser.username,
-      age: humanUser.age,
-      zipcode: humanUser.zipcode,
-      bio: humanUser.bio,
-      profession: humanUser.profession,
-    }
-
-    let prompt = composeSystemPromptFromTemplate(promptConfig.template, botProfile)
-    prompt = composeSystemPromptWithUserProfile(prompt, userProfile)
-    return prompt
-  }
-
-  return `
-You are ${targetBot.username ?? 'a digital human'}, a digital human in a simulation.
-Your personality: ${targetBot.personality || 'Friendly and curious'}.
-Your bio: ${targetBot.bio || 'N/A'}.
-Gender: ${targetBot.gender || 'N/A'}.
-
-You are talking to a user.
-Reply as this character. Keep it engaging, short, and natural for a chat app.
-Do not use emojis excessively.
-reply directly with the text content.
-`
-}
 
 async function processConversation(
   state: UserMatchAiStateConversationCandidateRow,
@@ -378,7 +343,30 @@ async function processConversation(
     const checkpointId = latestUserMessage?.id ?? state.last_message_id
 
     const promptConfig = getPromptConfigForUser(targetBot)
-    const finalSystemInstruction = composeSystemInstruction(targetBot, humanUser, promptConfig)
+    // Use shared function
+    const botProfile: BotProfileInput = {
+      name: targetBot.username ?? 'Digital Human',
+      age: targetBot.age ?? undefined,
+      archetype: targetBot.profession ?? undefined,
+      bio: targetBot.bio ?? undefined,
+      background: targetBot.bio ?? undefined,
+    }
+    const userProfile: UserProfileInput = {
+      username: humanUser.username,
+      age: humanUser.age,
+      zipcode: humanUser.zipcode,
+      bio: humanUser.bio,
+      profession: humanUser.profession,
+    }
+
+    const template = promptConfig?.template ?? `
+You are ${targetBot.username ?? 'a digital human'}.
+Personality: ${targetBot.personality ?? 'Friendly'}.
+Bio: ${targetBot.bio ?? 'N/A'}.
+Reply as this character. Keep it engaging, short, and natural.
+    `
+
+    const finalSystemInstruction = composeSystemInstruction(template, botProfile, userProfile)
 
     if (!state.scheduled_response_at && state.last_message_id !== state.ai_last_processed_message_id) {
       const delaySeconds = promptConfig?.responseDelay || 0
@@ -400,7 +388,13 @@ async function processConversation(
 
     // Gemini chat sessions require history to start with role 'user'. Since our conversation can begin with a bot
     // greeting (role 'model'), we avoid startChat and instead send a single prompt via generateContent.
-    const transcript = buildTranscript(msgRows, targetBot.userid, targetBot.username ?? 'Bot')
+    // Convert to SimpleMessage
+    const simpleMessages: SimpleMessage[] = msgRows.map(m => ({
+      sender_id: m.sender_id,
+      content: m.content,
+      media_url: m.media_url
+    }))
+    const transcript = buildTranscript(simpleMessages, targetBot.userid, targetBot.username ?? 'Bot')
     const prompt = `${finalSystemInstruction}\n\nConversation so far:\n${transcript}\n\nWrite the next message as ${targetBot.username ?? 'the bot'}. Reply with only the message text.`
 
     const result = await model.generateContent(prompt)
@@ -430,16 +424,6 @@ async function processConversation(
   }
 }
 
-function buildTranscript(messages: MessageRow[], botUserId: UUID, botName: string) {
-  const chronological = [...messages].reverse()
-  return chronological
-    .map((m) => {
-      const speaker = m.sender_id === botUserId ? botName : 'User'
-      const text = m.content || (m.media_url ? '[Image Sent]' : '')
-      return `${speaker}: ${text}`
-    })
-    .join('\n')
-}
 
 async function main() {
   console.log('[dh-auto-replies] Starting...')
