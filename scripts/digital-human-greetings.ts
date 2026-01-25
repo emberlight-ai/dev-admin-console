@@ -54,6 +54,8 @@ interface UserMatchAiStateGreetingCandidateRow {
   match_id: UUID
   ai_greeting_sent: boolean
   ai_locked_until: string | null
+  dh_user_id: UUID | null // New
+  real_user_id: UUID | null // New
   match: UserMatchRow
 }
 
@@ -178,14 +180,15 @@ async function processGreetings() {
       match_id,
       ai_greeting_sent,
       ai_locked_until,
+      dh_user_id,
+      real_user_id,
       match:user_matches!inner (
         user_a,
         user_b
       )
     `
     )
-    .is('last_message_id', null)
-    .eq('ai_greeting_sent', false)
+    .eq('ai_state', 0)
     .is('ai_locked_until', null)
     .limit(50)
 
@@ -196,21 +199,37 @@ async function processGreetings() {
 
   const candidates = (data ?? []) as unknown as UserMatchAiStateGreetingCandidateRow[]
   for (const c of candidates) {
-    const { user_a, user_b } = c.match
+    // If we have denormalized columns, use them. Otherwise fallback to match.
+    // (Though our trigger ensures they are set).
+    const dhId = c.dh_user_id
+    const realId = c.real_user_id
+
+    if (!dhId || !realId) {
+        // Fallback or skip if data integrity issue
+        console.warn(`[dh-greetings] Missing dh_user_id/real_user_id for match ${c.match_id}. Trigger might have missed it?`)
+        continue; 
+    }
+
     const { data: users, error: usersErr } = await supabase
       .from('users')
       .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode')
-      .in('userid', [user_a, user_b])
+      .in('userid', [dhId, realId])
 
     if (usersErr || !users || users.length < 2) continue
 
     const userRows = users as unknown as UserRow[]
-    const botUser = userRows.find((u) => u.is_digital_human)
-    const realUser = userRows.find((u) => !u.is_digital_human)
+    const botUser = userRows.find((u) => u.userid === dhId)
+    const realUser = userRows.find((u) => u.userid === realId)
+    
     if (!botUser || !realUser) continue
 
     const promptConfig = getPromptConfigForUser(botUser)
-    if (!promptConfig || !promptConfig.activeGreetingEnabled) continue
+    if (!promptConfig || !promptConfig.activeGreetingEnabled) {
+        // Should have been handled by trigger, but if we are here and disabled:
+        // Move to state 1 to stop looping.
+        await supabase.from('user_match_ai_state').update({ ai_state: 1 }).eq('match_id', c.match_id)
+        continue
+    }
 
     await sendGreeting(c.match_id, botUser, realUser, promptConfig)
   }
@@ -276,6 +295,7 @@ async function sendGreeting(matchId: UUID, botUser: UserRow, realUser: UserRow, 
         ai_greeting_sent: true,
         ai_greeting_sent_at: new Date().toISOString(),
         ai_locked_until: null,
+        ai_state: 1, // TRANSITION: Greeting Sent
       })
       .eq('match_id', matchId)
   } catch (e) {

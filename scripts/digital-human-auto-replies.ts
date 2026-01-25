@@ -62,6 +62,8 @@ interface UserMatchAiStateConversationCandidateRow {
   ai_last_processed_message_id: UUID | null
   ai_locked_until: string | null
   scheduled_response_at: string | null
+  dh_user_id: UUID | null // New
+  real_user_id: UUID | null // New
   match: UserMatchRow
 }
 
@@ -232,8 +234,20 @@ async function processPendingConversations() {
   if (!globalConfig.autoReplyEnabled) return
 
   const now = new Date()
-  const debounceThreshold = new Date(now.getTime() - DEBOUNCE_SECONDS * 1000)
-
+  
+  // We primarily filter by state = 3 (User Sent Message).
+  // But we also need to check for scheduled responses (which might still be in state 2 or 3 depending on how we handle delay).
+  // Actually, if we schedule a response, we usually keep it in the current state until it's time?
+  // Or maybe we treat scheduled as a separate thing.
+  // For simplicity: If state is 3, we process. 
+  // If we processed it and DECIDED to schedule a delay, we might keep it in state 3 or move to a holding state.
+  // The current logic stays in the same state but sets scheduled_response_at.
+  // So we query: (ai_state = 3) OR (scheduled_response_at < now AND scheduled_response_at IS NOT NULL)
+  
+  // Actually, let's just stick to ai_state = 3 for new messages.
+  // For scheduled messages, they might have been "processed" (last processed id updated) but not "sent" yet.
+  // But existing logic doesn't update last processed id until sent. so it works.
+  
   const { data, error } = await supabase
     .from('user_match_ai_state')
     .select(
@@ -245,73 +259,55 @@ async function processPendingConversations() {
       ai_last_processed_message_id,
       ai_locked_until,
       scheduled_response_at,
+      dh_user_id,
+      real_user_id,
       match:user_matches!inner (
         user_a,
         user_b
       )
     `
     )
-    .lt('last_message_at', debounceThreshold.toISOString())
+    .or('ai_state.eq.3,scheduled_response_at.not.is.null') // Handle both cases
     .is('ai_locked_until', null)
     .not('last_message_id', 'is', null)
 
   if (error) {
     console.error('[dh-auto-replies] Error fetching candidates:', error)
-    console.error('[dh-auto-replies] Error details:', JSON.stringify(error, null, 2))
     return
   }
 
   const candidates = (data ?? []) as unknown as UserMatchAiStateConversationCandidateRow[]
 
   for (const c of candidates) {
-    const isNewMessage = c.last_message_id !== c.ai_last_processed_message_id
-    const isScheduled = !!c.scheduled_response_at
-    if (!isNewMessage && !isScheduled) continue
-
-    if (isScheduled && c.scheduled_response_at) {
-      const scheduleTime = new Date(c.scheduled_response_at).getTime()
-      if (Date.now() < scheduleTime) continue
+    // If it's a scheduled response, check time
+    if (c.scheduled_response_at) {
+        if (new Date(c.scheduled_response_at).getTime() > Date.now()) continue;
+    } else {
+        // If not scheduled, it must be state 3 (User Sent).
+        // Double check we haven't processed this message already (idempotency)
+        if (c.last_message_id === c.ai_last_processed_message_id) continue;
     }
 
-    if (!c.last_message_sender_id) continue
+    const dhId = c.dh_user_id;
+    const realId = c.real_user_id;
 
-    // If the latest message was sent by the bot, we should NOT keep re-processing this match forever.
-    // Mark it as processed so we only do work when a real user sends a new message.
-    const senderIsDh = await getIsDigitalHuman(c.last_message_sender_id)
-    if (senderIsDh == null) continue
-    if (senderIsDh) {
-      if (c.last_message_id && c.ai_last_processed_message_id !== c.last_message_id) {
-        await supabase
-          .from('user_match_ai_state')
-          .update({ ai_last_processed_message_id: c.last_message_id, scheduled_response_at: null })
-          .eq('match_id', c.match_id)
-          .eq('last_message_id', c.last_message_id)
-      }
-      continue
+    if (!dhId || !realId) {
+       console.warn(`[dh-auto-replies] Missing IDs for match ${c.match_id}`);
+       continue;
     }
 
-    const otherUserId = c.match.user_a === c.last_message_sender_id ? c.match.user_b : c.match.user_a
-    const bot = await getUserRow(otherUserId)
-    if (!bot) continue
-    if (!bot.is_digital_human) {
-      // Human↔human match: mark processed so we don't keep polling this forever.
-      if (c.last_message_id && c.ai_last_processed_message_id !== c.last_message_id) {
-        await supabase
-          .from('user_match_ai_state')
-          .update({ ai_last_processed_message_id: c.last_message_id, scheduled_response_at: null })
-          .eq('match_id', c.match_id)
-          .eq('last_message_id', c.last_message_id)
-      }
-      continue
-    }
-
-    // The human user is the one who sent the message, not the other user
-    const humanUser = await getUserRow(c.last_message_sender_id)
-    if (!humanUser) continue
+    const bot = await getUserRow(dhId);
+    const humanUser = await getUserRow(realId);
+    
+    if (!bot || !humanUser) continue;
+    
+    // Safety check (though query handles it mostly)
+    if (!bot.is_digital_human) continue;
 
     await processConversation(c, bot, humanUser)
   }
 }
+
 
 
 async function processConversation(
@@ -413,6 +409,7 @@ Reply as this character. Keep it engaging, short, and natural.
         scheduled_response_at: null,
         ai_locked_until: null,
         ai_follow_up_count: 0,
+        ai_state: 2, // TRANSITION: DH Sent
       })
       .eq('match_id', matchId)
   } catch (err) {

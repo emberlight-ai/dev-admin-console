@@ -557,6 +557,11 @@ create table if not exists public.user_match_ai_state (
   -- Greeting (sent on match creation when enabled)
   ai_greeting_sent boolean not null default false,
   ai_greeting_sent_at timestamptz,
+
+  -- Optimized lookups & State Machine
+  dh_user_id uuid references public.users(userid),
+  real_user_id uuid references public.users(userid),
+  ai_state integer default 0, -- 0=Matched, 1=GreetingSent/Skipped, 2=DHSent, 3=UserSent, 4=DHFollowUp
   
   updated_at timestamptz default now()
 );

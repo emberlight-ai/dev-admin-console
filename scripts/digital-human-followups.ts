@@ -57,6 +57,8 @@ interface UserMatchAiStateFollowUpCandidateRow {
   last_message_sender_id: UUID | null
   ai_follow_up_count: number | null
   ai_locked_until: string | null
+  dh_user_id: UUID | null // New
+  real_user_id: UUID | null // New
   match: UserMatchRow
 }
 
@@ -227,6 +229,8 @@ async function processFollowUps() {
   const now = Date.now()
   const oneHourAgo = new Date(now - 60 * 60 * 1000).toISOString()
 
+  // Follow-ups happen when DH sent the last message (State 2 or 4).
+  // State 1 is "Greeting Sent", user disallowed follow-ups on greeting.
   const { data, error } = await supabase
     .from('user_match_ai_state')
     .select(
@@ -237,16 +241,18 @@ async function processFollowUps() {
       last_message_sender_id,
       ai_follow_up_count,
       ai_locked_until,
+      dh_user_id,
+      real_user_id,
       match:user_matches!inner (
         user_a,
         user_b
       )
     `
     )
-    .lt('last_message_at', oneHourAgo)
+    .in('ai_state', [2, 4])
+    .lt('last_message_at', oneHourAgo) // Ensure enough time passed
     .is('ai_locked_until', null)
     .not('last_message_id', 'is', null)
-    .not('last_message_sender_id', 'is', null)
 
   if (error) {
     console.error('[dh-followups] Error fetching follow-up candidates', error)
@@ -255,18 +261,19 @@ async function processFollowUps() {
 
   const candidates = (data ?? []) as unknown as UserMatchAiStateFollowUpCandidateRow[]
   for (const c of candidates) {
-    if (!c.last_message_sender_id || !c.last_message_at) continue
+    // Basic integrity
+    if (!c.last_message_at) continue
+    
+    // Use denormalized IDs
+    const dhId = c.dh_user_id
+    const realId = c.real_user_id
 
-    // Follow-ups only happen when the *latest* message was from the digital human.
-    const senderIsDh = await getIsDigitalHuman(c.last_message_sender_id)
-    if (!senderIsDh) continue
+    if (!dhId || !realId) continue
 
-    const botUser = await getUserRow(c.last_message_sender_id)
+    const botUser = await getUserRow(dhId)
     if (!botUser || !botUser.is_digital_human) continue
 
-    // Get the human user (the other user in the match)
-    const humanUserId = c.match.user_a === c.last_message_sender_id ? c.match.user_b : c.match.user_a
-    const humanUser = await getUserRow(humanUserId)
+    const humanUser = await getUserRow(realId)
     if (!humanUser) continue
 
     const promptConfig = getPromptConfigForUser(botUser)
@@ -350,6 +357,7 @@ async function sendFollowUp(
         // Still setting last_message_id is fine if the RPC returns it, but not required.
         last_message_id: (sentMsg as { id?: string } | null)?.id ?? state.last_message_id,
         ai_locked_until: null,
+        ai_state: 4, // TRANSITION: DH Follow-up
       })
       .eq('match_id', matchId)
   } catch (e) {

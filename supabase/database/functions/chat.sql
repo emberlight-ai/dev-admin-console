@@ -235,7 +235,8 @@ begin
     last_message_sender_id,
     ai_last_processed_message_id,
     scheduled_response_at,
-    updated_at
+    updated_at,
+    ai_state
   )
   values (
     new.match_id, 
@@ -244,7 +245,13 @@ begin
     new.sender_id,
     case when sender_is_digital_human then new.id else null end,
     null,
-    now()
+    now(),
+    case 
+       -- If sender is DH, state = 2 (DH Sent)
+       when sender_is_digital_human then 2 
+       -- If sender is User, state = 3 (User Sent)
+       else 3 
+    end
   )
   on conflict (match_id) do update
   set 
@@ -261,7 +268,8 @@ begin
       when sender_is_digital_human then null
       else public.user_match_ai_state.scheduled_response_at
     end,
-    updated_at = now();
+    updated_at = now(),
+    ai_state = excluded.ai_state;
     
   return new;
 end;
@@ -279,17 +287,83 @@ returns trigger
 language plpgsql
 security definer
 as $$
+declare
+  u_a uuid;
+  u_b uuid;
+  is_a_dh boolean;
+  is_b_dh boolean;
+  dh_id uuid;
+  real_id uuid;
+  dh_gender text;
+  dh_personality text;
+  should_greet boolean;
+  initial_state integer;
 begin
+  u_a := new.user_a;
+  u_b := new.user_b;
+  
+  -- Determine who is Digital Human
+  select is_digital_human, gender, personality into is_a_dh, dh_gender, dh_personality from public.users where userid = u_a;
+  select is_digital_human into is_b_dh from public.users where userid = u_b;
+  
+  if is_a_dh then
+    dh_id := u_a;
+    real_id := u_b;
+  elsif is_b_dh then
+    dh_id := u_b;
+    real_id := u_a;
+    select gender, personality into dh_gender, dh_personality from public.users where userid = u_b;
+  else
+    -- Both human or something else, default behavior (no DH logic)
+    insert into public.user_match_ai_state (match_id, updated_at) values (new.id, now()) on conflict (match_id) do nothing;
+    return new;
+  end if;
+
+  -- Check System Prompt for greeting config
+  -- Fallback logic matches what is in TS scripts (Specific -> Generic -> False)
+  select active_greeting_enabled into should_greet
+  from public."SystemPrompts"
+  where gender = coalesce(nullif(trim(dh_gender), ''), 'Female')
+    and personality = coalesce(nullif(trim(dh_personality), ''), 'General')
+  order by created_at desc
+  limit 1;
+  
+  if should_greet is null then
+    select active_greeting_enabled into should_greet
+    from public."SystemPrompts"
+    where gender = coalesce(nullif(trim(dh_gender), ''), 'Female')
+      and personality = 'General'
+    order by created_at desc
+    limit 1;
+  end if;
+  
+  -- If greeting enabled -> State 0 (Matched), waiting for greeting script
+  -- If greeting disabled -> State 1 (Greeting "Sent"/Skipped), waiting for user to message first
+  if coalesce(should_greet, false) then
+    initial_state := 0;
+  else
+    initial_state := 1;
+  end if;
+
   insert into public.user_match_ai_state (
     match_id,
-    updated_at
+    updated_at,
+    dh_user_id,
+    real_user_id,
+    ai_state
   )
   values (
     new.id,
-    now()
+    now(),
+    dh_id,
+    real_id,
+    initial_state
   )
   on conflict (match_id) do update
-  set updated_at = now();
+  set updated_at = now(),
+      dh_user_id = excluded.dh_user_id,
+      real_user_id = excluded.real_user_id,
+      ai_state = excluded.ai_state;
 
   return new;
 end;
