@@ -105,6 +105,32 @@ before update on public.user_posts
 for each row
 execute function public.set_updated_at();
 
+-- ==============================================================================
+-- USER BALANCES & SUBSCRIPTION
+-- ==============================================================================
+
+create table if not exists public.user_balances (
+  userid uuid primary key references public.users(userid) on delete cascade,
+  free_msgs_today integer not null default 0,
+  free_msgs_updated_date date,
+  free_swipe_today integer not null default 0,
+  free_swipe_updated_date date
+);
+
+create table if not exists public.user_subscription (
+  userid uuid primary key references public.users(userid) on delete cascade,
+  is_premium boolean not null default false,
+  plan_id text,
+  updated_at timestamptz default now(),
+  expires_at timestamp without time zone
+);
+
+drop trigger if exists user_subscription_set_updated_at on public.user_subscription;
+create trigger user_subscription_set_updated_at
+before update on public.user_subscription
+for each row
+execute function public.set_updated_at();
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (RLS)
 -- - Reads: any authenticated user can read profiles/posts (excluding soft-deleted rows)
