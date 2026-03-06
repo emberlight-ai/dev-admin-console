@@ -57,6 +57,8 @@ $$;
 -- RPC: Refill daily allowance for current user (idempotent: no-op if already refilled today).
 -- Premium: 60 swipes/day; non-premium: 10 swipes/day; everyone: 15 messages/day.
 -- Can be called explicitly (e.g. on app open or cron) or implicitly when rpc_get_balance runs (lazy refill).
+-- If row exists but free_msgs_updated_date is null (e.g. created by update_balance without dates),
+-- we only set the date columns to today so refill won't keep resetting counts on every get.
 create or replace function public.rpc_refill()
 returns public.user_balances
 language plpgsql
@@ -67,6 +69,7 @@ declare
   swipes_today integer;
   result public.user_balances;
   today date := current_date;
+  existing_date date;
 begin
   if auth.uid() is null then
     raise exception 'authentication required';
@@ -74,12 +77,23 @@ begin
 
   perform public.expire_subscription_if_needed();
 
+  select b.free_msgs_updated_date into existing_date
+  from public.user_balances b
+  where b.userid = auth.uid();
+
+  -- Already refilled today: do nothing (don't overwrite consumed balance)
+  if existing_date is not null and existing_date >= today then
+    select * into result from public.user_balances where userid = auth.uid();
+    return result;
+  end if;
+
   select coalesce(s.is_premium, false) into is_prem
   from public.user_subscription s
   where s.userid = auth.uid();
 
   swipes_today := case when is_prem then 60 else 10 end;
 
+  -- No row, or date is null / before today: insert or full refill
   insert into public.user_balances (
     userid,
     free_msgs_today,
@@ -141,12 +155,11 @@ begin
 end;
 $$;
 
--- RPC: Update user's balance (upsert; null param = do not change)
+-- RPC: Update user's balance (upsert; null param = do not change).
+-- Dates are always set by the backend (current_date) when a count is updated; clients cannot pass dates.
 create or replace function public.rpc_update_balance(
   free_msgs_today integer default null,
-  free_swipe_today integer default null,
-  free_msgs_updated_date date default null,
-  free_swipe_updated_date date default null
+  free_swipe_today integer default null
 )
 returns public.user_balances
 language plpgsql
@@ -154,6 +167,7 @@ security invoker
 as $$
 declare
   result public.user_balances;
+  today date := current_date;
 begin
   if auth.uid() is null then
     raise exception 'authentication required';
@@ -169,32 +183,34 @@ begin
   values (
     auth.uid(),
     coalesce(free_msgs_today, 0),
-    free_msgs_updated_date,
+    today,
     coalesce(free_swipe_today, 0),
-    free_swipe_updated_date
+    today
   )
   on conflict (userid) do update set
     free_msgs_today = coalesce(excluded.free_msgs_today, user_balances.free_msgs_today),
-    free_msgs_updated_date = coalesce(excluded.free_msgs_updated_date, user_balances.free_msgs_updated_date),
+    free_msgs_updated_date = today,
     free_swipe_today = coalesce(excluded.free_swipe_today, user_balances.free_swipe_today),
-    free_swipe_updated_date = coalesce(excluded.free_swipe_updated_date, user_balances.free_swipe_updated_date)
+    free_swipe_updated_date = today
   returning * into result;
 
   return result;
 end;
 $$;
 
--- RPC: Purchase premium (upsert subscription for current user)
-create or replace function public.rpc_purchase_premium(
-  plan_id text,
-  expires_at timestamp without time zone
-)
+-- Plan types and duration: backend is source of truth for expiry (no client-supplied date).
+-- Supported plan_id values: weekly, monthly, yearly (case-insensitive). Unknown plans default to 1 month.
+drop function if exists public.rpc_purchase_premium(text, timestamp without time zone);
+-- RPC: Purchase premium (upsert subscription for current user). expires_at computed from plan_id.
+create or replace function public.rpc_purchase_premium(plan_id text)
 returns public.user_subscription
 language plpgsql
 security invoker
 as $$
 declare
   result public.user_subscription;
+  computed_expires timestamp without time zone;
+  plan_key text := lower(trim(plan_id));
 begin
   if auth.uid() is null then
     raise exception 'authentication required';
@@ -202,12 +218,16 @@ begin
   if plan_id is null or trim(plan_id) = '' then
     raise exception 'plan_id is required';
   end if;
-  if expires_at is null then
-    raise exception 'expires_at is required';
-  end if;
+
+  computed_expires := (current_timestamp + case plan_key
+    when 'weekly' then interval '1 week'
+    when 'monthly' then interval '1 month'
+    when 'yearly' then interval '12 months'
+    else interval '1 month'
+  end)::timestamp without time zone;
 
   insert into public.user_subscription (userid, is_premium, plan_id, expires_at)
-  values (auth.uid(), true, plan_id, expires_at)
+  values (auth.uid(), true, plan_id, computed_expires)
   on conflict (userid) do update set
     is_premium = true,
     plan_id = excluded.plan_id,

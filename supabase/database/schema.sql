@@ -126,10 +126,7 @@ create table if not exists public.user_subscription (
 );
 
 drop trigger if exists user_subscription_set_updated_at on public.user_subscription;
-create trigger user_subscription_set_updated_at
-before update on public.user_subscription
-for each row
-execute function public.set_updated_at();
+create trigger user_subscription_set_updated_at before update on public.user_subscription for each row execute function public.set_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- Row Level Security (RLS)
