@@ -12,6 +12,8 @@ import { Separator } from "@/components/ui/separator"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertDialog,
@@ -60,6 +62,23 @@ export default function UserDetail() {
   } | null>(null)
   const [authLoading, setAuthLoading] = React.useState(false)
 
+  // Purchases (subscription_purchases for this user)
+  type PurchaseRow = { id: string; userid: string; plan_id: string; amount_cents: number; created_at: string }
+  const [purchases, setPurchases] = React.useState<PurchaseRow[]>([])
+  const [purchasesLoading, setPurchasesLoading] = React.useState(false)
+
+  // Balance (free messages / swipes) for admin edit
+  type BalanceRow = {
+    free_msgs_today: number
+    free_msgs_updated_date: string | null
+    free_swipe_today: number
+    free_swipe_updated_date: string | null
+  }
+  const [balance, setBalance] = React.useState<BalanceRow | null>(null)
+  const [balanceLoading, setBalanceLoading] = React.useState(false)
+  const [balanceSaving, setBalanceSaving] = React.useState(false)
+  const [balanceForm, setBalanceForm] = React.useState({ free_msgs_today: "", free_swipe_today: "" })
+
   React.useEffect(() => {
     if (!id) return
     void fetchUser()
@@ -79,6 +98,97 @@ export default function UserDetail() {
       console.error(err)
     }
     setAuthLoading(false)
+  }
+
+  const fetchPurchases = async () => {
+    if (!id) return
+    setPurchasesLoading(true)
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(String(id))}/purchases`)
+      const json = (await res.json()) as { data?: PurchaseRow[]; error?: string }
+      if (res.ok && Array.isArray(json.data)) {
+        setPurchases(json.data)
+      } else {
+        setPurchases([])
+      }
+    } catch (err) {
+      console.error(err)
+      setPurchases([])
+    }
+    setPurchasesLoading(false)
+  }
+
+  const fetchBalance = async () => {
+    if (!id) return
+    setBalanceLoading(true)
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(String(id))}/balance`)
+      const json = (await res.json()) as BalanceRow & { error?: string }
+      if (res.ok && !json.error) {
+        setBalance({
+          free_msgs_today: json.free_msgs_today ?? 0,
+          free_msgs_updated_date: json.free_msgs_updated_date ?? null,
+          free_swipe_today: json.free_swipe_today ?? 0,
+          free_swipe_updated_date: json.free_swipe_updated_date ?? null,
+        })
+        setBalanceForm({
+          free_msgs_today: String(json.free_msgs_today ?? 0),
+          free_swipe_today: String(json.free_swipe_today ?? 0),
+        })
+      } else {
+        setBalance(null)
+      }
+    } catch (err) {
+      console.error(err)
+      setBalance(null)
+    }
+    setBalanceLoading(false)
+  }
+
+  const saveBalance = async () => {
+    if (!id) return
+    const msgs = balanceForm.free_msgs_today.trim()
+    const swipes = balanceForm.free_swipe_today.trim()
+    const body: { free_msgs_today?: number; free_swipe_today?: number } = {}
+    if (msgs !== "") body.free_msgs_today = parseInt(msgs, 10)
+    if (swipes !== "") body.free_swipe_today = parseInt(swipes, 10)
+    if (Object.keys(body).length === 0) {
+      toast.info("Enter at least one value to update")
+      return
+    }
+    if (body.free_msgs_today != null && (Number.isNaN(body.free_msgs_today) || body.free_msgs_today < 0)) {
+      toast.error("Free messages must be a non-negative number")
+      return
+    }
+    if (body.free_swipe_today != null && (Number.isNaN(body.free_swipe_today) || body.free_swipe_today < 0)) {
+      toast.error("Free swipes must be a non-negative number")
+      return
+    }
+    setBalanceSaving(true)
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(String(id))}/balance`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      const json = (await res.json()) as BalanceRow & { error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to update balance")
+      setBalance({
+        free_msgs_today: json.free_msgs_today ?? 0,
+        free_msgs_updated_date: json.free_msgs_updated_date ?? null,
+        free_swipe_today: json.free_swipe_today ?? 0,
+        free_swipe_updated_date: json.free_swipe_updated_date ?? null,
+      })
+      setBalanceForm({
+        free_msgs_today: String(json.free_msgs_today ?? 0),
+        free_swipe_today: String(json.free_swipe_today ?? 0),
+      })
+      toast.success("Balance updated")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update balance")
+      console.error(err)
+    }
+    setBalanceSaving(false)
   }
 
   const fetchUser = async () => {
@@ -248,7 +358,12 @@ export default function UserDetail() {
               <TabsList>
                 <TabsTrigger value="posts">Post History</TabsTrigger>
                 <TabsTrigger value="history">Chat History</TabsTrigger>
-                <TabsTrigger value="management">User Management</TabsTrigger>
+                <TabsTrigger value="purchases" onClick={() => void fetchPurchases()}>
+                  Purchases
+                </TabsTrigger>
+                <TabsTrigger value="management" onClick={() => user ? void fetchBalance() : undefined}>
+                  User Management
+                </TabsTrigger>
               </TabsList>
 
               <TabsContent value="history" className="mt-4">
@@ -382,7 +497,107 @@ export default function UserDetail() {
                 </div>
               </TabsContent>
 
+              <TabsContent value="purchases" className="mt-4">
+                <div className="text-sm font-medium">Subscription purchases</div>
+                <p className="text-muted-foreground text-sm mt-1">
+                  All purchases recorded for this user (plan, amount, date).
+                </p>
+                {purchasesLoading ? (
+                  <div className="text-sm text-muted-foreground mt-4">Loading...</div>
+                ) : purchases.length === 0 ? (
+                  <div className="text-sm text-muted-foreground mt-4 rounded-md border bg-muted/20 p-4">
+                    No purchases recorded.
+                  </div>
+                ) : (
+                  <Card className="p-0 mt-3">
+                    <div className="border-t">
+                      <div className="max-h-[320px] overflow-auto">
+                        <table className="w-full text-sm">
+                          <thead className="sticky top-0 bg-background">
+                            <tr className="border-b">
+                              <th className="p-2 text-left">Date</th>
+                              <th className="p-2 text-left">Plan</th>
+                              <th className="p-2 text-left">Amount</th>
+                              <th className="p-2 text-left">Purchase ID</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {purchases.map((p) => (
+                              <tr key={p.id} className="border-b">
+                                <td className="p-2 text-muted-foreground">
+                                  {p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
+                                </td>
+                                <td className="p-2 capitalize">{p.plan_id ?? "—"}</td>
+                                <td className="p-2 font-medium">
+                                  ${((p.amount_cents ?? 0) / 100).toFixed(2)}
+                                </td>
+                                <td className="p-2 text-muted-foreground font-mono text-xs">
+                                  {p.id}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </Card>
+                )}
+              </TabsContent>
+
               <TabsContent value="management" className="mt-4 space-y-6">
+                {user ? (
+                  <>
+                    <div className="space-y-4">
+                      <div className="text-sm font-medium">Free messages & swipes</div>
+                      <p className="text-muted-foreground text-xs">
+                        Edit this user&apos;s daily balance. Leave a field empty to keep current value. Dates update to today when you change the corresponding value.
+                      </p>
+                      {balanceLoading ? (
+                        <div className="text-sm text-muted-foreground">Loading balance...</div>
+                      ) : (
+                        <div className="rounded-md border bg-muted/20 p-4 space-y-4 max-w-sm">
+                          <div className="grid gap-2">
+                            <Label htmlFor="balance-msgs">Free messages today</Label>
+                            <Input
+                              id="balance-msgs"
+                              type="number"
+                              min={0}
+                              value={balanceForm.free_msgs_today}
+                              onChange={(e) => setBalanceForm((p) => ({ ...p, free_msgs_today: e.target.value }))}
+                              placeholder={balance ? String(balance.free_msgs_today) : "0"}
+                            />
+                            {balance?.free_msgs_updated_date ? (
+                              <p className="text-xs text-muted-foreground">
+                                Last updated: {new Date(balance.free_msgs_updated_date).toLocaleDateString()}
+                              </p>
+                            ) : null}
+                          </div>
+                          <div className="grid gap-2">
+                            <Label htmlFor="balance-swipes">Free swipes today</Label>
+                            <Input
+                              id="balance-swipes"
+                              type="number"
+                              min={0}
+                              value={balanceForm.free_swipe_today}
+                              onChange={(e) => setBalanceForm((p) => ({ ...p, free_swipe_today: e.target.value }))}
+                              placeholder={balance ? String(balance.free_swipe_today) : "0"}
+                            />
+                            {balance?.free_swipe_updated_date ? (
+                              <p className="text-xs text-muted-foreground">
+                                Last updated: {new Date(balance.free_swipe_updated_date).toLocaleDateString()}
+                              </p>
+                            ) : null}
+                          </div>
+                          <Button onClick={saveBalance} disabled={balanceSaving}>
+                            {balanceSaving ? "Saving..." : "Save balance"}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    <Separator />
+                  </>
+                ) : null}
+
                 <div className="space-y-4">
                   <div className="text-sm font-medium">Session Information</div>
                   <div className="rounded-md border bg-muted/20 p-3 text-sm space-y-2">

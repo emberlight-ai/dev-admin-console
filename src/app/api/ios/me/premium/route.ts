@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import {
+  getPlanConfig,
+  getPlanPriceCents,
+  getPlanExpiresAt,
+} from '@/lib/subscription-plans';
 
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
@@ -49,7 +54,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/** POST: Purchase premium. Body: { plan_id: string }. Backend computes expires_at from plan (weekly, monthly, yearly). */
+/** POST: Purchase premium. Body: { plan_id: string }. Backend uses single plan config (price + duration), records purchase, then grants premium. */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -62,17 +67,52 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const supabase = getUserSupabase(req);
-
-    const { data, error } = await supabase.rpc('rpc_purchase_premium', {
-      plan_id: plan_id.trim(),
-    });
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    const planConfig = getPlanConfig(plan_id.trim());
+    if (!planConfig) {
+      return NextResponse.json(
+        {
+          error: `Unknown plan_id: ${plan_id}. Supported: monthly, yearly, lifetime`,
+        },
+        { status: 400 }
+      );
     }
 
-    return NextResponse.json(data ?? {});
+    const amountCents = getPlanPriceCents(plan_id.trim())!;
+    const expiresAt = getPlanExpiresAt(plan_id.trim());
+    const expiresAtParam =
+      expiresAt == null ? null : expiresAt.toISOString().replace('Z', '');
+
+    const supabase = getUserSupabase(req);
+
+    const { data: purchase, error: recordError } = await supabase.rpc(
+      'rpc_record_purchase',
+      { plan_id: plan_id.trim(), amount_cents: amountCents }
+    );
+
+    if (recordError) {
+      return NextResponse.json(
+        { error: recordError.message },
+        { status: 400 }
+      );
+    }
+
+    const { data: subscription, error: grantError } = await supabase.rpc(
+      'rpc_purchase_premium',
+      { plan_id: plan_id.trim(), expires_at: expiresAtParam }
+    );
+
+    if (grantError) {
+      return NextResponse.json(
+        { error: grantError.message },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json({
+      purchase,
+      subscription,
+      amount_cents: amountCents,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal Server Error';
     return NextResponse.json(

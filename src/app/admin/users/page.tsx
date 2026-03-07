@@ -102,6 +102,14 @@ export default function ManageUsers() {
   >([])
   const [preset, setPreset] = React.useState<Preset>("7")
   const [totalRealAllTime, setTotalRealAllTime] = React.useState<number>(0)
+  const [earningsStats, setEarningsStats] = React.useState<{
+    total_earnings_cents: number
+    this_month_earnings_cents: number
+  } | null>(null)
+  const [purchases, setPurchases] = React.useState<
+    { id: string; userid: string; plan_id: string; amount_cents: number; created_at: string; username: string | null }[]
+  >([])
+  const [purchasesLoading, setPurchasesLoading] = React.useState(true)
 
   const range = React.useMemo<DateRange>(() => {
     const days = Number(preset)
@@ -221,6 +229,56 @@ export default function ManageUsers() {
     void run()
   }, [])
 
+  React.useEffect(() => {
+    const run = async () => {
+      try {
+        const res = await fetch("/api/admin/purchases/stats")
+        const json = (await res.json()) as {
+          data?: { total_earnings_cents?: number; this_month_earnings_cents?: number }
+          error?: string
+        }
+        if (!res.ok) throw new Error(json.error || "Failed to fetch earnings")
+        setEarningsStats({
+          total_earnings_cents: json.data?.total_earnings_cents ?? 0,
+          this_month_earnings_cents: json.data?.this_month_earnings_cents ?? 0,
+        })
+      } catch (err: unknown) {
+        console.error(err)
+        setEarningsStats(null)
+      }
+    }
+    void run()
+  }, [])
+
+  React.useEffect(() => {
+    const run = async () => {
+      try {
+        const res = await fetch("/api/admin/purchases")
+        const json = (await res.json()) as {
+          data?: { id: string; userid: string; plan_id: string; amount_cents: number; created_at: string; username?: string | null }[]
+          error?: string
+        }
+        if (!res.ok) throw new Error(json.error || "Failed to fetch purchases")
+        setPurchases(
+          (json.data ?? []).map((p) => ({
+            id: p.id,
+            userid: p.userid,
+            plan_id: p.plan_id,
+            amount_cents: p.amount_cents,
+            created_at: p.created_at,
+            username: p.username ?? null,
+          }))
+        )
+      } catch (err: unknown) {
+        console.error(err)
+        setPurchases([])
+      } finally {
+        setPurchasesLoading(false)
+      }
+    }
+    void run()
+  }, [])
+
   const chartData = (() => {
     if (!range?.from || !range?.to) return []
     const start = new Date(range.from)
@@ -280,12 +338,26 @@ export default function ManageUsers() {
         <p className="text-sm text-muted-foreground">Track growth and view users (non-digital humans).</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
         <StatCard
-          title="Total Revenue"
-          value={`$${summary.totalRevenue.toLocaleString()}.00`}
-          deltaPct={summary.pctRevenue}
-          subtitle="Based on $10 per real user"
+          title="This month revenue"
+          value={
+            earningsStats != null
+              ? `$${((earningsStats.this_month_earnings_cents ?? 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : "—"
+          }
+          deltaPct={0}
+          subtitle="From subscription purchases (current calendar month, UTC)"
+        />
+        <StatCard
+          title="Total revenue"
+          value={
+            earningsStats != null
+              ? `$${((earningsStats.total_earnings_cents ?? 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : "—"
+          }
+          deltaPct={0}
+          subtitle="From subscription purchases (all time)"
         />
         <StatCard
           title="New Customers"
@@ -375,6 +447,65 @@ export default function ManageUsers() {
               <Line type="monotone" dataKey="real" hide />
             </AreaChart>
           </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <Card className="p-0">
+        <div className="p-6">
+          <div className="text-sm font-medium">Purchases</div>
+          <div className="text-xs text-muted-foreground">
+            {purchasesLoading ? "Loading..." : `${purchases.length} purchase(s)`}
+          </div>
+        </div>
+        <div className="border-t">
+          {purchasesLoading ? (
+            <div className="py-10 text-center text-muted-foreground">Loading...</div>
+          ) : purchases.length === 0 ? (
+            <div className="py-10 text-center text-muted-foreground">No purchases yet.</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-4">Avatar</TableHead>
+                  <TableHead>Username</TableHead>
+                  <TableHead>Plan</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {purchases.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="pl-4">
+                      <Avatar className="h-9 w-9">
+                        <AvatarImage src={`/api/avatar/${p.userid}`} alt={p.username ?? p.userid} />
+                        <AvatarFallback>{(p.username ?? p.userid.slice(0, 8)).slice(0, 2).toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {p.username ?? p.userid.slice(0, 8) + "…"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{p.plan_id}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      ${(p.amount_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {format(new Date(p.created_at), "MMM d, yyyy HH:mm")}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button asChild variant="outline" size="sm">
+                        <Link href={`/admin/users/${p.userid}`} className="gap-2">
+                          <Eye className="h-4 w-4" />
+                          View
+                        </Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </div>
       </Card>
 

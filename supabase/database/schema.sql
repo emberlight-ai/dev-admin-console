@@ -128,6 +128,18 @@ create table if not exists public.user_subscription (
 drop trigger if exists user_subscription_set_updated_at on public.user_subscription;
 create trigger user_subscription_set_updated_at before update on public.user_subscription for each row execute function public.set_updated_at();
 
+-- Purchase history: one row per subscription purchase (backend records type + amount).
+create table if not exists public.subscription_purchases (
+  id uuid primary key default uuid_generate_v4(),
+  userid uuid references public.users(userid) on delete cascade not null,
+  plan_id text not null,
+  amount_cents integer not null,
+  created_at timestamptz default now()
+);
+
+create index if not exists subscription_purchases_userid_idx on public.subscription_purchases (userid);
+create index if not exists subscription_purchases_created_at_idx on public.subscription_purchases (created_at desc);
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security (RLS)
 -- - Reads: any authenticated user can read profiles/posts (excluding soft-deleted rows)

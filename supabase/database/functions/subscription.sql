@@ -155,8 +155,9 @@ begin
 end;
 $$;
 
--- RPC: Update user's balance (upsert; null param = do not change).
--- Dates are always set by the backend (current_date) when a count is updated; clients cannot pass dates.
+-- RPC: Update user's balance (upsert). Missing (null) params leave that field untouched.
+-- Only provided fields are updated; backend sets the corresponding *_updated_date to today when a count is updated.
+drop function if exists public.rpc_update_balance(integer, integer);
 create or replace function public.rpc_update_balance(
   free_msgs_today integer default null,
   free_swipe_today integer default null
@@ -168,49 +169,108 @@ as $$
 declare
   result public.user_balances;
   today date := current_date;
+  uid uuid := auth.uid();
 begin
-  if auth.uid() is null then
+  if uid is null then
     raise exception 'authentication required';
   end if;
 
-  insert into public.user_balances (
-    userid,
-    free_msgs_today,
-    free_msgs_updated_date,
-    free_swipe_today,
-    free_swipe_updated_date
-  )
+  -- Ensure row exists (insert defaults if missing)
+  insert into public.user_balances (userid, free_msgs_today, free_msgs_updated_date, free_swipe_today, free_swipe_updated_date)
   values (
-    auth.uid(),
-    coalesce(free_msgs_today, 0),
-    today,
-    coalesce(free_swipe_today, 0),
-    today
+    uid,
+    coalesce(rpc_update_balance.free_msgs_today, 0),
+    case when rpc_update_balance.free_msgs_today is not null then today else null end,
+    coalesce(rpc_update_balance.free_swipe_today, 0),
+    case when rpc_update_balance.free_swipe_today is not null then today else null end
   )
-  on conflict (userid) do update set
-    free_msgs_today = coalesce(excluded.free_msgs_today, user_balances.free_msgs_today),
-    free_msgs_updated_date = today,
-    free_swipe_today = coalesce(excluded.free_swipe_today, user_balances.free_swipe_today),
-    free_swipe_updated_date = today
-  returning * into result;
+  on conflict (userid) do nothing;
 
+  -- Update only the fields that were provided (non-null); set corresponding date to today when count is updated
+  update public.user_balances
+  set
+    free_msgs_today = case when rpc_update_balance.free_msgs_today is not null then rpc_update_balance.free_msgs_today else user_balances.free_msgs_today end,
+    free_msgs_updated_date = case when rpc_update_balance.free_msgs_today is not null then today else user_balances.free_msgs_updated_date end,
+    free_swipe_today = case when rpc_update_balance.free_swipe_today is not null then rpc_update_balance.free_swipe_today else user_balances.free_swipe_today end,
+    free_swipe_updated_date = case when rpc_update_balance.free_swipe_today is not null then today else user_balances.free_swipe_updated_date end
+  where userid = uid;
+
+  select * into result from public.user_balances where userid = uid;
   return result;
 end;
 $$;
 
--- Plan types and duration: backend is source of truth for expiry (no client-supplied date).
--- Supported plan_id values: weekly, monthly, yearly (case-insensitive). Unknown plans default to 1 month.
-drop function if exists public.rpc_purchase_premium(text, timestamp without time zone);
--- RPC: Purchase premium (upsert subscription for current user). expires_at computed from plan_id.
-create or replace function public.rpc_purchase_premium(plan_id text)
+-- RPC: Admin get balance for any user (no refill). Service role only (security definer).
+create or replace function public.rpc_admin_get_balance(target_userid uuid)
+returns public.user_balances
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  result public.user_balances;
+begin
+  select * into result from public.user_balances where userid = target_userid;
+  return result;
+end;
+$$;
+
+-- RPC: Admin update balance for any user. Same partial-update semantics as rpc_update_balance. Service role only.
+drop function if exists public.rpc_admin_update_balance(uuid, integer, integer);
+create or replace function public.rpc_admin_update_balance(
+  target_userid uuid,
+  free_msgs_today integer default null,
+  free_swipe_today integer default null
+)
+returns public.user_balances
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  result public.user_balances;
+  today date := current_date;
+begin
+  if target_userid is null then
+    raise exception 'target_userid is required';
+  end if;
+
+  insert into public.user_balances (userid, free_msgs_today, free_msgs_updated_date, free_swipe_today, free_swipe_updated_date)
+  values (
+    target_userid,
+    coalesce(rpc_admin_update_balance.free_msgs_today, 0),
+    case when rpc_admin_update_balance.free_msgs_today is not null then today else null end,
+    coalesce(rpc_admin_update_balance.free_swipe_today, 0),
+    case when rpc_admin_update_balance.free_swipe_today is not null then today else null end
+  )
+  on conflict (userid) do nothing;
+
+  update public.user_balances
+  set
+    free_msgs_today = case when rpc_admin_update_balance.free_msgs_today is not null then rpc_admin_update_balance.free_msgs_today else user_balances.free_msgs_today end,
+    free_msgs_updated_date = case when rpc_admin_update_balance.free_msgs_today is not null then today else user_balances.free_msgs_updated_date end,
+    free_swipe_today = case when rpc_admin_update_balance.free_swipe_today is not null then rpc_admin_update_balance.free_swipe_today else user_balances.free_swipe_today end,
+    free_swipe_updated_date = case when rpc_admin_update_balance.free_swipe_today is not null then today else user_balances.free_swipe_updated_date end
+  where userid = target_userid;
+
+  select * into result from public.user_balances where userid = target_userid;
+  return result;
+end;
+$$;
+
+-- RPC: Grant premium (upsert user_subscription). Decoupled from recording purchase.
+-- Backend passes expires_at from its plan config: null = lifetime, else subscription end time.
+drop function if exists public.rpc_purchase_premium(text);
+create or replace function public.rpc_purchase_premium(
+  plan_id text,
+  expires_at timestamp without time zone default null
+)
 returns public.user_subscription
 language plpgsql
 security invoker
 as $$
 declare
   result public.user_subscription;
-  computed_expires timestamp without time zone;
-  plan_key text := lower(trim(plan_id));
 begin
   if auth.uid() is null then
     raise exception 'authentication required';
@@ -219,15 +279,8 @@ begin
     raise exception 'plan_id is required';
   end if;
 
-  computed_expires := (current_timestamp + case plan_key
-    when 'weekly' then interval '1 week'
-    when 'monthly' then interval '1 month'
-    when 'yearly' then interval '12 months'
-    else interval '1 month'
-  end)::timestamp without time zone;
-
   insert into public.user_subscription (userid, is_premium, plan_id, expires_at)
-  values (auth.uid(), true, plan_id, computed_expires)
+  values (auth.uid(), true, plan_id, expires_at)
   on conflict (userid) do update set
     is_premium = true,
     plan_id = excluded.plan_id,
@@ -236,4 +289,57 @@ begin
 
   return result;
 end;
+$$;
+
+-- RPC: Record a subscription purchase only (insert into subscription_purchases). Does not grant premium.
+-- Caller records purchase then calls rpc_purchase_premium separately with expires_at from plan config.
+create or replace function public.rpc_record_purchase(
+  plan_id text,
+  amount_cents integer
+)
+returns public.subscription_purchases
+language plpgsql
+security invoker
+as $$
+declare
+  result public.subscription_purchases;
+begin
+  if auth.uid() is null then
+    raise exception 'authentication required';
+  end if;
+  if plan_id is null or trim(plan_id) = '' then
+    raise exception 'plan_id is required';
+  end if;
+  if amount_cents is null or amount_cents < 0 then
+    raise exception 'amount_cents must be a non-negative integer';
+  end if;
+
+  insert into public.subscription_purchases (userid, plan_id, amount_cents)
+  values (auth.uid(), plan_id, amount_cents)
+  returning * into result;
+
+  return result;
+end;
+$$;
+
+-- RPC: Aggregate earnings from subscription_purchases (for admin dashboard).
+-- Returns total_cents (all time) and this_month_cents (current calendar month in UTC).
+-- Called by admin API with service role.
+drop function if exists public.rpc_purchase_earnings_stats();
+create or replace function public.rpc_purchase_earnings_stats()
+returns table (total_cents bigint, this_month_cents bigint)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    coalesce(sum(amount_cents), 0)::bigint as total_cents,
+    coalesce(
+      sum(amount_cents) filter (
+        where created_at >= (date_trunc('month', (current_timestamp at time zone 'UTC')::date)::timestamp at time zone 'UTC')
+          and created_at < (date_trunc('month', (current_timestamp at time zone 'UTC')::date) + interval '1 month')::timestamp at time zone 'UTC'
+      ),
+      0
+    )::bigint as this_month_cents
+  from public.subscription_purchases;
 $$;

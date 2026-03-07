@@ -170,7 +170,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     path: '/api/ios/me/premium',
     summary: 'Purchase premium',
     description:
-      'Grant premium to the authenticated user. Call after successful payment. Send only plan_id; the backend computes expires_at from the plan type (weekly = +1 week, monthly = +1 month, yearly = +12 months). Unknown plan_id defaults to 1 month.',
+      'Record purchase and grant premium. Send only plan_id (monthly $29.99, yearly $69.99, lifetime $89.99). Backend uses a single plan config (plan id, duration, price): records purchase via rpc_record_purchase, then grants premium via rpc_purchase_premium with computed expires_at (null for lifetime). Response includes purchase, subscription, and amount_cents.',
     auth: { type: 'bearer' },
     baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
@@ -178,11 +178,20 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       plan_id: 'monthly',
     },
     responseExample: {
-      userid: '<user_uuid>',
-      is_premium: true,
-      plan_id: 'monthly',
-      expires_at: '2026-04-02T07:55:06.179',
-      updated_at: '2026-03-05T12:00:00.000Z',
+      purchase: {
+        id: '<purchase_uuid>',
+        userid: '<user_uuid>',
+        plan_id: 'monthly',
+        amount_cents: 2999,
+        created_at: '2026-03-05T12:00:00.000Z',
+      },
+      subscription: {
+        userid: '<user_uuid>',
+        is_premium: true,
+        plan_id: 'monthly',
+        expires_at: '2026-04-05T12:00:00.000',
+      },
+      amount_cents: 2999,
     },
   },
   {
