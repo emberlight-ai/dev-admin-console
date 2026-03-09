@@ -121,6 +121,7 @@ create table if not exists public.user_subscription (
   userid uuid primary key references public.users(userid) on delete cascade,
   is_premium boolean not null default false,
   plan_id text,
+  auto_renewal boolean not null default true,
   updated_at timestamptz default now(),
   expires_at timestamp without time zone
 );

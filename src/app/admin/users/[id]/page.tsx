@@ -589,7 +589,7 @@ export default function UserDetail() {
                             ) : null}
                           </div>
                           <Button onClick={saveBalance} disabled={balanceSaving}>
-                            {balanceSaving ? "Saving..." : "Save balance"}
+                            {balanceSaving ? "Updating..." : "Update balance"}
                           </Button>
                         </div>
                       )}

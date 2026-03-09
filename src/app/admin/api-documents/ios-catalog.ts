@@ -153,7 +153,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     path: '/api/ios/me/premium',
     summary: 'Get current premium info',
     description:
-      'Fetch the authenticated user’s premium status: is_premium, plan_id, and expires_at. Expired subscriptions are lazily updated (is_premium set to false when expires_at has passed).',
+      'Fetch the authenticated user’s premium status: is_premium, plan_id, expires_at, and auto_renewal. When expires_at has passed: if auto_renewal is true the subscription is extended; if false, is_premium is set to false.',
     auth: { type: 'bearer' },
     baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
@@ -161,6 +161,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       is_premium: true,
       plan_id: 'monthly',
       expires_at: '2026-04-02T07:55:06.179',
+      auto_renewal: true,
     },
   },
   {
@@ -193,6 +194,20 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       },
       amount_cents: 2999,
     },
+  },
+  {
+    id: 'ios.me.premium.quit',
+    audience: 'ios',
+    method: 'POST',
+    path: '/api/ios/me/premium/quit',
+    summary: 'Turn off auto-renewal',
+    description:
+      'Set auto_renewal = false for the authenticated user. Premium access lasts until expires_at; after that the subscription expires (is_premium set to false). Replaces the previous "quit subscription" behavior.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
+    defaultHeaders: nextApiHeaders,
+    requestExample: {},
+    responseExample: { success: true, subscription: null },
   },
   {
     id: 'ios.posts.create',

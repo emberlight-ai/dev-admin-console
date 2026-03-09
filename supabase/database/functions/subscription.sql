@@ -1,5 +1,9 @@
--- Helper: set is_premium = false for current user when expires_at is in the past (lazy expiration).
--- Called before reading premium status so refill and get_premium_info see up-to-date state.
+-- Ensure auto_renewal column exists (for existing deployments).
+alter table public.user_subscription add column if not exists auto_renewal boolean not null default true;
+
+-- Helper: when expires_at is in the past, either auto-renew (extend expires_at) or expire (set is_premium = false).
+-- If auto_renewal = true, extend expires_at by plan duration (monthly 1 month, yearly 12 months).
+-- If auto_renewal = false, set is_premium = false. Called before reading premium status.
 create or replace function public.expire_subscription_if_needed()
 returns void
 language plpgsql
@@ -9,24 +13,33 @@ begin
   if auth.uid() is null then
     return;
   end if;
-  update public.user_subscription
-  set is_premium = false
-  where userid = auth.uid()
-    and is_premium = true
-    and expires_at is not null
-    and expires_at < current_timestamp;
+  update public.user_subscription s
+  set
+    is_premium = case when s.auto_renewal then true else false end,
+    expires_at = case
+      when not s.auto_renewal then s.expires_at
+      when s.plan_id = 'yearly' then s.expires_at + interval '12 months'
+      when s.plan_id = 'monthly' then s.expires_at + interval '1 month'
+      else s.expires_at + interval '1 month'
+    end
+  where s.userid = auth.uid()
+    and s.is_premium = true
+    and s.expires_at is not null
+    and s.expires_at < current_timestamp;
 end;
 $$;
 
--- RPC: Get user's premium information (is_premium, plan_id, expires_at).
--- Expires subscription lazily when expires_at has passed, then returns current row.
+-- RPC: Get user's premium information (is_premium, plan_id, expires_at, auto_renewal).
+-- Expires or auto-renews lazily when expires_at has passed, then returns current row.
+drop function if exists public.rpc_get_premium_info(uuid);
 create or replace function public.rpc_get_premium_info(
   target_user_id uuid default null
 )
 returns table (
   is_premium boolean,
   plan_id text,
-  expires_at timestamp without time zone
+  expires_at timestamp without time zone,
+  auto_renewal boolean
 )
 language plpgsql
 security invoker
@@ -48,14 +61,15 @@ begin
   select
     s.is_premium,
     s.plan_id,
-    s.expires_at
+    s.expires_at,
+    coalesce(s.auto_renewal, true)
   from public.user_subscription s
   where s.userid = resolved_user_id;
 end;
 $$;
 
 -- RPC: Refill daily allowance for current user (idempotent: no-op if already refilled today).
--- Premium: 60 swipes/day; non-premium: 10 swipes/day; everyone: 15 messages/day.
+-- Premium: 60 swipes/day; non-premium: 15 swipes/day; everyone: 5 messages/day.
 -- Can be called explicitly (e.g. on app open or cron) or implicitly when rpc_get_balance runs (lazy refill).
 -- If row exists but free_msgs_updated_date is null (e.g. created by update_balance without dates),
 -- we only set the date columns to today so refill won't keep resetting counts on every get.
@@ -91,7 +105,7 @@ begin
   from public.user_subscription s
   where s.userid = auth.uid();
 
-  swipes_today := case when is_prem then 60 else 10 end;
+  swipes_today := case when is_prem then 60 else 15 end;
 
   -- No row, or date is null / before today: insert or full refill
   insert into public.user_balances (
@@ -101,9 +115,9 @@ begin
     free_swipe_today,
     free_swipe_updated_date
   )
-  values (auth.uid(), 15, today, swipes_today, today)
+  values (auth.uid(), 5, today, swipes_today, today)
   on conflict (userid) do update set
-    free_msgs_today = 15,
+    free_msgs_today = 5,
     free_msgs_updated_date = today,
     free_swipe_today = swipes_today,
     free_swipe_updated_date = today
@@ -279,14 +293,42 @@ begin
     raise exception 'plan_id is required';
   end if;
 
-  insert into public.user_subscription (userid, is_premium, plan_id, expires_at)
-  values (auth.uid(), true, plan_id, expires_at)
+  insert into public.user_subscription (userid, is_premium, plan_id, auto_renewal, expires_at)
+  values (auth.uid(), true, plan_id, true, expires_at)
   on conflict (userid) do update set
     is_premium = true,
     plan_id = excluded.plan_id,
+    auto_renewal = true,
     expires_at = excluded.expires_at
   returning * into result;
 
+  return result;
+end;
+$$;
+
+-- RPC: Set auto-renewal for current user (false = cancel at end of period; premium lasts until expires_at).
+create or replace function public.rpc_set_auto_renewal(p_auto_renewal boolean)
+returns public.user_subscription
+language plpgsql
+security invoker
+as $$
+declare
+  result public.user_subscription;
+begin
+  if auth.uid() is null then
+    raise exception 'authentication required';
+  end if;
+
+  update public.user_subscription
+  set auto_renewal = p_auto_renewal
+  where userid = auth.uid();
+
+  select * into result from public.user_subscription where userid = auth.uid();
+  if result is null then
+    insert into public.user_subscription (userid, is_premium, auto_renewal)
+    values (auth.uid(), false, p_auto_renewal)
+    returning * into result;
+  end if;
   return result;
 end;
 $$;

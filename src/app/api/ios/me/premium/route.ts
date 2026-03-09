@@ -20,7 +20,7 @@ const getUserSupabase = (req: NextRequest) => {
   );
 };
 
-/** GET: Get current premium info (is_premium, plan_id, expires_at). Lazy expiration applied. */
+/** GET: Get current premium info (is_premium, plan_id, expires_at, auto_renewal). Lazy expiration/auto-renew applied. */
 export async function GET(req: NextRequest) {
   try {
     const supabase = getUserSupabase(req);
@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
         is_premium: false,
         plan_id: null,
         expires_at: null,
+        auto_renewal: true,
       });
     }
 
@@ -44,6 +45,7 @@ export async function GET(req: NextRequest) {
       is_premium: row.is_premium ?? false,
       plan_id: row.plan_id ?? null,
       expires_at: row.expires_at ?? null,
+      auto_renewal: row.auto_renewal ?? true,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal Server Error';
