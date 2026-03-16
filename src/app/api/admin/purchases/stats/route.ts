@@ -5,13 +5,20 @@ import { supabaseAdmin } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
 
-/** GET: Earnings from subscription_purchases (total and current calendar month). For admin dashboard. */
+/** GET: Earnings from subscription_purchases (total and current calendar month). Optional ?source=apple_iap|manual|revenuecat. */
 export async function GET(req: NextRequest) {
   if (!isAdminRequest(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { data, error } = await supabaseAdmin.rpc('rpc_purchase_earnings_stats');
+  const url = new URL(req.url);
+  const source = url.searchParams.get('source');
+  const sourceFilter =
+    source === 'apple_iap' || source === 'manual' || source === 'revenuecat' ? source : null;
+
+  const { data, error } = await supabaseAdmin.rpc('rpc_purchase_earnings_stats', {
+    source_filter: sourceFilter,
+  });
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

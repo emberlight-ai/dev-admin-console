@@ -63,7 +63,17 @@ export default function UserDetail() {
   const [authLoading, setAuthLoading] = React.useState(false)
 
   // Purchases (subscription_purchases for this user)
-  type PurchaseRow = { id: string; userid: string; plan_id: string; amount_cents: number; created_at: string }
+  type PurchaseRow = {
+    id: string
+    userid: string
+    plan_id: string
+    amount_cents: number
+    created_at: string
+    source?: string
+    transaction_id?: string | null
+    environment?: string | null
+    product_id_apple?: string | null
+  }
   const [purchases, setPurchases] = React.useState<PurchaseRow[]>([])
   const [purchasesLoading, setPurchasesLoading] = React.useState(false)
 
@@ -517,6 +527,9 @@ export default function UserDetail() {
                             <tr className="border-b">
                               <th className="p-2 text-left">Date</th>
                               <th className="p-2 text-left">Plan</th>
+                              <th className="p-2 text-left">Source</th>
+                              <th className="p-2 text-left">Tx ID</th>
+                              <th className="p-2 text-left">Env</th>
                               <th className="p-2 text-left">Amount</th>
                               <th className="p-2 text-left">Purchase ID</th>
                             </tr>
@@ -528,6 +541,15 @@ export default function UserDetail() {
                                   {p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
                                 </td>
                                 <td className="p-2 capitalize">{p.plan_id ?? "—"}</td>
+                                <td className="p-2">
+                                  <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
+                                    {p.source ?? "—"}
+                                  </span>
+                                </td>
+                                <td className="p-2 font-mono text-xs text-muted-foreground truncate max-w-[120px]" title={p.transaction_id ?? undefined}>
+                                  {p.transaction_id ? p.transaction_id.slice(0, 14) + "…" : "—"}
+                                </td>
+                                <td className="p-2 text-muted-foreground text-xs">{p.environment ?? "—"}</td>
                                 <td className="p-2 font-medium">
                                   ${((p.amount_cents ?? 0) / 100).toFixed(2)}
                                 </td>

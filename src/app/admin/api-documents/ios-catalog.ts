@@ -165,51 +165,6 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     },
   },
   {
-    id: 'ios.me.premium.purchase',
-    audience: 'ios',
-    method: 'POST',
-    path: '/api/ios/me/premium',
-    summary: 'Purchase premium',
-    description:
-      'Record purchase and grant premium. Send only plan_id (monthly $29.99, yearly $69.99, lifetime $89.99). Backend uses a single plan config (plan id, duration, price): records purchase via rpc_record_purchase, then grants premium via rpc_purchase_premium with computed expires_at (null for lifetime). Response includes purchase, subscription, and amount_cents.',
-    auth: { type: 'bearer' },
-    baseUrlOverride: APP_URL,
-    defaultHeaders: nextApiHeaders,
-    requestExample: {
-      plan_id: 'monthly',
-    },
-    responseExample: {
-      purchase: {
-        id: '<purchase_uuid>',
-        userid: '<user_uuid>',
-        plan_id: 'monthly',
-        amount_cents: 2999,
-        created_at: '2026-03-05T12:00:00.000Z',
-      },
-      subscription: {
-        userid: '<user_uuid>',
-        is_premium: true,
-        plan_id: 'monthly',
-        expires_at: '2026-04-05T12:00:00.000',
-      },
-      amount_cents: 2999,
-    },
-  },
-  {
-    id: 'ios.me.premium.quit',
-    audience: 'ios',
-    method: 'POST',
-    path: '/api/ios/me/premium/quit',
-    summary: 'Turn off auto-renewal',
-    description:
-      'Set auto_renewal = false for the authenticated user. Premium access lasts until expires_at; after that the subscription expires (is_premium set to false). Replaces the previous "quit subscription" behavior.',
-    auth: { type: 'bearer' },
-    baseUrlOverride: APP_URL,
-    defaultHeaders: nextApiHeaders,
-    requestExample: {},
-    responseExample: { success: true, subscription: null },
-  },
-  {
     id: 'ios.posts.create',
     audience: 'ios',
     method: 'POST',

@@ -20,6 +20,24 @@ const planMap = new Map<string, PlanConfig>(
   PLAN_CONFIGS.map((p) => [p.planId.toLowerCase().trim(), p])
 );
 
+/**
+ * Map Apple App Store product_id to our internal plan_id.
+ * Add entries to match your products in App Store Connect.
+ */
+export const APPLE_PRODUCT_ID_TO_PLAN_ID: Record<string, string> = {
+  'com.yourapp.monthly': 'monthly',
+  'com.yourapp.yearly': 'yearly',
+  'com.yourapp.lifetime': 'lifetime',
+};
+
+export function getPlanIdFromAppleProductId(productIdApple: string): string | null {
+  const planId = APPLE_PRODUCT_ID_TO_PLAN_ID[productIdApple];
+  if (planId) return planId;
+  const lower = productIdApple.toLowerCase();
+  if (planMap.has(lower)) return lower;
+  return null;
+}
+
 export function getPlanConfig(planId: string): PlanConfig | null {
   return planMap.get(planId.toLowerCase().trim()) ?? null;
 }

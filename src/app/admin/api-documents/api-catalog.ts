@@ -197,41 +197,6 @@ export const apiCatalog: ApiEndpointDoc[] = [
     },
   },
   {
-    id: 'admin.users.purchases.post',
-    audience: 'admin',
-    method: 'POST',
-    path: '/api/admin/users/{userid}/purchases',
-    summary: 'Record a purchase',
-    description:
-      'Inserts one row into subscription_purchases for the given user. The table is for recording each purchase so data can be listed/collected later. Does not grant premium; use iOS purchase flow or grant separately if needed.',
-    auth: {
-      type: 'cookie',
-      notes: 'Admin console session required (isAdminRequest).',
-    },
-    params: [
-      {
-        name: 'userid',
-        in: 'path',
-        required: true,
-        description: 'User UUID to record the purchase for.',
-        example: 'b94909be-f006-4789-a43a-13e110ab0724',
-      },
-    ],
-    requestExample: {
-      plan_id: 'monthly',
-      amount_cents: 2999,
-    },
-    responseExample: {
-      data: {
-        id: '<purchase_uuid>',
-        userid: '<user_uuid>',
-        plan_id: 'monthly',
-        amount_cents: 2999,
-        created_at: '2026-03-05T12:00:00.000Z',
-      },
-    },
-  },
-  {
     id: 'admin.users.purchases.get',
     audience: 'admin',
     method: 'GET',

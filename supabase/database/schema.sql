@@ -117,29 +117,90 @@ create table if not exists public.user_balances (
   free_swipe_updated_date date
 );
 
+-- Subscription: entitlement (iOS IAP + RTDN). One row per user.
 create table if not exists public.user_subscription (
   userid uuid primary key references public.users(userid) on delete cascade,
   is_premium boolean not null default false,
   plan_id text,
   auto_renewal boolean not null default true,
-  updated_at timestamptz default now(),
-  expires_at timestamp without time zone
+  expires_at timestamptz,
+  original_transaction_id text,
+  environment text check (environment in ('Sandbox', 'Production')),
+  product_id_apple text,
+  updated_at timestamptz default now()
 );
-
+create index if not exists user_subscription_original_tx on public.user_subscription(original_transaction_id) where original_transaction_id is not null;
 drop trigger if exists user_subscription_set_updated_at on public.user_subscription;
 create trigger user_subscription_set_updated_at before update on public.user_subscription for each row execute function public.set_updated_at();
 
--- Purchase history: one row per subscription purchase (backend records type + amount).
+-- User ↔ Apple subscription (originalTransactionId → userid for RTDN).
+create table if not exists public.apple_subscription_identifiers (
+  userid uuid primary key references public.users(userid) on delete cascade,
+  original_transaction_id text not null unique,
+  environment text check (environment in ('Sandbox', 'Production')),
+  bundle_id text,
+  first_seen_at timestamptz not null default now(),
+  updated_at timestamptz default now()
+);
+create index if not exists apple_subscription_identifiers_original_tx_id on public.apple_subscription_identifiers(original_transaction_id);
+
+-- Revenue: one row per charge (apple_iap, manual, revenuecat).
 create table if not exists public.subscription_purchases (
   id uuid primary key default uuid_generate_v4(),
   userid uuid references public.users(userid) on delete cascade not null,
   plan_id text not null,
   amount_cents integer not null,
+  source text not null check (source in ('apple_iap', 'manual', 'revenuecat')),
+  original_transaction_id text,
+  transaction_id text,
+  environment text,
+  product_id_apple text,
   created_at timestamptz default now()
 );
+create index if not exists subscription_purchases_userid on public.subscription_purchases(userid);
+create index if not exists subscription_purchases_created_at on public.subscription_purchases(created_at desc);
+create index if not exists subscription_purchases_source on public.subscription_purchases(source);
+create unique index if not exists subscription_purchases_apple_tx on public.subscription_purchases(transaction_id) where source = 'apple_iap' and transaction_id is not null;
 
-create index if not exists subscription_purchases_userid_idx on public.subscription_purchases (userid);
-create index if not exists subscription_purchases_created_at_idx on public.subscription_purchases (created_at desc);
+-- RTDN event log (idempotency + audit).
+create table if not exists public.apple_rtdn_events (
+  id uuid primary key default uuid_generate_v4(),
+  notification_uuid uuid not null unique,
+  notification_type text not null,
+  subtype text,
+  environment text,
+  bundle_id text,
+  decoded_original_transaction_id text,
+  decoded_transaction_id text,
+  decoded_product_id text,
+  decoded_expires_date_ms bigint,
+  decoded_auto_renew_status integer,
+  userid uuid references public.users(userid) on delete set null,
+  processed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists apple_rtdn_events_notification_uuid on public.apple_rtdn_events(notification_uuid);
+create index if not exists apple_rtdn_events_original_tx on public.apple_rtdn_events(decoded_original_transaction_id);
+create index if not exists apple_rtdn_events_created_at on public.apple_rtdn_events(created_at desc);
+
+alter table public.user_subscription enable row level security;
+alter table public.apple_subscription_identifiers enable row level security;
+alter table public.subscription_purchases enable row level security;
+alter table public.apple_rtdn_events enable row level security;
+drop policy if exists user_subscription_select_owner on public.user_subscription;
+create policy user_subscription_select_owner on public.user_subscription for select to authenticated using (userid = auth.uid());
+drop policy if exists user_subscription_insert_owner on public.user_subscription;
+create policy user_subscription_insert_owner on public.user_subscription for insert to authenticated with check (userid = auth.uid());
+drop policy if exists user_subscription_update_owner on public.user_subscription;
+create policy user_subscription_update_owner on public.user_subscription for update to authenticated using (userid = auth.uid());
+drop policy if exists apple_subscription_identifiers_select_owner on public.apple_subscription_identifiers;
+create policy apple_subscription_identifiers_select_owner on public.apple_subscription_identifiers for select to authenticated using (userid = auth.uid());
+drop policy if exists apple_subscription_identifiers_insert_owner on public.apple_subscription_identifiers;
+create policy apple_subscription_identifiers_insert_owner on public.apple_subscription_identifiers for insert to authenticated with check (userid = auth.uid());
+drop policy if exists apple_subscription_identifiers_update_owner on public.apple_subscription_identifiers;
+create policy apple_subscription_identifiers_update_owner on public.apple_subscription_identifiers for update to authenticated using (userid = auth.uid());
+drop policy if exists subscription_purchases_select_owner on public.subscription_purchases;
+create policy subscription_purchases_select_owner on public.subscription_purchases for select to authenticated using (userid = auth.uid());
 
 -- ---------------------------------------------------------------------------
 -- Row Level Security (RLS)

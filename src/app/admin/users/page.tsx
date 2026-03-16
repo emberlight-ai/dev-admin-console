@@ -107,7 +107,19 @@ export default function ManageUsers() {
     this_month_earnings_cents: number
   } | null>(null)
   const [purchases, setPurchases] = React.useState<
-    { id: string; userid: string; plan_id: string; amount_cents: number; created_at: string; username: string | null }[]
+    {
+      id: string
+      userid: string
+      plan_id: string
+      amount_cents: number
+      created_at: string
+      username: string | null
+      source?: string
+      transaction_id?: string | null
+      original_transaction_id?: string | null
+      environment?: string | null
+      product_id_apple?: string | null
+    }[]
   >([])
   const [purchasesLoading, setPurchasesLoading] = React.useState(true)
 
@@ -255,7 +267,19 @@ export default function ManageUsers() {
       try {
         const res = await fetch("/api/admin/purchases")
         const json = (await res.json()) as {
-          data?: { id: string; userid: string; plan_id: string; amount_cents: number; created_at: string; username?: string | null }[]
+          data?: {
+            id: string
+            userid: string
+            plan_id: string
+            amount_cents: number
+            created_at: string
+            username?: string | null
+            source?: string
+            transaction_id?: string | null
+            original_transaction_id?: string | null
+            environment?: string | null
+            product_id_apple?: string | null
+          }[]
           error?: string
         }
         if (!res.ok) throw new Error(json.error || "Failed to fetch purchases")
@@ -267,6 +291,11 @@ export default function ManageUsers() {
             amount_cents: p.amount_cents,
             created_at: p.created_at,
             username: p.username ?? null,
+            source: p.source,
+            transaction_id: p.transaction_id ?? null,
+            original_transaction_id: p.original_transaction_id ?? null,
+            environment: p.environment ?? null,
+            product_id_apple: p.product_id_apple ?? null,
           }))
         )
       } catch (err: unknown) {
@@ -469,6 +498,9 @@ export default function ManageUsers() {
                   <TableHead className="pl-4">Avatar</TableHead>
                   <TableHead>Username</TableHead>
                   <TableHead>Plan</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Tx ID</TableHead>
+                  <TableHead>Env</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -487,6 +519,15 @@ export default function ManageUsers() {
                       {p.username ?? p.userid.slice(0, 8) + "…"}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{p.plan_id}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
+                        {p.source ?? "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-mono text-muted-foreground text-xs max-w-[100px] truncate" title={p.transaction_id ?? undefined}>
+                      {p.transaction_id ? p.transaction_id.slice(0, 12) + "…" : "—"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs">{p.environment ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground">
                       ${(p.amount_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </TableCell>
