@@ -101,16 +101,16 @@ Idempotency key recommendation: unique index on (`environment`, `transaction_id`
 2. Count today usage from event tables:
   - `swipes_used_today` from `swipe`
   - `messages_used_today` from message events
-3. Return:
-  - `remaining_swipes = max(0, quota - used)`
-  - `remaining_messages = max(0, quota - used)`
+3. Return (e.g. `GET /api/ios/me/entitlement`):
+  - `remaining_swipes = max(0, quota - used)` (UTC day)
+  - `remaining_messages = max(0, quota - used)` or `null` when unlimited
   - subscription status info (`status`, `current_period_end`, plan name)
 
 ### B. User sends message or swipes
 
-1. API receives action.
-2. In one DB transaction, validate quota then insert event row (`swipe` or message).
-3. Return updated remaining counts.
+1. Frontend enforces quota and blocks the action when limit is reached.
+2. If action is allowed, API records the event row (`swipe` or message) in the database.
+3. API returns action success/failure only; it does not need to return remaining counts.
 
 ### C. Premium purchase flow (RTDN/webhook-driven server update)
 

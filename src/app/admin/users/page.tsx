@@ -57,31 +57,61 @@ import type { DateRange } from "react-day-picker"
 
 type Preset = "90" | "30" | "7"
 
+type ActiveSubscriberRow = {
+  subscription_id: string
+  user_id: string
+  username: string
+  avatar: string | null
+  plan_name: string
+  apple_product_id: string
+  billing_period: string
+  price_cents: number
+  currency: string
+  monthly_recurring_cents: number
+  current_period_end: string | null
+  environment: string | null
+}
+
+function formatMoneyFromCents(cents: number, currency = 'USD') {
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: currency.length === 3 ? currency : 'USD',
+    }).format(cents / 100)
+  } catch {
+    return `$${(cents / 100).toFixed(2)}`
+  }
+}
+
 function StatCard({
   title,
   value,
   deltaPct,
   subtitle,
+  showDelta = true,
 }: {
   title: string
   value: string
   deltaPct: number
   subtitle: string
+  showDelta?: boolean
 }) {
   const up = deltaPct >= 0
   return (
     <Card className="p-6">
       <div className="flex items-start justify-between gap-3">
         <div className="text-sm text-muted-foreground">{title}</div>
-        <div
-          className={cn(
-            "inline-flex items-center rounded-full border px-2 py-0.5 text-xs",
-            up ? "text-foreground" : "text-foreground"
-          )}
-        >
-          {up ? "+" : ""}
-          {deltaPct.toFixed(1)}%
-        </div>
+        {showDelta ? (
+          <div
+            className={cn(
+              "inline-flex items-center rounded-full border px-2 py-0.5 text-xs",
+              up ? "text-foreground" : "text-foreground"
+            )}
+          >
+            {up ? "+" : ""}
+            {deltaPct.toFixed(1)}%
+          </div>
+        ) : null}
       </div>
       <div className="mt-3 text-3xl font-semibold tracking-tight">{value}</div>
       <div className="mt-6 text-sm font-medium">{subtitle}</div>
@@ -101,7 +131,9 @@ export default function ManageUsers() {
     { created_at: string; is_digital_human: boolean }[]
   >([])
   const [preset, setPreset] = React.useState<Preset>("7")
-  const [totalRealAllTime, setTotalRealAllTime] = React.useState<number>(0)
+  const [subscriptionMrrCents, setSubscriptionMrrCents] = React.useState(0)
+  const [activeSubscribers, setActiveSubscribers] = React.useState<ActiveSubscriberRow[]>([])
+  const [subscriptionsLoading, setSubscriptionsLoading] = React.useState(true)
 
   const range = React.useMemo<DateRange>(() => {
     const days = Number(preset)
@@ -125,6 +157,31 @@ export default function ManageUsers() {
   React.useEffect(() => {
     void fetchUsers()
   }, [fetchUsers])
+
+  const fetchSubscriptions = React.useCallback(async () => {
+    setSubscriptionsLoading(true)
+    try {
+      const res = await fetch('/api/admin/subscriptions')
+      const json = (await res.json()) as {
+        monthly_recurring_cents?: number
+        active_count?: number
+        subscribers?: ActiveSubscriberRow[]
+        error?: string
+      }
+      if (!res.ok) throw new Error(json.error || 'Failed to fetch subscriptions')
+      setSubscriptionMrrCents(json.monthly_recurring_cents ?? 0)
+      setActiveSubscribers(json.subscribers ?? [])
+    } catch (err: unknown) {
+      console.error(err)
+      setSubscriptionMrrCents(0)
+      setActiveSubscribers([])
+    }
+    setSubscriptionsLoading(false)
+  }, [])
+
+  React.useEffect(() => {
+    void fetchSubscriptions()
+  }, [fetchSubscriptions])
 
   const fetchDeletedUsers = React.useCallback(async () => {
     setDeletedLoading(true)
@@ -205,22 +262,6 @@ export default function ManageUsers() {
     void fetchPrevChartRows()
   }, [fetchPrevChartRows])
 
-  React.useEffect(() => {
-    // Total revenue uses $10 per real user (all time)
-    const run = async () => {
-      try {
-        const res = await fetch("/api/admin/users?mode=count&is_digital_human=false")
-        const json = (await res.json()) as { count?: number; error?: string }
-        if (!res.ok) throw new Error(json.error || "Failed to fetch user count")
-        setTotalRealAllTime(json.count ?? 0)
-      } catch (err: unknown) {
-        console.error(err)
-        setTotalRealAllTime(0)
-      }
-    }
-    void run()
-  }, [])
-
   const chartData = (() => {
     if (!range?.from || !range?.to) return []
     const start = new Date(range.from)
@@ -257,21 +298,16 @@ export default function ManageUsers() {
       return ((curr - prev) / prev) * 100
     }
 
-    const revenue = currentReal * 10
-    const prevRevenue = prevReal * 10
     const growthRate = pct(currentReal + currentDigital, prevReal + prevDigital)
 
     return {
       currentReal,
       currentDigital,
-      revenue,
-      totalRevenue: totalRealAllTime * 10,
       pctReal: pct(currentReal, prevReal),
       pctDigital: pct(currentDigital, prevDigital),
-      pctRevenue: pct(revenue, prevRevenue),
       growthRate,
     }
-  }, [chartRows, prevChartRows, totalRealAllTime])
+  }, [chartRows, prevChartRows])
 
   return (
     <div className="space-y-6">
@@ -280,12 +316,13 @@ export default function ManageUsers() {
         <p className="text-sm text-muted-foreground">Track growth and view users (non-digital humans).</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          title="Total Revenue"
-          value={`$${summary.totalRevenue.toLocaleString()}.00`}
-          deltaPct={summary.pctRevenue}
-          subtitle="Based on $10 per real user"
+          title="Subscription MRR (est.)"
+          value={formatMoneyFromCents(subscriptionMrrCents)}
+          deltaPct={0}
+          subtitle="Active subs: catalog price; yearly ÷ 12"
+          showDelta={false}
         />
         <StatCard
           title="New Customers"
@@ -375,6 +412,74 @@ export default function ManageUsers() {
               <Line type="monotone" dataKey="real" hide />
             </AreaChart>
           </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <Card className="p-0">
+        <div className="p-6">
+          <div className="text-sm font-medium">Active subscribers</div>
+          <div className="text-xs text-muted-foreground">
+            {subscriptionsLoading
+              ? 'Loading...'
+              : `${activeSubscribers.length} active subscription${activeSubscribers.length === 1 ? '' : 's'} (status ACTIVE, period not ended)`}
+          </div>
+        </div>
+        <div className="border-t">
+          {subscriptionsLoading ? (
+            <div className="py-10 text-center text-muted-foreground">Loading...</div>
+          ) : activeSubscribers.length === 0 ? (
+            <div className="py-10 text-center text-sm text-muted-foreground">No active subscriptions.</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-4">Avatar</TableHead>
+                  <TableHead>User</TableHead>
+                  <TableHead>Plan</TableHead>
+                  <TableHead>Billing</TableHead>
+                  <TableHead>MRR (est.)</TableHead>
+                  <TableHead>Renews / ends</TableHead>
+                  <TableHead>Env</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {activeSubscribers.map((s) => (
+                  <TableRow key={s.subscription_id}>
+                    <TableCell className="pl-4">
+                      <Avatar className="h-9 w-9">
+                        <AvatarImage src={`/api/avatar/${s.user_id}`} alt={s.username} />
+                        <AvatarFallback>{s.username.slice(0, 2).toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                    </TableCell>
+                    <TableCell className="font-medium">{s.username}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      <div>{s.plan_name}</div>
+                      <div className="text-xs font-mono">{s.apple_product_id}</div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground capitalize">{s.billing_period}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatMoneyFromCents(s.monthly_recurring_cents, s.currency)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {s.current_period_end
+                        ? new Date(s.current_period_end).toLocaleString()
+                        : '—'}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{s.environment ?? '—'}</TableCell>
+                    <TableCell className="text-left">
+                      <Button asChild variant="outline" size="sm">
+                        <Link href={`/admin/users/${s.user_id}`} className="gap-2">
+                          <Eye className="h-4 w-4" />
+                          View
+                        </Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </div>
       </Card>
 
