@@ -112,7 +112,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     path: '/api/ios/me/entitlement',
     summary: 'Remaining swipes/messages + active plan',
     description:
-      'Resolves entitlement from the active `subscription` + `subscription_catalog`, counts today’s `swipe` rows and `messages` sent by the user (UTC day). Free tier uses env `FREE_TIER_SWIPES_PER_DAY` / `FREE_TIER_MESSAGES_PER_DAY` (defaults 20 / 50) when there is no active subscription.',
+      'Resolves entitlement from the active `subscription` + `subscription_catalog`, counts today’s `swipe` rows and `messages` sent by the user (UTC day). With no active subscription, quotas come from the `subscription_catalog` row whose `apple_product_id` matches env `FREE_TIER_APPLE_PRODUCT_ID` or the default `amber.subscription.free`. If that row is missing, env `FREE_TIER_SWIPES_PER_DAY` / `FREE_TIER_MESSAGES_PER_DAY` apply (defaults 20 / 20).',
     auth: { type: 'bearer' },
     baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
