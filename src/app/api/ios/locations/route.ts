@@ -34,6 +34,8 @@ export async function POST(req: NextRequest) {
       .select('id, userid, occurred_at, longitude, latitude, altitude, location_name, photos')
       .in('userid', userIds)
       .is('deleted_at', null)
+      .not('latitude', 'is', null)
+      .not('longitude', 'is', null)
       .or('geom.neq.null,location_name.neq.null')
       .order('occurred_at', { ascending: false })
       .order('created_at', { ascending: false })

@@ -559,8 +559,9 @@ create table if not exists public.user_match_ai_state (
   ai_greeting_sent_at timestamptz,
 
   -- Optimized lookups & State Machine
-  dh_user_id uuid references public.users(userid),
-  real_user_id uuid references public.users(userid),
+  -- NOT NULL: auto-populated by the BEFORE INSERT trigger in functions/ai_state.sql
+  dh_user_id uuid references public.users(userid) not null,
+  real_user_id uuid references public.users(userid) not null,
   ai_state integer default 0, -- 0=Matched, 1=GreetingSent/Skipped, 2=DHSent, 3=UserSent, 4=DHFollowUp
   
   updated_at timestamptz default now()
@@ -571,4 +572,5 @@ alter table public.user_match_ai_state enable row level security;
 create policy "Authenticated read ai state" on public.user_match_ai_state
   for select to authenticated using (true);
 
--- Note: AI state triggers moved to database/functions/ai_state.sql
+-- AI state triggers (handle_new_match_ai_state, handle_new_message_ai_state)
+-- are defined in database/functions/chat.sql

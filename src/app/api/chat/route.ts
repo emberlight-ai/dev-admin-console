@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Part } from '@google/generative-ai';
 import {
   ALLOWED_GEMINI_MODELS,
   generateGeminiContent,
@@ -9,15 +10,16 @@ import { buildTranscript } from '@/lib/botProfile';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { systemPrompt, history, message, model, mode, instruction } = body;
+    const { systemPrompt, history, message, model, mode, instruction, image } = body;
 
     // mode: 'chat' (default) | 'greeting' | 'followup'
     const currentMode = (mode === 'greeting' || mode === 'followup') ? mode : 'chat';
 
     // For greeting, we don't need a user message (it's a system trigger).
-    if (currentMode === 'chat' && !message) {
+    // If image is present, we might allow empty message, but typically we want a message too.
+    if (currentMode === 'chat' && !message && !image) {
       return NextResponse.json(
-        { error: 'Missing required field: message' },
+        { error: 'Missing required field: message or image' },
         { status: 400 }
       );
     }
@@ -32,7 +34,7 @@ export async function POST(req: NextRequest) {
       : 'gemini-2.5-flash';
 
     // Unified Digital Human Logic
-    let finalPrompt = '';
+    let finalPrompt: string | (string | Part)[] = '';  
 
     if (currentMode === 'greeting') {
       // GREETING MODE:
@@ -83,12 +85,39 @@ export async function POST(req: NextRequest) {
       // Add the latest user message
       transcriptMessages.push({
         sender_id: 'user',
-        content: message,
+        content: message + (image ? ' [Image Attached]' : ''),
       });
 
       const transcript = buildTranscript(transcriptMessages, 'bot', 'Bot');
 
-      finalPrompt = `${systemPrompt}\n\nConversation so far:\n${transcript}\n\nWrite the next message as the bot. Reply with only the message text.`;
+      const transcriptStr = `Conversation so far:\n${transcript}`;
+      
+      if (image) {
+        try {
+          // Fetch image from URL
+          const imgRes = await fetch(image);
+          if (!imgRes.ok) throw new Error(`Failed to fetch image: ${imgRes.statusText}`);
+          const arrayBuffer = await imgRes.arrayBuffer();
+          const base64Data = Buffer.from(arrayBuffer).toString('base64');
+          const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
+
+          finalPrompt = [
+             `${systemPrompt}\n\n${transcriptStr}\n\n[User uploaded an image shown below:]`,
+             {
+               inlineData: {
+                 data: base64Data,
+                 mimeType: mimeType
+               }
+             },
+             `\n\nWrite the next message as the bot, taking the image above into account. Reply with only the message text.`
+          ];
+        } catch (err) {
+           console.error("Error processing image:", err);
+           return NextResponse.json({ error: "Failed to process image url" }, { status: 400 });
+        }
+      } else {
+        finalPrompt = `${systemPrompt}\n\n${transcriptStr}\n\nWrite the next message as the bot. Reply with only the message text.`;
+      }
     }
 
     const responseText = await generateGeminiContent(finalPrompt, modelName);
@@ -102,6 +131,23 @@ export async function POST(req: NextRequest) {
         : error && typeof error === 'object' && 'message' in error
         ? String((error as { message: unknown }).message)
         : undefined;
+
+    // Check for common safety block messages
+    if (details?.includes('SAFETY') || details?.includes('blocked due to OTHER')) {
+       return NextResponse.json(
+        { error: 'Response blocked availability due to safety settings.', details },
+        { status: 422 }
+      );
+    }
+    
+    // Check for candidate block
+    if (JSON.stringify(error).includes('finishReason') && JSON.stringify(error).includes('SAFETY')) {
+        return NextResponse.json(
+        { error: 'Response blocked availability due to safety settings.', details },
+        { status: 422 }
+      );
+    }
+
     return NextResponse.json(
       { error: 'Failed to generate response', details },
       { status: 500 }

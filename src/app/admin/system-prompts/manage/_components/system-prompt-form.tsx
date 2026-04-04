@@ -547,43 +547,47 @@ export function SystemPromptForm({
         </div>
       ) : null}
 
-      <Card className="p-0 overflow-hidden">
-        <div className="p-4 border-b">
-          <div className="text-sm font-medium">Behavior Workflow</div>
-          <div className="text-xs text-muted-foreground">Matching → Greeting → Reply → Follow Up</div>
-        </div>
-        <div className="system-prompt-flow h-[520px] w-full">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            fitView
-            nodesDraggable
-            nodesConnectable={false}
-            elementsSelectable
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background gap={18} size={1} />
-            <Controls />
-          </ReactFlow>
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <div className="mb-4">
-          <div className="text-sm font-medium">Test & Tuning</div>
-          <div className="text-xs text-muted-foreground">
-            Test the prompt with a random bot profile (Gender: {gender}, Personality: {personality}).
+      <div className="flex flex-col xl:flex-row gap-6">
+        <Card className="p-0 overflow-hidden flex-1">
+          <div className="p-4 border-b">
+            <div className="text-sm font-medium">Behavior Workflow</div>
+            <div className="text-xs text-muted-foreground">Matching → Greeting → Reply → Follow Up</div>
           </div>
-        </div>
-        <ChatPanel
-          systemPrompt={testSystemPrompt}
-          activeGreetingEnabled={activeGreetingEnabled}
-          activeGreetingPrompt={activeGreetingPrompt}
-          followUpEnabled={followUpEnabled}
-          followUpPrompt={followUpPrompt}
-        />
-      </Card>
+          <div className="system-prompt-flow h-[520px] w-full">
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              fitView
+              nodesDraggable
+              nodesConnectable={false}
+              elementsSelectable
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background gap={18} size={1} />
+              <Controls />
+            </ReactFlow>
+          </div>
+        </Card>
+
+        <Card className="p-4 w-full xl:w-[450px] shrink-0">
+          <div className="mb-4">
+            <div className="text-sm font-medium">Test & Tuning</div>
+            <div className="text-xs text-muted-foreground">
+              Test the prompt with a random bot profile (Gender: {gender}, Personality: {personality}).
+            </div>
+          </div>
+          <ChatPanel
+            systemPrompt={testSystemPrompt}
+            activeGreetingEnabled={activeGreetingEnabled}
+            activeGreetingPrompt={activeGreetingPrompt}
+            followUpEnabled={followUpEnabled}
+            followUpPrompt={followUpPrompt}
+            followUpDelay={followUpDelay}
+            maxFollowUps={maxFollowUps}
+          />
+        </Card>
+      </div>
 
       {/* Make ReactFlow controls visible in dark mode (and consistent with shadcn theme). */}
       <style jsx global>{`

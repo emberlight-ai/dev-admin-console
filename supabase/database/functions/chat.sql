@@ -222,39 +222,80 @@ security definer
 as $$
 declare
   sender_is_digital_human boolean;
+  v_user_a      uuid;
+  v_user_b      uuid;
+  v_a_is_dh     boolean;
+  v_b_is_dh     boolean;
+  v_dh_user_id  uuid;
+  v_real_user_id uuid;
 begin
   select coalesce(u.is_digital_human, false) into sender_is_digital_human
   from public.users u
   where u.userid = new.sender_id;
 
-  -- Upsert into tracking table
+  -- Look up match participants so we can always populate dh_user_id / real_user_id
+  -- (needed on INSERT; ignored on UPDATE via the ON CONFLICT clause below)
+  select m.user_a, m.user_b into v_user_a, v_user_b
+  from public.user_matches m
+  where m.id = new.match_id;
+
+  select is_digital_human into v_a_is_dh from public.users where userid = v_user_a;
+  select is_digital_human into v_b_is_dh from public.users where userid = v_user_b;
+
+  if coalesce(v_a_is_dh, false) then
+    v_dh_user_id   := v_user_a;
+    v_real_user_id := v_user_b;
+  elsif coalesce(v_b_is_dh, false) then
+    v_dh_user_id   := v_user_b;
+    v_real_user_id := v_user_a;
+  else
+    -- No DH in this match — ai_state row should have been created by handle_new_match_ai_state.
+    -- If it doesn't exist, skip the upsert; if it does, just update the message fields.
+    update public.user_match_ai_state
+    set
+      last_message_id        = new.id,
+      last_message_at        = new.created_at,
+      last_message_sender_id = new.sender_id,
+      updated_at             = now(),
+      ai_state               = 3  -- UserSent
+    where match_id = new.match_id;
+    return new;
+  end if;
+
+  -- Upsert into tracking table.
+  -- On INSERT: always set dh_user_id / real_user_id (NOT NULL constraint).
+  -- On UPDATE: keep existing dh_user_id / real_user_id (they don't change).
   insert into public.user_match_ai_state (
-    match_id, 
-    last_message_id, 
-    last_message_at, 
+    match_id,
+    last_message_id,
+    last_message_at,
     last_message_sender_id,
     ai_last_processed_message_id,
     scheduled_response_at,
+    dh_user_id,
+    real_user_id,
     updated_at,
     ai_state
   )
   values (
-    new.match_id, 
-    new.id, 
-    new.created_at, 
+    new.match_id,
+    new.id,
+    new.created_at,
     new.sender_id,
     case when sender_is_digital_human then new.id else null end,
     null,
+    v_dh_user_id,
+    v_real_user_id,
     now(),
-    case 
+    case
        -- If sender is DH, state = 2 (DH Sent)
-       when sender_is_digital_human then 2 
+       when sender_is_digital_human then 2
        -- If sender is User, state = 3 (User Sent)
-       else 3 
+       else 3
     end
   )
   on conflict (match_id) do update
-  set 
+  set
     last_message_id = excluded.last_message_id,
     last_message_at = excluded.last_message_at,
     last_message_sender_id = excluded.last_message_sender_id,
@@ -268,9 +309,12 @@ begin
       when sender_is_digital_human then null
       else public.user_match_ai_state.scheduled_response_at
     end,
+    -- Always backfill dh/real IDs if somehow missing on existing row
+    dh_user_id   = coalesce(public.user_match_ai_state.dh_user_id,   excluded.dh_user_id),
+    real_user_id = coalesce(public.user_match_ai_state.real_user_id, excluded.real_user_id),
     updated_at = now(),
     ai_state = excluded.ai_state;
-    
+
   return new;
 end;
 $$;
@@ -314,8 +358,8 @@ begin
     real_id := u_a;
     select gender, personality into dh_gender, dh_personality from public.users where userid = u_b;
   else
-    -- Both human or something else, default behavior (no DH logic)
-    insert into public.user_match_ai_state (match_id, updated_at) values (new.id, now()) on conflict (match_id) do nothing;
+    -- Both real humans — no DH logic needed. Do not create an ai_state row
+    -- (dh_user_id / real_user_id would be NULL which violates the NOT NULL constraint).
     return new;
   end if;
 

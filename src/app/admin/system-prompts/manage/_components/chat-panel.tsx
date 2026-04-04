@@ -1,20 +1,13 @@
 'use client'
 
 import * as React from "react"
-import { Send, Settings, RotateCcw, ChevronDown, Check } from "lucide-react"
+import { Send, Settings, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Badge } from "@/components/ui/badge"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   composeSystemPromptWithUserProfile,
   injectLastMessageIntoSystemPrompt,
@@ -29,7 +22,8 @@ export interface ChatMessage {
 const MODEL_OPTIONS = [
   { value: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
   { value: "gemini-2.5-flash", label: "gemini-2.5-flash" },
-  { value: "gemini-2.5-pro", label: "gemini-2.5-pro" },
+  { value: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
+  { value: "gemini-pro-latest", label: "gemini-pro-latest" },
 ] as const
 
 export function ChatPanel({
@@ -39,6 +33,8 @@ export function ChatPanel({
   activeGreetingPrompt,
   followUpEnabled,
   followUpPrompt,
+  followUpDelay = 86400,
+  maxFollowUps = 3,
 }: {
   systemPrompt?: string | null
   onEffectiveSystemPromptChange?: (prompt: string) => void
@@ -46,12 +42,19 @@ export function ChatPanel({
   activeGreetingPrompt?: string
   followUpEnabled?: boolean
   followUpPrompt?: string
+  followUpDelay?: number
+  maxFollowUps?: number
 }) {
   const [chatHistory, setChatHistory] = React.useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = React.useState("")
+  const [chatImage, setChatImage] = React.useState("")
   const [chatLoading, setChatLoading] = React.useState(false)
-  const [model, setModel] = React.useState<(typeof MODEL_OPTIONS)[number]["value"]>("gemini-2.5-flash")
+  const [autoFollowUpCount, setAutoFollowUpCount] = React.useState(0)
+  const [autoFollowUpArmed, setAutoFollowUpArmed] = React.useState(false)
+  const [model, setModel] = React.useState<string>("gemini-3-flash-preview")
   const chatEndRef = React.useRef<HTMLDivElement>(null)
+  const followUpTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const chatHistoryRef = React.useRef<ChatMessage[]>([])
 
   const [showTestUserSettings, setShowTestUserSettings] = React.useState(false)
   const [testUserName, setTestUserName] = React.useState("")
@@ -116,7 +119,35 @@ export function ChatPanel({
     onEffectiveSystemPromptChange?.(effectiveSystemPrompt)
   }, [effectiveSystemPrompt, onEffectiveSystemPromptChange])
 
+  React.useEffect(() => {
+    chatHistoryRef.current = chatHistory
+  }, [chatHistory])
+
+  const clearFollowUpTimer = React.useCallback(() => {
+    if (followUpTimerRef.current) {
+      clearTimeout(followUpTimerRef.current)
+      followUpTimerRef.current = null
+    }
+  }, [])
+
+  const stopAutoFollowUps = React.useCallback(() => {
+    clearFollowUpTimer()
+    setAutoFollowUpArmed(false)
+    setAutoFollowUpCount(0)
+  }, [clearFollowUpTimer])
+
+  React.useEffect(() => {
+    if (!followUpEnabled) {
+      stopAutoFollowUps()
+    }
+  }, [followUpEnabled, stopAutoFollowUps])
+
+  React.useEffect(() => {
+    return () => clearFollowUpTimer()
+  }, [clearFollowUpTimer])
+
   const clearChat = () => {
+    stopAutoFollowUps()
     setChatHistory([])
     setChatInput("")
   }
@@ -154,13 +185,100 @@ export function ChatPanel({
     requestAnimationFrame(() => requestAnimationFrame(doScroll))
   }, [chatHistory, chatLoading])
 
-  const handleSendMessage = async () => {
-    if (!chatInput.trim()) return
+  const triggerFollowUpMessage = React.useCallback(
+    async (nextCount: number) => {
+      if (!followUpEnabled) return
+      if (!followUpPrompt?.trim()) return
+      if (nextCount > Math.max(0, maxFollowUps)) return
+      if (chatHistoryRef.current.length === 0) return
 
-    const newMessage: ChatMessage = { role: "user", parts: [{ text: chatInput }] }
+      setChatLoading(true)
+      try {
+        const effectiveSystemPrompt = getEffectiveSystemPrompt(
+          systemPrompt,
+          testUserName,
+          testUserAge,
+          testUserZipcode,
+          testUserBio,
+          testUserProfession
+        )
+
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemPrompt: effectiveSystemPrompt,
+            history: chatHistoryRef.current,
+            message: "",
+            model,
+            mode: "followup",
+            instruction: followUpPrompt,
+          }),
+        })
+
+        const data = await response.json()
+        if (!data.response) {
+          toast.error("Failed to generate follow-up")
+          setAutoFollowUpArmed(false)
+          return
+        }
+
+        setChatHistory((prev) => [...prev, { role: "model", parts: [{ text: data.response }] }])
+        setAutoFollowUpCount(nextCount)
+
+        const maxCount = Math.max(0, maxFollowUps)
+        if (nextCount >= maxCount) {
+          setAutoFollowUpArmed(false)
+          return
+        }
+
+        const waitMs = Math.max(1, followUpDelay) * 1000
+        setAutoFollowUpArmed(true)
+        clearFollowUpTimer()
+        followUpTimerRef.current = setTimeout(() => {
+          void triggerFollowUpMessage(nextCount + 1)
+        }, waitMs)
+      } catch (error) {
+        console.error(error)
+        toast.error("Error generating follow-up")
+        setAutoFollowUpArmed(false)
+      } finally {
+        setChatLoading(false)
+      }
+    },
+    [
+      clearFollowUpTimer,
+      followUpDelay,
+      followUpEnabled,
+      followUpPrompt,
+      maxFollowUps,
+      model,
+      systemPrompt,
+      testUserAge,
+      testUserBio,
+      testUserName,
+      testUserProfession,
+      testUserZipcode,
+    ]
+  )
+
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() && !chatImage.trim()) return
+
+    stopAutoFollowUps()
+
+    // Show image in history if provided (simulated for now as a text line or just implied)
+    const userParts = [{ text: chatInput }]
+    if (chatImage.trim()) {
+      userParts.push({ text: `[Image: ${chatImage}]` })
+    }
+
+    const newMessage: ChatMessage = { role: "user", parts: [{ text: chatInput + (chatImage ? `\n[Image Provided]` : "") }] }
     const updatedHistory = [...chatHistory, newMessage]
     setChatHistory(updatedHistory)
     setChatInput("")
+    const currentImage = chatImage
+    setChatImage("") // Clear image immediately
     setChatLoading(true)
 
     try {
@@ -184,7 +302,8 @@ export function ChatPanel({
         body: JSON.stringify({
           systemPrompt: effectiveSystemPrompt,
           history: chatHistory, // keep behavior consistent with previous implementation
-          message: newMessage.parts[0].text,
+          message: newMessage.parts[0].text, // We send the text message here
+          image: currentImage, // Send the image URL separately
           model,
         }),
       })
@@ -192,6 +311,14 @@ export function ChatPanel({
       const data = await response.json()
       if (data.response) {
         setChatHistory((prev) => [...prev, { role: "model", parts: [{ text: data.response }] }])
+        if (followUpEnabled && followUpPrompt?.trim() && maxFollowUps > 0) {
+          const waitMs = Math.max(1, followUpDelay) * 1000
+          setAutoFollowUpArmed(true)
+          clearFollowUpTimer()
+          followUpTimerRef.current = setTimeout(() => {
+            void triggerFollowUpMessage(1)
+          }, waitMs)
+        }
       } else {
         toast.error("Failed to get response from AI")
       }
@@ -248,88 +375,27 @@ export function ChatPanel({
     }
   }
 
-  const handleSendFollowUp = async () => {
-    if (!followUpEnabled) return
-    if (chatHistory.length === 0) {
-      toast.error("Need some conversation history to test follow-up")
-      return
-    }
-
-    setChatLoading(true)
-
-    try {
-      const effectiveSystemPrompt = getEffectiveSystemPrompt(
-        systemPrompt,
-        testUserName,
-        testUserAge,
-        testUserZipcode,
-        testUserBio,
-        testUserProfession
-      )
-
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemPrompt: effectiveSystemPrompt,
-          history: chatHistory,
-          message: "", // No user message for follow-up
-          model,
-          mode: "followup",
-          instruction: followUpPrompt,
-        }),
-      })
-
-      const data = await response.json()
-      if (data.response) {
-        setChatHistory((prev) => [...prev, { role: "model", parts: [{ text: data.response }] }])
-      } else {
-        toast.error("Failed to generate follow-up")
-      }
-    } catch (error) {
-      console.error(error)
-      toast.error("Error generating follow-up")
-    } finally {
-      setChatLoading(false)
-    }
-  }
-
   return (
     <div className="mt-4 space-y-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-1">
-          <Label>Model</Label>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={chatLoading}
-                className="w-full justify-between gap-2 sm:w-[260px]"
-              >
-                <span className="truncate">{MODEL_OPTIONS.find((m) => m.value === model)?.label ?? model}</span>
-                <ChevronDown className="h-4 w-4 opacity-60" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-[260px]">
-              {MODEL_OPTIONS.map((m) => {
-                const selected = m.value === model
-                return (
-                  <DropdownMenuItem
-                    key={m.value}
-                    onClick={() => setModel(m.value)}
-                    className="flex items-center justify-between"
-                  >
-                    <span>{m.label}</span>
-                    {selected ? <Check className="h-4 w-4" /> : null}
-                  </DropdownMenuItem>
-                )
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+      <div className="flex items-center justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {activeGreetingEnabled && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleSendGreeting}
+              disabled={chatLoading}
+            >
+              Test Greeting
+            </Button>
+          )}
+          {followUpEnabled ? (
+            <div className="inline-flex items-center rounded-md border px-2 py-1 text-xs text-muted-foreground">
+              Auto follow-up: wait {followUpDelay}s • max {maxFollowUps}
+              {autoFollowUpArmed ? ` • scheduled (${autoFollowUpCount}/${maxFollowUps})` : ""}
+            </div>
+          ) : null}
 
-        <div className="flex items-center gap-2">
           <Button
             type="button"
             variant="outline"
@@ -349,33 +415,21 @@ export function ChatPanel({
           >
             <Settings className="h-4 w-4" />
           </Button>
+
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={chatLoading}
+          >
+            {MODEL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
-
-      {(activeGreetingEnabled || followUpEnabled) && (
-        <div className="flex flex-wrap gap-2">
-          {activeGreetingEnabled && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleSendGreeting}
-              disabled={chatLoading}
-            >
-              Test Greeting
-            </Button>
-          )}
-          {followUpEnabled && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleSendFollowUp}
-              disabled={chatLoading || chatHistory.length === 0}
-            >
-              Test Follow-up
-            </Button>
-          )}
-        </div>
-      )}
 
       {showTestUserSettings ? (
         <div className="rounded-lg border bg-muted/20 p-4">
@@ -457,30 +511,37 @@ export function ChatPanel({
                   </div>
                 </div>
               ))}
-              {chatLoading ? <div className="text-sm text-muted-foreground">Thinking...</div> : null}
+              {chatLoading ? <div className="text-sm text-muted-foreground">Typing...</div> : null}
               <div ref={chatEndRef} />
             </div>
           )}
         </ScrollArea>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-2">
         <Input
-          placeholder="Type a message..."
-          value={chatInput}
-          onChange={(e) => setChatInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault()
-              void handleSendMessage()
-            }
-          }}
-          disabled={chatLoading}
+          placeholder="Image URL (optional)..."
+          value={chatImage}
+          onChange={(e) => setChatImage(e.target.value)}
+          className="text-xs"
         />
-        <Button onClick={() => void handleSendMessage()} disabled={chatLoading} className="gap-2">
-          <Send className="h-4 w-4" />
-          Send
-        </Button>
+        <div className="flex gap-2">
+          <Input
+            placeholder="Type a message..."
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                void handleSendMessage()
+              }
+            }}
+          />
+          <Button onClick={() => void handleSendMessage()} className="gap-2">
+            <Send className="h-4 w-4" />
+            Send
+          </Button>
+        </div>
       </div>
     </div>
   )

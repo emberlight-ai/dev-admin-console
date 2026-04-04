@@ -40,7 +40,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# ignore firebase auth key
+# supabase — ignore CLI-generated local state and sensitive keys
+/supabase/.temp
 /supabase/firebase
 
 # ignore vscode settings
