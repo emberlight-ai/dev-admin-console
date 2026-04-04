@@ -177,6 +177,58 @@ export const apiCatalog: ApiEndpointDoc[] = [
     ],
     responseExample: { data: ['friendly', 'professional'] },
   },
+  {
+    id: 'webhooks.appleSubscription.post',
+    audience: 'admin',
+    method: 'POST',
+    path: '/api/webhooks/apple-subscription',
+    summary: 'Apple subscription / RTDN processor callback',
+    description:
+      'Server-to-server endpoint: upserts `apple_purchase` (idempotent on `environment` + `transaction_id`) and updates the linked `subscription` row (status, period, `original_transaction_id`, etc.). Your RTDN or App Store Server Notifications handler should verify Apple’s JWS, then POST a normalized JSON body here. Requires env `APPLE_SUBSCRIPTION_WEBHOOK_SECRET` matching `x-subscription-webhook-secret` or `Authorization: Bearer …`.',
+    auth: {
+      type: 'none',
+      notes:
+        'Not a user JWT. Use the shared secret header or Bearer token equal to `APPLE_SUBSCRIPTION_WEBHOOK_SECRET`.',
+    },
+    params: [
+      {
+        name: 'x-subscription-webhook-secret',
+        in: 'header',
+        required: true,
+        description: 'Must match server env `APPLE_SUBSCRIPTION_WEBHOOK_SECRET` (alternative: Authorization Bearer same value).',
+        example: '<shared_secret>',
+      },
+    ],
+    defaultHeaders: {
+      'Content-Type': 'application/json',
+      'x-subscription-webhook-secret': '<APPLE_SUBSCRIPTION_WEBHOOK_SECRET>',
+    },
+    requestExample: {
+      user_id: '<user_uuid>',
+      subscription_id: '<subscription_uuid>',
+      transaction_id: '<apple_transaction_id>',
+      original_transaction_id: '<apple_original_transaction_id>',
+      product_id: 'amber.premium.monthly.0.0',
+      environment: 'Production',
+      purchase_date: '2026-04-04T12:00:00.000Z',
+      expires_date: '2026-05-04T12:00:00.000Z',
+      quantity: 1,
+      type: 'auto_renewable',
+      auto_renew_status: true,
+      event_type: 'DID_RENEW',
+      raw_payload: { note: 'optional copy of Apple payload for audit' },
+    },
+    responseExample: {
+      ok: true,
+      subscription_id: '<subscription_uuid>',
+      status: 'ACTIVE',
+    },
+    notes: [
+      'Required body fields: `transaction_id`, `product_id`, `environment` (`Sandbox` | `Production`), `purchase_date`.',
+      'Resolve target subscription via `subscription_id` (optional `user_id` filled from row), or `original_transaction_id` + `environment`, or pending `CREATED`/`PURCHASING` row for `user_id` + `product_id`.',
+      'Returns 401 if secret is missing or wrong, or if `APPLE_SUBSCRIPTION_WEBHOOK_SECRET` is unset on the server.',
+    ],
+  },
 ];
 
 

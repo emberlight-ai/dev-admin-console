@@ -42,10 +42,10 @@ export async function GET(req: Request) {
       });
     }
     for (const prm of ep.params ?? []) {
-      if (prm.in === 'query') {
+      if (prm.in === 'query' || prm.in === 'header') {
         parameters.push({
           name: prm.name,
-          in: 'query',
+          in: prm.in,
           required: Boolean(prm.required),
           description: prm.description,
           schema: { type: 'string' },

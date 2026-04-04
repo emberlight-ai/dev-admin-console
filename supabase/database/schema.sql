@@ -574,3 +574,139 @@ create policy "Authenticated read ai state" on public.user_match_ai_state
 
 -- AI state triggers (handle_new_match_ai_state, handle_new_message_ai_state)
 -- are defined in database/functions/chat.sql
+-- Note: AI state triggers moved to database/functions/ai_state.sql
+
+-- ==============================================================================
+-- SUBSCRIPTIONS, APPLE PURCHASES, SWIPES (see docs/subscription-design.md)
+-- ==============================================================================
+
+create table if not exists public.subscription_catalog (
+  id uuid primary key default uuid_generate_v4(),
+  apple_product_id text not null unique,
+  name text not null,
+  price_cents integer not null default 0,
+  currency text not null default 'USD',
+  billing_period text not null check (billing_period in ('monthly', 'yearly')),
+  swipes_per_day integer,
+  messages_per_day integer,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists subscription_catalog_set_updated_at on public.subscription_catalog;
+create trigger subscription_catalog_set_updated_at
+before update on public.subscription_catalog
+for each row
+execute function public.set_updated_at();
+
+create table if not exists public.subscription (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.users(userid) on delete cascade,
+  subscription_catalog_id uuid not null references public.subscription_catalog(id) on delete restrict,
+  status text not null default 'CREATED'
+    check (status in ('CREATED', 'PURCHASING', 'ACTIVE', 'EXPIRED')),
+  original_transaction_id text,
+  environment text check (environment is null or environment in ('Sandbox', 'Production')),
+  current_period_start timestamptz,
+  current_period_end timestamptz,
+  auto_renew_status boolean,
+  status_changed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists subscription_set_updated_at on public.subscription;
+create trigger subscription_set_updated_at
+before update on public.subscription
+for each row
+execute function public.set_updated_at();
+
+create unique index if not exists subscription_original_txn_env_unique
+  on public.subscription (environment, original_transaction_id)
+  where original_transaction_id is not null;
+
+create index if not exists subscription_user_id_status_idx
+  on public.subscription (user_id, status);
+
+create table if not exists public.apple_purchase (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.users(userid) on delete cascade,
+  subscription_id uuid references public.subscription(id) on delete set null,
+  transaction_id text not null,
+  original_transaction_id text,
+  product_id text not null,
+  environment text not null check (environment in ('Sandbox', 'Production')),
+  purchase_date timestamptz not null,
+  expires_date timestamptz,
+  quantity integer not null default 1,
+  type text not null default 'auto_renewable',
+  raw_payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  unique (environment, transaction_id)
+);
+
+create index if not exists apple_purchase_user_id_idx on public.apple_purchase (user_id);
+create index if not exists apple_purchase_subscription_id_idx on public.apple_purchase (subscription_id);
+
+create table if not exists public.swipe (
+  id uuid primary key default uuid_generate_v4(),
+  swiper_user_id uuid not null references public.users(userid) on delete cascade,
+  target_user_id uuid not null references public.users(userid) on delete cascade,
+  reaction text not null check (reaction in ('like', 'dislike')),
+  created_at timestamptz not null default now(),
+  check (swiper_user_id <> target_user_id)
+);
+
+create index if not exists swipe_swiper_created_at_idx
+  on public.swipe (swiper_user_id, created_at desc);
+
+alter table public.subscription_catalog enable row level security;
+alter table public.subscription enable row level security;
+alter table public.apple_purchase enable row level security;
+alter table public.swipe enable row level security;
+
+drop policy if exists subscription_catalog_read_authenticated on public.subscription_catalog;
+create policy subscription_catalog_read_authenticated
+  on public.subscription_catalog
+  for select
+  to authenticated
+  using (true);
+
+drop policy if exists subscription_select_owner on public.subscription;
+create policy subscription_select_owner
+  on public.subscription
+  for select
+  to authenticated
+  using (user_id = auth.uid());
+
+drop policy if exists subscription_insert_owner_created on public.subscription;
+create policy subscription_insert_owner_created
+  on public.subscription
+  for insert
+  to authenticated
+  with check (
+    user_id = auth.uid()
+    and status = 'CREATED'
+  );
+
+drop policy if exists apple_purchase_select_owner on public.apple_purchase;
+create policy apple_purchase_select_owner
+  on public.apple_purchase
+  for select
+  to authenticated
+  using (user_id = auth.uid());
+
+drop policy if exists swipe_select_swiper on public.swipe;
+create policy swipe_select_swiper
+  on public.swipe
+  for select
+  to authenticated
+  using (swiper_user_id = auth.uid());
+
+drop policy if exists swipe_insert_swiper on public.swipe;
+create policy swipe_insert_swiper
+  on public.swipe
+  for insert
+  to authenticated
+  with check (swiper_user_id = auth.uid());
