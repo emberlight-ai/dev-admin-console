@@ -1,28 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { Environment, SignedDataVerifier } from '@apple/app-store-server-library';
+import { X509Certificate } from 'crypto';
 
 export const runtime = 'nodejs';
 
 /**
- * Apple subscription webhook (normalized payload).
+ * Apple subscription webhook.
  *
- * **What this is not:** It does not verify Apple’s signed JWS / App Store Server Notifications directly.
- * Run that in a worker or edge function that Apple calls, then POST a small JSON body here.
+ * Accepts either:
+ * - Apple App Store Server Notifications (`{ signedPayload: "..." }`), or
+ * - Internal normalized payload (legacy mode) protected by shared secret.
  *
- * **What it does:**
- * 1. Authenticates the caller with a shared secret (not end-user JWT).
- * 2. Upserts `apple_purchase` — idempotent per `(environment, transaction_id)` so retries / duplicate notifications are safe.
- * 3. Updates the linked `subscription` row (status, period bounds, `original_transaction_id`, optional `auto_renew_status`).
- *
- * **Resolving which `subscription` row to update** (first match wins, in order):
- * - `subscription_id` in body (optional `user_id`; if missing, loaded from the row).
- * - Else `original_transaction_id` + `environment` on an existing subscription.
- * - Else latest `CREATED` / `PURCHASING` row for `user_id` + `product_id` → `subscription_catalog`.
- *
- * **Logging:** Every request logs the raw body to server stdout (before auth) and the parsed JSON after a successful parse.
- * Large `raw_payload` values can make logs heavy; secure log storage if payloads include PII.
- *
- * @see docs/subscription-design.md §2.C (premium purchase flow / RTDN-driven server update)
+ * Apple ASN requests are verified using Apple certificate chain + signature before data is trusted.
  */
 type WebhookBody = {
   user_id?: unknown;
@@ -38,6 +28,7 @@ type WebhookBody = {
   auto_renew_status?: unknown;
   event_type?: unknown;
   raw_payload?: unknown;
+  signedPayload?: unknown;
 };
 
 function jsonError(message: string, status = 400) {
@@ -89,31 +80,212 @@ function terminalEvent(t: string): 'EXPIRED' | 'ACTIVE' | null {
   return null;
 }
 
+type DecodedAppleNotification = {
+  notificationType?: string;
+  subtype?: string;
+  data?: {
+    signedTransactionInfo?: string;
+    signedRenewalInfo?: string;
+    environment?: string;
+  };
+};
+
+type DecodedAppleTransaction = {
+  transactionId?: string | number;
+  originalTransactionId?: string | number;
+  appAccountToken?: string;
+  productId?: string;
+  purchaseDate?: string | number;
+  expiresDate?: string | number;
+  quantity?: string | number;
+  type?: string;
+  environment?: string;
+};
+
+type DecodedAppleRenewal = {
+  autoRenewStatus?: number | string;
+};
+
+let verifierCache: SignedDataVerifier | null = null;
+let verifierCacheKey = '';
+
+function toIsoFromAppleDate(v: string | number | undefined): string | null {
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    return new Date(v).toISOString();
+  }
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (!t) return null;
+    if (/^\d+$/.test(t)) {
+      const n = Number(t);
+      if (Number.isFinite(n)) return new Date(n).toISOString();
+    }
+    const d = new Date(t);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  return null;
+}
+
+function normalizeEnvironment(v: unknown): 'Sandbox' | 'Production' | null {
+  if (v === 'Sandbox' || v === 'Production') return v;
+  if (typeof v === 'string') {
+    const u = v.trim().toUpperCase();
+    if (u === 'SANDBOX') return 'Sandbox';
+    if (u === 'PRODUCTION') return 'Production';
+  }
+  return null;
+}
+
+function parseAppleEnvironment(raw: string | undefined): Environment {
+  const t = raw?.trim().toUpperCase();
+  if (t === 'PRODUCTION') return Environment.PRODUCTION;
+  return Environment.SANDBOX;
+}
+
+function parseRootCertificatesFromEnv(raw: string): Buffer[] {
+  let arr: unknown;
+  try {
+    arr = JSON.parse(raw);
+  } catch {
+    throw new Error('APPLE_ROOT_CERTIFICATES must be a JSON array of PEM/base64 certificate strings');
+  }
+  if (!Array.isArray(arr) || arr.length === 0) {
+    throw new Error('APPLE_ROOT_CERTIFICATES must include at least one certificate');
+  }
+  return arr.map((entry) => {
+    if (typeof entry !== 'string' || !entry.trim()) {
+      throw new Error('APPLE_ROOT_CERTIFICATES entries must be non-empty strings');
+    }
+    const t = entry.trim();
+    const cert = t.includes('BEGIN CERTIFICATE')
+      ? new X509Certificate(t)
+      : new X509Certificate(Buffer.from(t, 'base64'));
+    return cert.raw;
+  });
+}
+
+function getVerifier(): SignedDataVerifier {
+  const bundleId = process.env.APPLE_BUNDLE_ID?.trim();
+  if (!bundleId) throw new Error('APPLE_BUNDLE_ID is required');
+  const appEnv = parseAppleEnvironment(process.env.APPLE_IAP_ENV);
+  const appAppleIdRaw = process.env.APPLE_APP_ID?.trim();
+  const appAppleId = appAppleIdRaw ? Number(appAppleIdRaw) : undefined;
+  const certsRaw = process.env.APPLE_ROOT_CERTIFICATES?.trim();
+  if (!certsRaw) throw new Error('APPLE_ROOT_CERTIFICATES is required');
+
+  const cacheKey = `${bundleId}|${appEnv}|${appAppleId ?? ''}|${certsRaw}`;
+  if (verifierCache && verifierCacheKey === cacheKey) return verifierCache;
+
+  const roots = parseRootCertificatesFromEnv(certsRaw);
+  verifierCache = new SignedDataVerifier(roots, true, appEnv, bundleId, appAppleId);
+  verifierCacheKey = cacheKey;
+  return verifierCache;
+}
+
+async function normalizeApplePayload(parsed: WebhookBody): Promise<WebhookBody | null> {
+  if (typeof parsed.signedPayload !== 'string' || !parsed.signedPayload.trim()) return null;
+  const signedPayload = parsed.signedPayload.trim();
+  const verifier = getVerifier();
+  const verifiedNotification = (await verifier.verifyAndDecodeNotification(
+    signedPayload
+  )) as unknown as DecodedAppleNotification;
+
+  const signedTx = verifiedNotification.data?.signedTransactionInfo;
+  const signedRenewal = verifiedNotification.data?.signedRenewalInfo;
+  const tx = signedTx
+    ? ((await verifier.verifyAndDecodeTransaction(signedTx)) as unknown as DecodedAppleTransaction)
+    : null;
+  const renewal = signedRenewal
+    ? ((await verifier.verifyAndDecodeRenewalInfo(signedRenewal)) as unknown as DecodedAppleRenewal)
+    : null;
+
+  const transactionId =
+    tx?.transactionId !== undefined && tx?.transactionId !== null ? String(tx.transactionId) : '';
+  const originalTransactionId =
+    tx?.originalTransactionId !== undefined && tx?.originalTransactionId !== null
+      ? String(tx.originalTransactionId)
+      : '';
+  const productId = typeof tx?.productId === 'string' ? tx.productId : '';
+  const userId = typeof tx?.appAccountToken === 'string' ? tx.appAccountToken.trim() : '';
+  const purchaseDate = toIsoFromAppleDate(tx?.purchaseDate) ?? '';
+  const expiresDate = toIsoFromAppleDate(tx?.expiresDate);
+  const environment =
+    normalizeEnvironment(tx?.environment) ??
+    normalizeEnvironment(verifiedNotification.data?.environment) ??
+    null;
+  const quantityNum =
+    tx?.quantity !== undefined && tx?.quantity !== null ? Number(tx.quantity) : undefined;
+  const quantity =
+    typeof quantityNum === 'number' && Number.isFinite(quantityNum)
+      ? Math.max(1, Math.trunc(quantityNum))
+      : undefined;
+
+  const autoRenewRaw = renewal?.autoRenewStatus;
+  const autoRenewNum = autoRenewRaw !== undefined && autoRenewRaw !== null ? Number(autoRenewRaw) : NaN;
+  const autoRenewStatus =
+    Number.isFinite(autoRenewNum) ? autoRenewNum === 1 : undefined;
+
+  const eventType = [verifiedNotification.notificationType, verifiedNotification.subtype]
+    .filter(Boolean)
+    .join('.');
+
+  return {
+    user_id: userId || undefined,
+    transaction_id: transactionId,
+    original_transaction_id: originalTransactionId,
+    product_id: productId,
+    environment,
+    purchase_date: purchaseDate,
+    expires_date: expiresDate,
+    quantity,
+    type: tx?.type ?? 'auto_renewable',
+    auto_renew_status: autoRenewStatus,
+    event_type: eventType || verifiedNotification.notificationType || 'APPLE_ASN',
+    raw_payload: {
+      apple_notification: verifiedNotification,
+      apple_transaction: tx,
+      apple_renewal: renewal,
+    },
+  };
+}
+
 /**
- * POST — RTDN / processor callback: upsert `apple_purchase` and advance `subscription` (see docs/subscription-design.md §2.C).
- * Expects your Apple notification handler to verify JWS and POST a normalized JSON payload.
- * Configure `APPLE_SUBSCRIPTION_WEBHOOK_SECRET` and send the same value in `x-subscription-webhook-secret` or `Authorization: Bearer …`.
+ * POST — Apple ASN or internal callback: upsert `apple_purchase` and advance `subscription`.
+ * - Apple ASN mode: pass `{ signedPayload }` (verified against Apple cert chain/signature).
+ * - Internal mode: pass normalized payload + shared secret (`APPLE_SUBSCRIPTION_WEBHOOK_SECRET`).
  */
 export async function POST(req: NextRequest) {
   const rawText = await req.text();
   console.log('[apple-subscription webhook] raw request body:', rawText);
 
-  // --- Auth: reject unknown callers (and reject everything if secret env is missing) ---
-  if (!verifySecret(req)) {
-    console.log('[apple-subscription webhook] rejected: invalid or missing shared secret (body logged above)');
-    return jsonError('Unauthorized', 401);
-  }
-
-  let body: WebhookBody;
+  let parsed: WebhookBody;
   try {
     if (!rawText.trim()) {
       return jsonError('Invalid JSON body', 400);
     }
-    body = JSON.parse(rawText) as WebhookBody;
+    parsed = JSON.parse(rawText) as WebhookBody;
   } catch {
     return jsonError('Invalid JSON body', 400);
   }
 
+  let appleNormalized: WebhookBody | null = null;
+  if (typeof parsed.signedPayload === 'string') {
+    try {
+      appleNormalized = await normalizeApplePayload(parsed);
+    } catch (err) {
+      console.log('[apple-subscription webhook] rejected: Apple signedPayload verification failed', err);
+      return jsonError('Invalid Apple signedPayload', 401);
+    }
+  }
+  const isAppleSignedPayload = appleNormalized !== null;
+
+  // Shared-secret auth is only required for non-Apple normalized callers.
+  if (!isAppleSignedPayload && !verifySecret(req)) {
+    console.log('[apple-subscription webhook] rejected: invalid or missing shared secret (body logged above)');
+    return jsonError('Unauthorized', 401);
+  }
+
+  const body = appleNormalized ?? parsed;
   console.log('[apple-subscription webhook] parsed body:', JSON.stringify(body, null, 2));
 
   // --- Required fields: minimum needed to idempotently record a purchase line and set period bounds ---
