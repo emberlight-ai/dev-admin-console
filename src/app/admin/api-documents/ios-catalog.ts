@@ -692,13 +692,13 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     id: 'ios.chat.messages.send',
     audience: 'ios',
     method: 'POST',
-    path: '/rest/v1/rpc/rpc_send_message',
+    path: '/api/ios/chat/send',
     summary: 'Send Message',
     description:
-      'Send a message to a match. Validates participation before inserting.',
+      'Send a message to a match. This is a Next.js API wrapper around rpc_send_message to bypass iOS HTTP/2 keep-alive connection drop issues.',
     auth: { type: 'bearer' },
-    baseUrlOverride: SUPABASE_URL,
-    defaultHeaders: supabaseAuthHeaders,
+    baseUrlOverride: APP_URL,
+    defaultHeaders: nextApiHeaders,
     requestExample: {
       match_id: '<match_uuid>',
       content: 'Hello world',
@@ -712,6 +712,30 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
       content: 'Hello world',
       media_url: null,
       created_at: '2025-01-01T12:00:00Z',
+    },
+  },
+  {
+    id: 'ios.chat.media.upload',
+    audience: 'ios',
+    method: 'POST',
+    path: '/api/ios/chat/media',
+    summary: 'Upload chat media',
+    description:
+      'Upload an image to chat_media bucket for a specific match. Use multipart/form-data with key `files`. Returns a public url to be used as `media_url` in Send Message.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
+    defaultHeaders: {
+      Authorization: 'Bearer <AUTH_TOKEN>',
+      // Content-Type is multipart/form-data
+    },
+    requestExample: {
+      _type: 'multipart/form-data',
+      files: '<file_bytes>',
+      match_id: '<match_uuid>',
+    },
+    responseExample: {
+      media_url: 'https://...',
+      path: '<match_uuid>/<filename>.jpg',
     },
   },
   {

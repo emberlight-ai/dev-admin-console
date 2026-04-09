@@ -2,7 +2,7 @@
 // Supabase Edge Function (Deno runtime) — replaces scripts/digital-human-greetings.ts
 // Triggered by: DB Webhook on `user_matches` table INSERT
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { GoogleGenerativeAI } from 'npm:@google/generative-ai@0.21.0';
+import { VertexAI } from 'npm:@google-cloud/vertexai';
 
 // ── Clients ────────────────────────────────────────────────────────────────────
 const supabase = createClient(
@@ -10,13 +10,30 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
-const genAI = new GoogleGenerativeAI(Deno.env.get('AI_INTEGRATIONS_GEMINI_API_KEY')!);
-const rawBaseUrl = Deno.env.get('AI_INTEGRATIONS_GEMINI_BASE_URL');
-const geminiBaseUrl = rawBaseUrl?.startsWith('http') ? rawBaseUrl : undefined;
-const model = genAI.getGenerativeModel(
-  { model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-2.5-flash' },
-  geminiBaseUrl ? { baseUrl: geminiBaseUrl } : {}
-);
+const project = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') || 'YOUR_PROJECT_ID';
+const location = Deno.env.get('GOOGLE_CLOUD_LOCATION') || 'global';
+const clientEmail = Deno.env.get('GOOGLE_CLIENT_EMAIL');
+const privateKey = Deno.env.get('GOOGLE_PRIVATE_KEY')?.replace(/\\n/g, '\n');
+
+const vertexAI = new VertexAI({
+  project,
+  location,
+  apiEndpoint: 'aiplatform.googleapis.com',
+  ...(clientEmail && privateKey
+    ? {
+        googleAuthOptions: {
+          credentials: {
+            client_email: clientEmail,
+            private_key: privateKey,
+          },
+        },
+      }
+    : {}),
+});
+
+const model = vertexAI.getGenerativeModel({
+  model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-3.1-flash-lite-preview',
+});
 
 // ── In-process cache ──────────────────────────────────────────────────────────
 interface CachedPrompt {
@@ -266,7 +283,8 @@ Deno.serve(async (req) => {
       });
 
       const result = await chat.sendMessage(`[System: ${greetingPrompt}]`);
-      const responseText = result.response.text();
+      const respData = await result.response;
+      const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
 
       // 6. Send greeting message
       const { error: sendError } = await supabase.rpc('rpc_send_message', {

@@ -2,7 +2,7 @@
 // Supabase Edge Function (Deno runtime) — replaces scripts/digital-human-auto-replies.ts
 // Triggered by: DB Webhook on `messages` table INSERT
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { GoogleGenerativeAI } from 'npm:@google/generative-ai@0.21.0';
+import { VertexAI } from 'npm:@google-cloud/vertexai';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 
 // ── Clients ────────────────────────────────────────────────────────────────────
@@ -11,13 +11,30 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
-const genAI = new GoogleGenerativeAI(Deno.env.get('AI_INTEGRATIONS_GEMINI_API_KEY')!);
-const rawBaseUrl = Deno.env.get('AI_INTEGRATIONS_GEMINI_BASE_URL');
-const geminiBaseUrl = rawBaseUrl?.startsWith('http') ? rawBaseUrl : undefined;
-const model = genAI.getGenerativeModel(
-  { model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-2.5-flash' },
-  geminiBaseUrl ? { baseUrl: geminiBaseUrl } : {}
-);
+const project = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') || 'YOUR_PROJECT_ID';
+const location = Deno.env.get('GOOGLE_CLOUD_LOCATION') || 'global';
+const clientEmail = Deno.env.get('GOOGLE_CLIENT_EMAIL');
+const privateKey = Deno.env.get('GOOGLE_PRIVATE_KEY')?.replace(/\\n/g, '\n');
+
+const vertexAI = new VertexAI({
+  project,
+  location,
+  apiEndpoint: 'aiplatform.googleapis.com',
+  ...(clientEmail && privateKey
+    ? {
+        googleAuthOptions: {
+          credentials: {
+            client_email: clientEmail,
+            private_key: privateKey,
+          },
+        },
+      }
+    : {}),
+});
+
+const model = vertexAI.getGenerativeModel({
+  model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-3.1-flash-lite-preview',
+});
 
 // ── In-process cache (survives warm invocations on Deno Deploy) ───────────────
 interface CachedPrompt {
@@ -337,18 +354,24 @@ Deno.serve(async (req) => {
             const base64Data = encodeBase64(new Uint8Array(arrayBuffer));
             const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
             
-            const descPrompt = [
-              {
-                inlineData: {
-                  data: base64Data,
-                  mimeType: mimeType
-                }
-              },
-              "Describe this image in detail. It was sent to you in an intimate/friendly chat. What does it show? Be descriptive as this will replace the image in your memory."
-            ];
+            const descPrompt = {
+              contents: [{
+                role: 'user',
+                parts: [
+                  {
+                    inlineData: {
+                      data: base64Data,
+                      mimeType: mimeType
+                    }
+                  },
+                  { text: "Describe this image in detail. It was sent to you in an intimate/friendly chat. What does it show? Be descriptive as this will replace the image in your memory." }
+                ]
+              }]
+            };
             
             const descResult = await model.generateContent(descPrompt);
-            const generatedDesc = descResult.response.text();
+            const responseData = await descResult.response;
+            const generatedDesc = responseData?.candidates?.[0]?.content?.parts?.[0]?.text || responseData?.text?.() || "No description generated.";
             
             // Save to DB
             const { error: updateErr } = await supabase
@@ -375,12 +398,15 @@ Deno.serve(async (req) => {
         `You are ${bot.username ?? 'a digital human'}. Personality: ${bot.personality ?? 'Friendly'}. Bio: ${bot.bio ?? 'N/A'}. Reply as this character. Keep it engaging, short, and natural.`;
 
       const systemInstruction = composeSystemInstruction(template, bot, human);
-      const transcript = buildTranscript(msgRows, bot.userid, bot.username ?? 'Bot');
+      const transcript = buildTranscript([...msgRows].reverse(), bot.userid, bot.username ?? 'Bot');
       const prompt = `${systemInstruction}\n\nConversation so far:\n${transcript}\n\nWrite the next message as ${bot.username ?? 'the bot'}. Reply with only the message text.`;
 
       // 11. Call Gemini
+      console.log('[dh-auto-reply] systemInstruction', systemInstruction);
+      console.log('[dh-auto-reply] transcript', transcript);
       const result = await model.generateContent(prompt);
-      const responseText = result.response.text();
+      const respData = await result.response;
+      const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
 
       // 12. Insert reply
       const { error: sendError } = await supabase.rpc('rpc_send_message', {
