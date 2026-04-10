@@ -2,7 +2,7 @@
 // Supabase Edge Function (Deno runtime) — replaces scripts/digital-human-auto-replies.ts
 // Triggered by: DB Webhook on `messages` table INSERT
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { VertexAI } from 'npm:@google-cloud/vertexai';
+import { VertexAI, HarmCategory, HarmBlockThreshold } from 'npm:@google-cloud/vertexai';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 
 // ── Clients ────────────────────────────────────────────────────────────────────
@@ -32,8 +32,28 @@ const vertexAI = new VertexAI({
     : {}),
 });
 
+const safetySettings = [
+  {
+    category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+];
+
 const model = vertexAI.getGenerativeModel({
   model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-3.1-flash-lite-preview',
+  safetySettings,
 });
 
 // ── In-process cache (survives warm invocations on Deno Deploy) ───────────────
