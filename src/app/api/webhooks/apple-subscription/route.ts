@@ -1,3 +1,4 @@
+import { decodeJwt } from 'jose';
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { dispatchAppleSubscriptionNotification } from '@/lib/apple-subscription-webhook';
@@ -38,5 +39,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 
+  return NextResponse.json({ ok: true });
   return NextResponse.json({ ok: true });
 }

@@ -468,8 +468,9 @@ create table if not exists public.messages (
   match_id uuid references public.user_matches(id) on delete cascade not null,
   sender_id uuid references public.users(userid) on delete cascade not null,
   receiver_id uuid references public.users(userid) on delete cascade,
+  image_desc text default null,
   content text, 
-  media_url text, 
+  media_url text,
   created_at timestamptz default now()
 );
 

@@ -3,7 +3,7 @@
 // Triggered by: pg_cron every 15 minutes via pg_net HTTP call
 // See setup instructions in walkthrough.md
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { GoogleGenerativeAI } from 'npm:@google/generative-ai@0.21.0';
+import { VertexAI } from 'npm:@google-cloud/vertexai';
 
 // ── Clients ────────────────────────────────────────────────────────────────────
 const supabase = createClient(
@@ -11,13 +11,30 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
-const genAI = new GoogleGenerativeAI(Deno.env.get('AI_INTEGRATIONS_GEMINI_API_KEY')!);
-const rawBaseUrl = Deno.env.get('AI_INTEGRATIONS_GEMINI_BASE_URL');
-const geminiBaseUrl = rawBaseUrl?.startsWith('http') ? rawBaseUrl : undefined;
-const model = genAI.getGenerativeModel(
-  { model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-2.5-flash' },
-  geminiBaseUrl ? { baseUrl: geminiBaseUrl } : {}
-);
+const project = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') || 'YOUR_PROJECT_ID';
+const location = Deno.env.get('GOOGLE_CLOUD_LOCATION') || 'global';
+const clientEmail = Deno.env.get('GOOGLE_CLIENT_EMAIL');
+const privateKey = Deno.env.get('GOOGLE_PRIVATE_KEY')?.replace(/\\n/g, '\n');
+
+const vertexAI = new VertexAI({
+  project,
+  location,
+  apiEndpoint: 'aiplatform.googleapis.com',
+  ...(clientEmail && privateKey
+    ? {
+        googleAuthOptions: {
+          credentials: {
+            client_email: clientEmail,
+            private_key: privateKey,
+          },
+        },
+      }
+    : {}),
+});
+
+const model = vertexAI.getGenerativeModel({
+  model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-3.1-flash-lite-preview',
+});
 
 // ── In-process cache ──────────────────────────────────────────────────────────
 interface CachedPrompt {
@@ -254,7 +271,7 @@ Deno.serve(async (req) => {
           start_index: 0,
         });
         const msgRows = (messages ?? []) as Array<{ sender_id: string; content: string | null; media_url?: string | null }>;
-        const transcript = buildTranscript(msgRows, botUser.userid, botUser.username ?? 'Bot');
+        const transcript = buildTranscript([...msgRows].reverse(), botUser.userid, botUser.username ?? 'Bot');
 
         const systemText = composeSystemText(promptConfig.template, botUser, humanUser);
         const followUpInstruction =
@@ -262,7 +279,8 @@ Deno.serve(async (req) => {
         const prompt = `${systemText}\n\nConversation so far:\n${transcript}\n\nThe user hasn't replied in a while.\nInstruction: ${followUpInstruction}\n\nWrite the follow-up as ${botUser.username ?? 'the bot'}. Reply with only the message text.`;
 
         const result = await model.generateContent(prompt);
-        const responseText = result.response.text();
+        const respData = await result.response;
+        const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
 
         const { data: sentMsg, error: sendError } = await supabase.rpc('rpc_send_message', {
           match_id: c.match_id,

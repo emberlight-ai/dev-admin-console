@@ -4,8 +4,18 @@ import * as React from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Loader2, ArrowRightLeft, Copy } from 'lucide-react';
+import { Send, Loader2, ArrowRightLeft, Copy, Image as ImageIcon, X, KeyRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -25,6 +35,7 @@ interface Message {
   sender_id: string;
   receiver_id?: string | null;
   content: string;
+  media_url?: string | null;
   created_at: string;
 }
 
@@ -51,12 +62,98 @@ function initials(name: string) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+const downsampleImage = (file: File, maxWidth = 1200): Promise<File> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject('Canvas ctx null');
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (!blob) return reject('Blob null');
+          const newFile = new File([blob], file.name, {
+            type: 'image/jpeg',
+            lastModified: Date.now(),
+          });
+          resolve(newFile);
+        }, 'image/jpeg', 0.7);
+      };
+      img.onerror = reject;
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
 function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: string, matchPartnerId: string, currentUserId: string }) {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [inputText, setInputText] = React.useState('');
   const [sending, setSending] = React.useState(false);
+  const [imageFile, setImageFile] = React.useState<File | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Auth Prompt for image token
+  const [authPromptOpen, setAuthPromptOpen] = React.useState(false);
+  const [testPassword, setTestPassword] = React.useState('');
+  const [tokenLoading, setTokenLoading] = React.useState(false);
+  const [tokenError, setTokenError] = React.useState('');
+  const [customToken, setCustomToken] = React.useState('');
+
+  const runImageAuth = async () => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+    if (!testPassword) {
+      setTokenError('Password is required.');
+      return;
+    }
+    setTokenLoading(true);
+    setTokenError('');
+    try {
+      const res = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        headers: { apikey: anonKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'admin@emberlightai.com', password: testPassword }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error_description || json.msg || json.error || 'Login failed');
+      setCustomToken(json.access_token);
+      setAuthPromptOpen(false);
+      setTestPassword('');
+      // Need a slight delay before triggering the click to let the dialog close
+      setTimeout(() => fileInputRef.current?.click(), 100);
+    } catch (err: unknown) {
+      setTokenError(err instanceof Error ? err.message : 'Login failed');
+    } finally {
+      setTokenLoading(false);
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await downsampleImage(file);
+      setImageFile(compressed);
+    } catch (err) {
+      toast.error('Failed to process image');
+      console.error(err);
+    }
+    e.target.value = '';
+  };
 
   // Fetch initial messages
   React.useEffect(() => {
@@ -120,14 +217,45 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
   }, [messages]);
 
   const handleSend = async () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() && !imageFile) return;
     setSending(true);
 
     try {
+      let mediaUrl = null;
+      if (imageFile) {
+        const supabase = getSupabase();
+        let token = customToken;
+        if (!token) {
+          const { data: sessionData } = await supabase.auth.getSession();
+          token = sessionData.session?.access_token || "";
+        }
+        if (!token) throw new Error("No session token to upload image. Generate one via Test Login.");
+
+        const formData = new FormData();
+        formData.append("files", imageFile);
+        formData.append("match_id", matchId);
+
+        const res = await fetch("/api/ios/chat/media", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`
+          },
+          body: formData
+        });
+
+        if (!res.ok) {
+           const errJson = await res.json();
+           throw new Error(errJson.error || "Failed to upload image");
+        }
+        const json = await res.json();
+        mediaUrl = json.media_url;
+      }
+
       const supabase = getSupabase();
       const { data, error } = await supabase.rpc('rpc_send_message', {
         match_id: matchId,
-        content: inputText,
+        content: inputText.trim() || null,
+        media_url: mediaUrl,
         sender_id: currentUserId,
       });
 
@@ -143,8 +271,9 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
       });
 
       setInputText('');
+      setImageFile(null);
     } catch (err: unknown) {
-      toast.error('Failed to send message.');
+      toast.error(err instanceof Error ? err.message : 'Failed to send message.');
       console.error(err);
     } finally {
       setSending(false);
@@ -198,13 +327,18 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
                 >
                   <div
                     className={cn(
-                      'max-w-[80%] rounded-lg px-3 py-2 text-sm break-words',
+                      'max-w-[80%] rounded-lg px-3 py-2 text-sm break-words flex flex-col gap-2',
                       isMe
                         ? 'bg-primary text-primary-foreground'
                         : 'bg-muted text-foreground'
                     )}
                   >
-                    {msg.content}
+                    {msg.media_url && (
+                      <a href={msg.media_url} target="_blank" rel="noreferrer">
+                        <img src={msg.media_url} alt="attachment" className="rounded-md max-w-full max-h-48 object-cover" />
+                      </a>
+                    )}
+                    {msg.content && <div>{msg.content}</div>}
                   </div>
                 </div>
               );
@@ -214,16 +348,90 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
         </div>
       </ScrollArea>
 
-      <div className="p-3 border-t bg-background flex gap-2">
-        <Input
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          placeholder="Type a message..."
-          onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-        />
-        <Button size="icon" onClick={handleSend} disabled={sending || !inputText.trim()}>
-          <Send className="h-4 w-4" />
-        </Button>
+      <div className="p-3 border-t bg-background flex flex-col gap-2 relative">
+        <Dialog open={authPromptOpen} onOpenChange={setAuthPromptOpen}>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>Admin Authorization</DialogTitle>
+              <DialogDescription>
+                Image uploads require a valid session. Please sign in as admin@emberlightai.com.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="space-y-2">
+                <Label>Password</Label>
+                <Input 
+                  type="password" 
+                  value={testPassword} 
+                  onChange={(e) => setTestPassword(e.target.value)} 
+                  onKeyDown={(e) => e.key === 'Enter' && runImageAuth()}
+                />
+              </div>
+              {tokenError && <p className="text-xs text-rose-600">{tokenError}</p>}
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={runImageAuth} disabled={tokenLoading}>
+                {tokenLoading ? 'Signing in...' : 'Sign In'}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {imageFile && (
+          <div className="flex items-center gap-2 overflow-hidden rounded-md border p-2 w-max bg-muted/50 relative">
+            <img 
+              src={URL.createObjectURL(imageFile)} 
+              alt="Preview" 
+              className="h-10 w-10 object-cover rounded"
+            />
+            <span className="text-xs text-muted-foreground truncate max-w-[120px]">{imageFile.name}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 ml-2 rounded-full hover:bg-destructive/10 hover:text-destructive absolute right-1 top-1"
+              onClick={() => setImageFile(null)}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
+        <div className="flex gap-2 w-full">
+          <input 
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            ref={fileInputRef} 
+            onChange={handleFileChange} 
+          />
+          {currentUserId === 'c3072d80-331d-4a5a-b93f-d1d5d5912fec' && (
+            <Button 
+              variant="outline" 
+              size="icon" 
+              type="button" 
+              disabled={sending}
+              onClick={() => {
+                if (customToken) {
+                  fileInputRef.current?.click();
+                } else {
+                  setAuthPromptOpen(true);
+                }
+              }}
+            >
+              <ImageIcon className="h-4 w-4" />
+            </Button>
+          )}
+          <Input
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            placeholder="Type a message..."
+            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+            disabled={sending}
+          />
+          <Button size="icon" onClick={handleSend} disabled={sending || (!inputText.trim() && !imageFile)}>
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          </Button>
+        </div>
       </div>
     </div>
   );

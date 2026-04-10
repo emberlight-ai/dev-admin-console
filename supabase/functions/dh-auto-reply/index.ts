@@ -2,7 +2,8 @@
 // Supabase Edge Function (Deno runtime) — replaces scripts/digital-human-auto-replies.ts
 // Triggered by: DB Webhook on `messages` table INSERT
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { GoogleGenerativeAI } from 'npm:@google/generative-ai@0.21.0';
+import { VertexAI, HarmCategory, HarmBlockThreshold } from 'npm:@google-cloud/vertexai';
+import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 
 // ── Clients ────────────────────────────────────────────────────────────────────
 const supabase = createClient(
@@ -10,13 +11,50 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
-const genAI = new GoogleGenerativeAI(Deno.env.get('AI_INTEGRATIONS_GEMINI_API_KEY')!);
-const rawBaseUrl = Deno.env.get('AI_INTEGRATIONS_GEMINI_BASE_URL');
-const geminiBaseUrl = rawBaseUrl?.startsWith('http') ? rawBaseUrl : undefined;
-const model = genAI.getGenerativeModel(
-  { model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-2.5-flash' },
-  geminiBaseUrl ? { baseUrl: geminiBaseUrl } : {}
-);
+const project = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') || 'YOUR_PROJECT_ID';
+const location = Deno.env.get('GOOGLE_CLOUD_LOCATION') || 'global';
+const clientEmail = Deno.env.get('GOOGLE_CLIENT_EMAIL');
+const privateKey = Deno.env.get('GOOGLE_PRIVATE_KEY')?.replace(/\\n/g, '\n');
+
+const vertexAI = new VertexAI({
+  project,
+  location,
+  apiEndpoint: 'aiplatform.googleapis.com',
+  ...(clientEmail && privateKey
+    ? {
+        googleAuthOptions: {
+          credentials: {
+            client_email: clientEmail,
+            private_key: privateKey,
+          },
+        },
+      }
+    : {}),
+});
+
+const safetySettings = [
+  {
+    category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+];
+
+const model = vertexAI.getGenerativeModel({
+  model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-3.1-flash-lite-preview',
+  safetySettings,
+});
 
 // ── In-process cache (survives warm invocations on Deno Deploy) ───────────────
 interface CachedPrompt {
@@ -132,15 +170,22 @@ function getPromptConfig(user: Pick<UserRow, 'gender' | 'personality'>): CachedP
 
 // Inline transcript builder (cannot import from src/ in Deno runtime)
 function buildTranscript(
-  messages: Array<{ sender_id: string; content: string | null; media_url?: string | null }>,
+  messages: Array<{ sender_id: string; content: string | null; media_url?: string | null; image_desc?: string | null }>,
   botUserId: string,
   botName: string
 ): string {
   return messages
     .map((m) => {
       const speaker = m.sender_id === botUserId ? botName : 'User';
-      const text = m.content || (m.media_url ? '[Image Sent]' : '');
-      return `${speaker}: ${text}`;
+      let text = m.content || '';
+      if (m.media_url) {
+        if (m.image_desc) {
+          text += `\n[User sent an image described as: ${m.image_desc}]`;
+        } else {
+          text += `\n[User sent an image]`;
+        }
+      }
+      return `${speaker}: ${text.trim()}`;
     })
     .join('\n');
 }
@@ -312,12 +357,60 @@ Deno.serve(async (req) => {
         limit_count: 50,
         start_index: 0,
       });
-      const msgRows = (messages ?? []) as Array<{ id: string; sender_id: string; content: string | null; media_url?: string | null }>;
+      const msgRows = (messages ?? []) as Array<{ id: string; sender_id: string; content: string | null; media_url?: string | null; image_desc?: string | null }>;
       if (msgRows.length === 0) throw new Error('No messages found');
 
       // Checkpoint: the latest message from the real user
       const latestUserMsg = msgRows.find((m) => m.sender_id !== dhId);
       const checkpointId = latestUserMsg?.id ?? stateData.last_message_id;
+
+      // --- NEW IMAGE PARSING LOGIC ---
+      if (latestUserMsg && latestUserMsg.media_url && !latestUserMsg.image_desc) {
+        try {
+          console.log('[dh-auto-reply] Generating image description for', latestUserMsg.id);
+          const imgRes = await fetch(latestUserMsg.media_url);
+          if (imgRes.ok) {
+            const arrayBuffer = await imgRes.arrayBuffer();
+            const base64Data = encodeBase64(new Uint8Array(arrayBuffer));
+            const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
+            
+            const descPrompt = {
+              contents: [{
+                role: 'user',
+                parts: [
+                  {
+                    inlineData: {
+                      data: base64Data,
+                      mimeType: mimeType
+                    }
+                  },
+                  { text: "Describe this image in detail. It was sent to you in an intimate/friendly chat. What does it show? Be descriptive as this will replace the image in your memory." }
+                ]
+              }]
+            };
+            
+            const descResult = await model.generateContent(descPrompt);
+            const responseData = await descResult.response;
+            const generatedDesc = responseData?.candidates?.[0]?.content?.parts?.[0]?.text || responseData?.text?.() || "No description generated.";
+            
+            // Save to DB
+            const { error: updateErr } = await supabase
+              .from('messages')
+              .update({ image_desc: generatedDesc })
+              .eq('id', latestUserMsg.id);
+            
+            if (updateErr) console.error('[dh-auto-reply] Error saving image_desc', updateErr);
+            
+            // Update in-memory row for transcript builder
+            latestUserMsg.image_desc = generatedDesc;
+          } else {
+            console.error('[dh-auto-reply] Failed to fetch media url', latestUserMsg.media_url);
+          }
+        } catch (mediaErr) {
+          console.error('[dh-auto-reply] Error fetching/describing media', mediaErr);
+        }
+      }
+      // -------------------------------
 
       // 10. Build prompt
       const template =
@@ -325,12 +418,15 @@ Deno.serve(async (req) => {
         `You are ${bot.username ?? 'a digital human'}. Personality: ${bot.personality ?? 'Friendly'}. Bio: ${bot.bio ?? 'N/A'}. Reply as this character. Keep it engaging, short, and natural.`;
 
       const systemInstruction = composeSystemInstruction(template, bot, human);
-      const transcript = buildTranscript(msgRows, bot.userid, bot.username ?? 'Bot');
+      const transcript = buildTranscript([...msgRows].reverse(), bot.userid, bot.username ?? 'Bot');
       const prompt = `${systemInstruction}\n\nConversation so far:\n${transcript}\n\nWrite the next message as ${bot.username ?? 'the bot'}. Reply with only the message text.`;
 
       // 11. Call Gemini
+      console.log('[dh-auto-reply] systemInstruction', systemInstruction);
+      console.log('[dh-auto-reply] transcript', transcript);
       const result = await model.generateContent(prompt);
-      const responseText = result.response.text();
+      const respData = await result.response;
+      const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
 
       // 12. Insert reply
       const { error: sendError } = await supabase.rpc('rpc_send_message', {
