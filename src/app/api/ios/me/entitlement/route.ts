@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserSupabase, jsonError } from '@/lib/ios-user-supabase';
 import {
+  freeTierAppleProductId,
   messageQuotaForPlan,
   remainingMessages,
   remainingSwipes,
@@ -65,8 +66,19 @@ export async function GET(req: NextRequest) {
     const activeSub = pickActiveSubscription(subs);
     const catalog: SubscriptionCatalogRow | null = activeSub?.subscription_catalog ?? null;
 
-    const swipeQuota = swipeQuotaForPlan(catalog);
-    const messageQuota = messageQuotaForPlan(catalog);
+    let quotaCatalog: SubscriptionCatalogRow | null = catalog;
+    if (!quotaCatalog) {
+      const { data: freeRow, error: freeErr } = await supabase
+        .from('subscription_catalog')
+        .select('id, apple_product_id, name, swipes_per_day, messages_per_day')
+        .eq('apple_product_id', freeTierAppleProductId())
+        .maybeSingle();
+      if (freeErr) return jsonError(freeErr.message, 500);
+      quotaCatalog = (freeRow as SubscriptionCatalogRow | null) ?? null;
+    }
+
+    const swipeQuota = swipeQuotaForPlan(quotaCatalog);
+    const messageQuota = messageQuotaForPlan(quotaCatalog);
     const { start, end } = utcDayBoundsIso();
 
     const swipeCountPromise = supabase

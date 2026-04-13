@@ -1,3 +1,6 @@
+/** Sentinel StoreKit id for the non-purchasable free plan row in `subscription_catalog`. */
+export const DEFAULT_FREE_TIER_APPLE_PRODUCT_ID = 'amber.subscription.free';
+
 export type SubscriptionCatalogRow = {
   id: string;
   apple_product_id: string;
@@ -30,12 +33,24 @@ export function utcDayBoundsIso(): { start: string; end: string } {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
+/** Override the default sentinel when the free-tier catalog row uses another `apple_product_id`. */
+export function freeTierAppleProductId(): string {
+  const v = process.env.FREE_TIER_APPLE_PRODUCT_ID?.trim();
+  return v || DEFAULT_FREE_TIER_APPLE_PRODUCT_ID;
+}
+
+export function isFreeTierCatalogRow(row: Pick<SubscriptionCatalogRow, 'apple_product_id'>): boolean {
+  return row.apple_product_id === freeTierAppleProductId();
+}
+
+/** Used only when no active plan and no free-tier catalog row was found. */
 export function freeTierSwipesPerDay(): number {
   return parsePositiveInt(process.env.FREE_TIER_SWIPES_PER_DAY, 20);
 }
 
+/** Used only when no active plan and no free-tier catalog row was found. */
 export function freeTierMessagesPerDay(): number {
-  return parsePositiveInt(process.env.FREE_TIER_MESSAGES_PER_DAY, 50);
+  return parsePositiveInt(process.env.FREE_TIER_MESSAGES_PER_DAY, 20);
 }
 
 export function swipeQuotaForPlan(catalog: SubscriptionCatalogRow | null): number {

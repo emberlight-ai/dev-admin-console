@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserSupabase, jsonError } from '@/lib/ios-user-supabase';
+import { isFreeTierCatalogRow } from '@/lib/subscription-entitlement';
 
 export const runtime = 'nodejs';
 
@@ -34,12 +35,15 @@ export async function POST(req: NextRequest) {
 
     const { data: cat, error: catErr } = await supabase
       .from('subscription_catalog')
-      .select('id')
+      .select('id, apple_product_id')
       .eq('id', catalogId)
       .maybeSingle();
 
     if (catErr) return jsonError(catErr.message, 500);
     if (!cat) return jsonError('Unknown subscription_catalog_id', 404);
+    if (isFreeTierCatalogRow(cat)) {
+      return jsonError('Free tier is not a purchasable product', 400);
+    }
 
     const now = new Date().toISOString();
     const { data: row, error: insErr } = await supabase
