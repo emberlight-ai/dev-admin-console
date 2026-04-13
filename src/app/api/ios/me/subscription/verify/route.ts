@@ -59,6 +59,13 @@ export async function POST(req: NextRequest) {
        .order('updated_at', { ascending: false })
        .limit(1)
        .maybeSingle();
+
+    // Look up correct catalog id for the purchased productId
+    const { data: catRow } = await supabaseAdmin
+       .from('subscription_catalog')
+       .select('id')
+       .eq('apple_product_id', productId)
+       .maybeSingle();
        
     const activeSubId = existingRow ? existingRow.id : subscriptionId;
 
@@ -66,15 +73,19 @@ export async function POST(req: NextRequest) {
     const periodEnd = msToIso(tx.expiresDate);
     const now = new Date().toISOString();
 
-    // 1. Update the correct subscription row
-    const { error: upErr } = await supabaseAdmin.from('subscription').update({
+    const patch: Record<string, unknown> = {
        status: 'ACTIVE',
        environment: env,
        original_transaction_id: originalTransactionId,
        current_period_start: periodStart,
        current_period_end: periodEnd,
-       status_changed_at: now
-    }).eq('id', activeSubId);
+       status_changed_at: now,
+       user_id: userId // implicitly transfer to current user in case of Sandbox duplicate Apple ID testing
+    };
+    if (catRow?.id) patch.subscription_catalog_id = catRow.id;
+
+    // 1. Update the correct subscription row
+    const { error: upErr } = await supabaseAdmin.from('subscription').update(patch).eq('id', activeSubId);
     
     if (upErr) return jsonError(upErr.message, 500);
 
@@ -85,7 +96,7 @@ export async function POST(req: NextRequest) {
 
     // 3. Upsert into apple_purchase for idempotency & auditing
     await supabaseAdmin.from('apple_purchase').upsert({
-      user_id: existingRow ? existingRow.user_id : userId,
+      user_id: userId,
       subscription_id: activeSubId,
       transaction_id: transactionId,
       original_transaction_id: originalTransactionId,
