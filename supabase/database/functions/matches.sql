@@ -311,6 +311,12 @@ as $$
       where (b.blocker_id = viewer_user_id and b.blocked_id = u.userid)
          or (b.blocker_id = u.userid and b.blocked_id = viewer_user_id)
     )
+    and not exists (
+      select 1
+      from public.swipe s
+      where s.swiper_user_id = viewer_user_id
+        and s.target_user_id = u.userid
+    )
     and (
       coalesce(u.is_digital_human, false) = false
       or
