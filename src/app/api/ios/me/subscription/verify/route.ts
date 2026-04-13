@@ -49,6 +49,22 @@ export async function POST(req: NextRequest) {
     if (!originalTransactionId || !productId || !transactionId) {
        return jsonError('Missing core transaction fields', 400);
     }
+
+    // Reject stale/exhausted JWS tokens — Apple Sandbox returns the last dead receipt
+    // when a test account has exhausted its renewal cycles instead of generating a new one.
+    const expiresMs = typeof tx.expiresDate === 'number' ? tx.expiresDate : null;
+    if (expiresMs !== null && expiresMs < Date.now()) {
+      console.warn('[verify] Rejecting expired JWS token', {
+        transactionId,
+        originalTransactionId,
+        expiresDate: new Date(expiresMs).toISOString(),
+        userId,
+      });
+      return NextResponse.json(
+        { error: 'Transaction already expired. The Apple Sandbox account may have exhausted its renewal cycles. Please use a fresh Sandbox account.', expired_jws: true },
+        { status: 422 }
+      );
+    }
     
     // Look up if this original_transaction_id already belongs to an existing subscription line
     const { data: existingRow } = await supabaseAdmin
