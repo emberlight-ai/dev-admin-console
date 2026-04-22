@@ -415,15 +415,38 @@ export async function dispatchAppleSubscriptionNotification(
       const originalTransactionId =
         (typeof renewal?.originalTransactionId === 'string' && renewal.originalTransactionId) ||
         (typeof tx?.originalTransactionId === 'string' && tx.originalTransactionId);
+      console.log('[apple-subscription] DID_CHANGE_RENEWAL_STATUS payload', {
+        notificationUUID: payload.notificationUUID,
+        subtype,
+        data: payload.data ?? null,
+        renewal,
+        transaction: tx,
+        derivedEnv: env,
+        derivedOriginalTransactionId: originalTransactionId ?? null,
+      });
+      // Test-only behavior: in Sandbox, route AUTO_RENEW_ENABLED through the same
+      // activation path as SUBSCRIBED/DID_RENEW instead of originalTransactionId-only lookup.
+      if (env === 'Sandbox' && subtype === 'AUTO_RENEW_ENABLED') {
+        if (tx) {
+          await applyActiveFromTransaction(admin, payload, tx, renewal, dataEnv);
+          console.log('[apple-subscription] sandbox AUTO_RENEW_ENABLED routed to applyActiveFromTransaction', {
+            notificationUUID: payload.notificationUUID,
+          });
+        } else {
+          console.log('[apple-subscription] sandbox AUTO_RENEW_ENABLED missing transaction JWS');
+        }
+        break;
+      }
       if (!env || !originalTransactionId) {
-        console.warn('[apple-subscription] DID_CHANGE_RENEWAL_STATUS: missing env or originalTransactionId');
+        console.log('[apple-subscription] DID_CHANGE_RENEWAL_STATUS: missing env or originalTransactionId');
         break;
       }
       const sub = await resolveSubscriptionByOriginalTxOnly(admin, env, originalTransactionId);
       if (!sub) {
-        console.warn('[apple-subscription] DID_CHANGE_RENEWAL_STATUS: subscription not found');
+        console.log('[apple-subscription] DID_CHANGE_RENEWAL_STATUS: subscription not found');
         break;
       }
+      // Default production-safe path: update renewal metadata only.
       const autoRenew = renewal ? boolFromAutoRenew(renewal.autoRenewStatus) : null;
       const periodEnd = msToIso(renewal?.renewalDate ?? tx?.expiresDate);
       const r = await updateSubscriptionRenewalOnly(admin, sub.id, autoRenew, periodEnd);
