@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
   // mode=list
   let q = supabaseAdmin
     .from('users')
-    .select('userid,username,gender,age,zipcode,avatar,created_at,profession,updated_at,is_digital_human')
+    .select('userid,username,gender,age,zipcode,location_name,avatar,created_at,profession,updated_at,is_digital_human')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 

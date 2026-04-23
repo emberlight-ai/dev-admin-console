@@ -36,6 +36,7 @@ type UserRow = {
   gender?: string | null
   age?: number | null
   zipcode?: string | null
+  location_name?: string | null
   avatar?: string | null
   created_at: string
 }
@@ -528,7 +529,7 @@ export default function ManageUsers() {
                     <TableCell className="font-medium">{u.username}</TableCell>
                     <TableCell className="text-muted-foreground">{u.gender ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground">{u.age ?? "—"}</TableCell>
-                    <TableCell className="text-muted-foreground">{u.zipcode ?? "—"}</TableCell>
+                    <TableCell className="text-muted-foreground">{u.location_name || u.zipcode || "—"}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(u.created_at).toLocaleDateString()}
                     </TableCell>

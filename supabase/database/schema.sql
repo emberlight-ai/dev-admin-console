@@ -29,6 +29,9 @@ create table public.users (
   education text,
   profession text,
   avatar text,
+  location_name text,
+  longitude double precision,
+  latitude double precision,
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   deleted_at timestamptz,
@@ -55,6 +58,9 @@ select
   bio,
   education,
   avatar,
+  location_name,
+  longitude,
+  latitude,
   created_at,
   updated_at,
   is_digital_human
@@ -182,6 +188,15 @@ alter table public.user_posts
     end
   ) stored;
 
+alter table public.users
+  add column if not exists geom geometry(Point, 4326)
+  generated always as (
+    case
+      when longitude is null or latitude is null then null
+      else st_setsrid(st_makepoint(longitude, latitude), 4326)
+    end
+  ) stored;
+
 -- Basic coordinate validation (allows NULL when no location set)
 do $$
 begin
@@ -211,8 +226,37 @@ begin
   end if;
 end $$;
 
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'users_longitude_range'
+      and conrelid = 'public.users'::regclass
+  ) then
+    alter table public.users
+      add constraint users_longitude_range
+      check (longitude is null or (longitude >= -180 and longitude <= 180));
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'users_latitude_range'
+      and conrelid = 'public.users'::regclass
+  ) then
+    alter table public.users
+      add constraint users_latitude_range
+      check (latitude is null or (latitude >= -90 and latitude <= 90));
+  end if;
+end $$;
+
 -- Fast bounding-box and spatial queries
 create index if not exists user_posts_geom_gix on public.user_posts using gist (geom);
+create index if not exists users_geom_gix on public.users using gist (geom);
 -- Common sorting / filtering by time
 create index if not exists user_posts_occurred_at_idx on public.user_posts (occurred_at);
 
@@ -561,8 +605,9 @@ create table if not exists public.user_match_ai_state (
 
   -- Optimized lookups & State Machine
   -- NOT NULL: auto-populated by the BEFORE INSERT trigger in functions/ai_state.sql
-  dh_user_id uuid references public.users(userid) not null,
-  real_user_id uuid references public.users(userid) not null,
+  -- ON DELETE CASCADE: required so auth.admin.deleteUser -> public.users delete is not blocked
+  dh_user_id uuid references public.users(userid) on delete cascade not null,
+  real_user_id uuid references public.users(userid) on delete cascade not null,
   ai_state integer default 0, -- 0=Matched, 1=GreetingSent/Skipped, 2=DHSent, 3=UserSent, 4=DHFollowUp
   
   updated_at timestamptz default now()

@@ -769,6 +769,38 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     ],
   },
   {
+    id: 'ios.reviews.appStore.template',
+    audience: 'ios',
+    method: 'GET',
+    path: '/api/ios/reviews/app-store-template',
+    summary: 'Generate a 5-star App Store review template',
+    description:
+      'Returns a freshly generated 5-star App Store review template for Amber. Every call produces a different compliment — the server assembles a unique prompt from randomly sampled dimensions (theme, tone, length, reviewer persona, uniqueness seed) before asking Gemini. If Gemini is unavailable or the response cannot be parsed, a randomly chosen local fallback template is returned instead. Intended for use as pre-fill text the user can tap to copy before leaving a real App Store review — never auto-submitted.',
+    auth: {
+      type: 'none',
+      notes:
+        'Currently unauthenticated (no user data is read or written). Add auth if you want to restrict who can generate templates.',
+    },
+    baseUrlOverride: APP_URL,
+    defaultHeaders: {
+      'Content-Type': 'application/json',
+    },
+    requestExample: {},
+    responseExample: {
+      rating: 5,
+      title: 'Met my person on Amber',
+      body: "I'd almost given up on dating apps when I tried this one. A few weeks in I met someone who genuinely gets me — can't recommend it enough.",
+      source: 'gemini',
+      generated_at: '2026-04-20T12:00:00.000Z',
+    },
+    notes: [
+      '`source` is `"gemini"` for model-generated reviews and `"fallback"` when a local template was used.',
+      'Response is always `Cache-Control: no-store` so every call yields a fresh review.',
+      'Always returns rating = 5 (this is a 5-star template generator only).',
+      'Do NOT auto-submit this text to App Store Connect — show it to the user and let them edit/submit.',
+    ],
+  },
+  {
     id: 'ios.push.tokens.register',
     audience: 'ios',
     method: 'POST',
