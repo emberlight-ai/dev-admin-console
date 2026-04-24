@@ -331,7 +331,7 @@ export function ApiDocsExplorer({ catalog, discovered }: Props) {
       if (selected.params) {
         for (const p of selected.params) {
           if (p.in === 'query' && !q[p.name]) {
-            q[p.name] = p.example || '';
+            q[p.name] = p.example != null ? String(p.example) : '';
           }
         }
       }
@@ -342,7 +342,7 @@ export function ApiDocsExplorer({ catalog, discovered }: Props) {
         const q: Record<string, string> = {};
         for (const p of selected.params) {
           if (p.in === 'query') {
-            q[p.name] = p.example || '';
+            q[p.name] = p.example != null ? String(p.example) : '';
           }
         }
         setQueryText(JSON.stringify(q, null, 2));
