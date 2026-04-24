@@ -74,7 +74,6 @@ async function resolveSubscriptionRow(
   admin: SupabaseClient,
   env: 'Sandbox' | 'Production',
   originalTransactionId: string,
-  productId: string,
   appAccountToken: string | undefined,
 ): Promise<{ id: string; user_id: string } | null> {
   const { data: byOt } = await admin
@@ -99,25 +98,6 @@ async function resolveSubscriptionRow(
       .maybeSingle();
     if (byToken?.id && byToken.user_id) return { id: byToken.id, user_id: byToken.user_id };
   }
-
-  const { data: cat } = await admin
-    .from('subscription_catalog')
-    .select('id')
-    .eq('apple_product_id', productId)
-    .maybeSingle();
-  if (!cat?.id) return null;
-
-  const { data: pending } = await admin
-    .from('subscription')
-    .select('id, user_id')
-    .eq('subscription_catalog_id', cat.id)
-    .eq('status', 'PURCHASING')
-    .is('original_transaction_id', null)
-    .order('status_changed_at', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (pending?.id && pending.user_id) return { id: pending.id, user_id: pending.user_id };
 
   return null;
 }
@@ -261,7 +241,7 @@ async function applyActiveFromTransaction(
   }
   const appAccountToken = typeof tx.appAccountToken === 'string' ? tx.appAccountToken : undefined;
 
-  const sub = await resolveSubscriptionRow(admin, env, originalTransactionId, productId, appAccountToken);
+  const sub = await resolveSubscriptionRow(admin, env, originalTransactionId, appAccountToken);
   if (!sub) {
     console.warn('[apple-subscription] no subscription row for transaction', {
       originalTransactionId,
