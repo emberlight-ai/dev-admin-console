@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-import { buildMatchingsFeed, type MatchingsCard } from '@/app/api/ios/getMatchings/_shared';
+import {
+  buildMatchingsFeed,
+  type MatchingsCard,
+} from '@/app/api/ios/getMatchings/_shared';
 
 type NearbyPersonResponse = {
   userId: string;
@@ -22,11 +25,21 @@ type MapboxFeature = {
 };
 
 // Mirrors NearbyPeopleService.swift
-const POI_QUERIES = ['restaurant', 'supermarket', 'park', 'bar', 'hotel'] as const;
+const POI_QUERIES = [
+  'restaurant',
+  'supermarket',
+  'park',
+  'bar',
+  'hotel',
+  'cafe',
+] as const;
 
 // POIs closer than this to the user are filtered out so the map view shows
 // "nearby" people at a visible distance rather than stacked on top of the user.
 const MIN_POI_DISTANCE_MILES = 0.5;
+const EARTH_RADIUS_MILES = 3958.7613;
+const FALLBACK_MIN_DISTANCE_MILES = 1;
+const FALLBACK_MAX_DISTANCE_MILES = 10;
 
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
@@ -38,18 +51,25 @@ const getUserSupabase = (req: NextRequest) => {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       global: { headers: { Authorization: authHeader } },
-    }
+    },
   );
 };
 
 function parseCoordinate(value: unknown): number | null {
-  const num = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  const num =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value)
+        : NaN;
   if (!Number.isFinite(num)) return null;
   return num;
 }
 
 // Rounds to 3 decimals (~111m) to avoid stacking pins, matching the Swift impl.
-function deduplicateCoordinates(coords: Array<{ longitude: number; latitude: number }>) {
+function deduplicateCoordinates(
+  coords: Array<{ longitude: number; latitude: number }>,
+) {
   const seen = new Set<string>();
   return coords.filter((coord) => {
     const key = `${coord.latitude.toFixed(3)},${coord.longitude.toFixed(3)}`;
@@ -61,10 +81,9 @@ function deduplicateCoordinates(coords: Array<{ longitude: number; latitude: num
 
 function haversineMiles(
   origin: { longitude: number; latitude: number },
-  destination: { longitude: number; latitude: number }
+  destination: { longitude: number; latitude: number },
 ) {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const earthRadiusMiles = 3958.7613;
 
   const dLat = toRad(destination.latitude - origin.latitude);
   const dLon = toRad(destination.longitude - origin.longitude);
@@ -75,7 +94,7 @@ function haversineMiles(
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return earthRadiusMiles * c;
+  return EARTH_RADIUS_MILES * c;
 }
 
 /// Single Mapbox Searchbox v1 Category search for one keyword.
@@ -88,7 +107,9 @@ async function fetchPOI(params: {
   limit: number;
 }) {
   const encodedQuery = encodeURIComponent(params.query);
-  const url = new URL(`https://api.mapbox.com/search/searchbox/v1/category/${encodedQuery}`);
+  const url = new URL(
+    `https://api.mapbox.com/search/searchbox/v1/category/${encodedQuery}`,
+  );
   url.searchParams.set('proximity', `${params.longitude},${params.latitude}`);
   url.searchParams.set('limit', `${Math.min(params.limit, 10)}`);
   url.searchParams.set('access_token', params.token);
@@ -116,10 +137,13 @@ async function fetchPOI(params: {
       const raw = feature.geometry?.coordinates;
       if (!raw || raw.length < 2) return null;
       const [longitude, latitude] = raw;
-      if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
+      if (!Number.isFinite(longitude) || !Number.isFinite(latitude))
+        return null;
       return { longitude, latitude };
     })
-    .filter((coord): coord is { longitude: number; latitude: number } => Boolean(coord));
+    .filter((coord): coord is { longitude: number; latitude: number } =>
+      Boolean(coord),
+    );
 
   console.info('[find-nearby-people] mapbox category success', {
     query: params.query,
@@ -137,7 +161,10 @@ async function fetchPOICoordinates(params: {
   latitude: number;
   needed: number;
 }) {
-  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? process.env.MAPBOX_ACCESS_TOKEN ?? '';
+  const token =
+    process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ??
+    process.env.MAPBOX_ACCESS_TOKEN ??
+    '';
   if (!token) {
     console.warn('[find-nearby-people] mapbox token missing');
     return [];
@@ -156,17 +183,20 @@ async function fetchPOICoordinates(params: {
         latitude: params.latitude,
         token,
         limit: 10,
-      })
-    )
+      }),
+    ),
   );
 
   const allCoords = batches.flat();
   // Deduplicate by rounding to ~111m grid, filter out POIs too close to the
   // user, shuffle, take what we need.
   const unique = deduplicateCoordinates(allCoords);
-  const userLocation = { longitude: params.longitude, latitude: params.latitude };
+  const userLocation = {
+    longitude: params.longitude,
+    latitude: params.latitude,
+  };
   const farEnough = unique.filter(
-    (coord) => haversineMiles(userLocation, coord) >= MIN_POI_DISTANCE_MILES
+    (coord) => haversineMiles(userLocation, coord) >= MIN_POI_DISTANCE_MILES,
   );
   const shuffled = [...farEnough].sort(() => Math.random() - 0.5);
 
@@ -189,31 +219,51 @@ async function fetchPOICoordinates(params: {
   return result.slice(0, params.needed);
 }
 
-/// Last-resort fallback: place pins in a grid pattern around the user.
-/// Only used when Mapbox is completely unavailable.
-/// Exact port of NearbyPeopleService.swift `gridCoordinates(...)`.
-function gridCoordinates(params: {
+/// Last-resort fallback: scatter pins randomly around the user.
+/// Only used when Mapbox is completely unavailable for a location.
+function randomFallbackCoordinates(params: {
   longitude: number;
   latitude: number;
   count: number;
 }) {
-  // ~0.01 deg ≈ 1.1km ≈ 0.69 miles per step, so any non-origin grid point is
-  // guaranteed >= MIN_POI_DISTANCE_MILES (0.5mi) away.
-  const step = 0.01;
-  const side = Math.ceil(Math.sqrt(params.count + 1));
-  const userLocation = { longitude: params.longitude, latitude: params.latitude };
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const toDeg = (rad: number) => (rad * 180) / Math.PI;
+  const originLatitude = toRad(params.latitude);
+  const originLongitude = toRad(params.longitude);
   const result: Array<{ longitude: number; latitude: number }> = [];
-  for (let row = 0; row < side; row += 1) {
-    for (let col = 0; col < side; col += 1) {
-      const candidate = {
-        latitude: params.latitude + (row - Math.floor(side / 2)) * step,
-        longitude: params.longitude + (col - Math.floor(side / 2)) * step,
-      };
-      if (haversineMiles(userLocation, candidate) < MIN_POI_DISTANCE_MILES) continue;
-      result.push(candidate);
-      if (result.length === params.count) return result;
-    }
+
+  for (let index = 0; index < params.count; index += 1) {
+    // Square root keeps points evenly distributed over the ring area instead
+    // of clustering near the center.
+    const distanceMiles = Math.sqrt(
+      Math.random() *
+        (FALLBACK_MAX_DISTANCE_MILES ** 2 - FALLBACK_MIN_DISTANCE_MILES ** 2) +
+        FALLBACK_MIN_DISTANCE_MILES ** 2,
+    );
+    const angularDistance = distanceMiles / EARTH_RADIUS_MILES;
+    const bearing = Math.random() * 2 * Math.PI;
+
+    const latitude = Math.asin(
+      Math.sin(originLatitude) * Math.cos(angularDistance) +
+        Math.cos(originLatitude) *
+          Math.sin(angularDistance) *
+          Math.cos(bearing),
+    );
+    const longitude =
+      originLongitude +
+      Math.atan2(
+        Math.sin(bearing) *
+          Math.sin(angularDistance) *
+          Math.cos(originLatitude),
+        Math.cos(angularDistance) - Math.sin(originLatitude) * Math.sin(latitude),
+      );
+
+    result.push({
+      latitude: toDeg(latitude),
+      longitude: ((toDeg(longitude) + 540) % 360) - 180,
+    });
   }
+
   return result;
 }
 
@@ -230,13 +280,13 @@ const UNIQUE_KEY_PRECISION = 4;
 
 function coordinateKey(coord: { longitude: number; latitude: number }) {
   return `${coord.latitude.toFixed(UNIQUE_KEY_PRECISION)},${coord.longitude.toFixed(
-    UNIQUE_KEY_PRECISION
+    UNIQUE_KEY_PRECISION,
   )}`;
 }
 
 function applyJitter(
   coord: { longitude: number; latitude: number },
-  amountDegrees: number
+  amountDegrees: number,
 ) {
   return {
     latitude: coord.latitude + (Math.random() - 0.5) * 2 * amountDegrees,
@@ -305,7 +355,8 @@ export async function POST(req: NextRequest) {
     let body: Record<string, unknown> = {};
     try {
       const parsed = await req.json();
-      if (parsed && typeof parsed === 'object') body = parsed as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object')
+        body = parsed as Record<string, unknown>;
     } catch {
       body = {};
     }
@@ -321,8 +372,11 @@ export async function POST(req: NextRequest) {
         bodyKeys: Object.keys(body),
       });
       return NextResponse.json(
-        { error: 'Invalid request body: longitude and latitude are required numbers.' },
-        { status: 400 }
+        {
+          error:
+            'Invalid request body: longitude and latitude are required numbers.',
+        },
+        { status: 400 },
       );
     }
 
@@ -336,7 +390,9 @@ export async function POST(req: NextRequest) {
       count: allCards.length,
     });
     if (allCards.length === 0) {
-      console.info('[find-nearby-people] returning empty because no matching candidates');
+      console.info(
+        '[find-nearby-people] returning empty because no matching candidates',
+      );
       return NextResponse.json([]);
     }
 
@@ -344,7 +400,9 @@ export async function POST(req: NextRequest) {
     // matching the Swift `buildNearbyFromProfiles(...)` implementation.
     const maxCount = Math.min(20, allCards.length);
     const count = Math.max(1, Math.floor(Math.random() * maxCount) + 1);
-    const selected = [...allCards].sort(() => Math.random() - 0.5).slice(0, count);
+    const selected = [...allCards]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, count);
     console.info('[find-nearby-people] selected random slice of candidates', {
       total: allCards.length,
       selected: selected.length,
@@ -361,12 +419,21 @@ export async function POST(req: NextRequest) {
     const finalCoordinates =
       poiCoordinates.length > 0
         ? poiCoordinates
-        : gridCoordinates({ longitude, latitude, count: selected.length });
+        : randomFallbackCoordinates({
+            longitude,
+            latitude,
+            count: selected.length,
+          });
 
     if (poiCoordinates.length === 0) {
-      console.warn('[find-nearby-people] using grid fallback because mapbox returned none', {
-        fallbackCount: finalCoordinates.length,
-      });
+      console.warn(
+        '[find-nearby-people] using random fallback because mapbox returned none',
+        {
+          fallbackCount: finalCoordinates.length,
+          minDistanceMiles: FALLBACK_MIN_DISTANCE_MILES,
+          maxDistanceMiles: FALLBACK_MAX_DISTANCE_MILES,
+        },
+      );
     }
     console.info('[find-nearby-people] poi coordinates fetched', {
       mapboxCount: poiCoordinates.length,
@@ -384,13 +451,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(payload);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal Server Error';
+    const message =
+      err instanceof Error ? err.message : 'Internal Server Error';
     console.error('[find-nearby-people] request failed', {
       error: message,
     });
     return NextResponse.json(
       { error: message },
-      { status: message === 'Missing Authorization header' ? 401 : 500 }
+      { status: message === 'Missing Authorization header' ? 401 : 500 },
     );
   }
 }
