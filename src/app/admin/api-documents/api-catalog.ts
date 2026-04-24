@@ -1,11 +1,11 @@
-export type ApiParamLocation = 'path' | 'query' | 'header';
+export type ApiParamLocation = 'path' | 'query' | 'header' | 'body';
 
 export type ApiParam = {
   name: string;
   in: ApiParamLocation;
   required?: boolean;
   description?: string;
-  example?: string;
+  example?: unknown;
 };
 
 export type ApiEndpointDoc = {
