@@ -634,6 +634,53 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     ],
   },
   {
+    id: 'ios.nearby.people.find',
+    audience: 'ios',
+    method: 'POST',
+    path: '/api/ios/find-nearby-people',
+    summary: 'Find nearby people + POIs',
+    description:
+      'Returns unmatched candidate profiles for the authenticated user and pairs each profile with a nearby real-world POI coordinate from Mapbox search around the provided location.',
+    auth: { type: 'bearer' },
+    baseUrlOverride: APP_URL,
+    defaultHeaders: nextApiHeaders,
+    params: [
+      {
+        name: 'longitude',
+        in: 'body',
+        required: true,
+        description: 'User longitude used as Mapbox search proximity origin.',
+        example: 139.6917,
+      },
+      {
+        name: 'latitude',
+        in: 'body',
+        required: true,
+        description: 'User latitude used as Mapbox search proximity origin.',
+        example: 35.6895,
+      },
+    ],
+    requestExample: {
+      longitude: 139.6917,
+      latitude: 35.6895,
+    },
+    responseExample: [
+      {
+        userId: '<candidate_uuid>',
+        avatar: 'https://example.com/avatar.jpg',
+        username: 'Alice',
+        age: 28,
+        gender: 'Female',
+        bio: 'Hello',
+        profession: 'Designer',
+        postImages: ['https://example.com/p1.jpg'],
+        longitude: 139.7001,
+        latitude: 35.6922,
+        distanceMiles: 0.53,
+      },
+    ],
+  },
+  {
     id: 'ios.storage.avatar.note',
     audience: 'ios',
     method: 'POST',
