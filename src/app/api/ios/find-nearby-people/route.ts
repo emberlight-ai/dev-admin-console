@@ -40,6 +40,8 @@ const MIN_POI_DISTANCE_MILES = 0.5;
 const EARTH_RADIUS_MILES = 3958.7613;
 const FALLBACK_MIN_DISTANCE_MILES = 1;
 const FALLBACK_MAX_DISTANCE_MILES = 10;
+const NEARBY_COUNT_MEAN = 7;
+const NEARBY_COUNT_VARIANCE = 3;
 
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
@@ -64,6 +66,22 @@ function parseCoordinate(value: unknown): number | null {
         : NaN;
   if (!Number.isFinite(num)) return null;
   return num;
+}
+
+function randomNormal(mean: number, variance: number) {
+  const stdDev = Math.sqrt(variance);
+  const u1 = Math.max(Number.EPSILON, Math.random());
+  const u2 = Math.random();
+  const standardNormal =
+    Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  return mean + standardNormal * stdDev;
+}
+
+function randomNearbyCount(maxCount: number) {
+  const sampledCount = Math.round(
+    randomNormal(NEARBY_COUNT_MEAN, NEARBY_COUNT_VARIANCE),
+  );
+  return Math.min(maxCount, Math.max(1, sampledCount));
 }
 
 // Rounds to 3 decimals (~111m) to avoid stacking pins, matching the Swift impl.
@@ -396,16 +414,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json([]);
     }
 
-    // 2. Pick a random slice (1..min(20, cards.length)) of candidates,
-    // matching the Swift `buildNearbyFromProfiles(...)` implementation.
+    // 2. Pick a random slice of candidates, centered around 7 people.
     const maxCount = Math.min(20, allCards.length);
-    const count = Math.max(1, Math.floor(Math.random() * maxCount) + 1);
+    const count = randomNearbyCount(maxCount);
     const selected = [...allCards]
       .sort(() => Math.random() - 0.5)
       .slice(0, count);
     console.info('[find-nearby-people] selected random slice of candidates', {
       total: allCards.length,
       selected: selected.length,
+      mean: NEARBY_COUNT_MEAN,
+      variance: NEARBY_COUNT_VARIANCE,
     });
 
     // 3. Fetch real-world POI coordinates near the user.
