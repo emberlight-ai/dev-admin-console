@@ -68,6 +68,12 @@ function parseCoordinate(value: unknown): number | null {
   return num;
 }
 
+function parseOptionalString(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function randomNormal(mean: number, variance: number) {
   const stdDev = Math.sqrt(variance);
   const u1 = Math.max(Number.EPSILON, Math.random());
@@ -381,9 +387,11 @@ export async function POST(req: NextRequest) {
 
     const longitude = parseCoordinate(body.longitude);
     const latitude = parseCoordinate(body.latitude);
+    const genderFilter = parseOptionalString(body.gender_filter);
     console.info('[find-nearby-people] parsed request body', {
       longitude,
       latitude,
+      genderFilter,
     });
     if (longitude === null || latitude === null) {
       console.warn('[find-nearby-people] invalid request body', {
@@ -402,10 +410,18 @@ export async function POST(req: NextRequest) {
     const allCards = await buildMatchingsFeed({
       supabase,
       viewerUserId: authData.user.id,
-      body: { visitedUserIds: [], count: 20, imageCount: 7 },
+      body: {
+        visitedUserIds: [],
+        count: 50,
+        image_count: 7,
+        gender_filter: genderFilter,
+        digitalHumansOnly: true,
+      },
     });
     console.info('[find-nearby-people] matchings fetched', {
       count: allCards.length,
+      genderFilter,
+      digitalHumansOnly: true,
     });
     if (allCards.length === 0) {
       console.info(

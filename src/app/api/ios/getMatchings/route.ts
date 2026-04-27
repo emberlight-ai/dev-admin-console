@@ -3,6 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 
 import { buildMatchingsFeed } from '@/app/api/ios/getMatchings/_shared';
 
+type MatchingsRequestBody = {
+  count?: unknown;
+  image_count?: unknown;
+  gender_filter?: unknown;
+};
+
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
@@ -33,10 +39,16 @@ export async function POST(req: NextRequest) {
       body = {};
     }
 
+    const requestBody = (body && typeof body === 'object' ? body : {}) as MatchingsRequestBody;
+
     const cards = await buildMatchingsFeed({
       supabase,
       viewerUserId: authData.user.id,
-      body: (body && typeof body === 'object' ? body : {}) as Record<string, unknown>,
+      body: {
+        count: requestBody.count,
+        image_count: requestBody.image_count,
+        gender_filter: requestBody.gender_filter,
+      },
     });
 
     return NextResponse.json(cards);

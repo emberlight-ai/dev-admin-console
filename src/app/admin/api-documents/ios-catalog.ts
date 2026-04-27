@@ -608,14 +608,14 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     path: '/api/ios/getMatchings',
     summary: 'Get matchings feed (swipe cards)',
     description:
-      'Returns a swipe-card-ready list of candidate users for the authenticated user (userid derived from JWT). Avatar is used as the first image; postImages are taken from the user_posts photos arrays in order until imageCount is reached.',
+      'Returns a swipe-card-ready list of candidate users for the authenticated user (userid derived from JWT). Avatar is used as the first image; postImages are taken from the user_posts photos arrays in order until image_count is reached. When gender_filter is provided, only users with that exact gender value are returned; leave it empty to use the default matching logic.',
     auth: { type: 'bearer' },
     baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
     requestExample: {
-      visitedUserIds: [],
       count: 20,
-      imageCount: 7,
+      image_count: 7,
+      gender_filter: 'Female',
     },
     responseExample: [
       {
@@ -640,7 +640,7 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
     path: '/api/ios/find-nearby-people',
     summary: 'Find nearby people + POIs',
     description:
-      'Returns unmatched candidate profiles for the authenticated user and pairs each profile with a nearby real-world POI coordinate from Mapbox search around the provided location.',
+      'Returns unmatched digital-human candidate profiles for the authenticated user and pairs each profile with a nearby real-world POI coordinate from Mapbox search around the provided location. When gender_filter is provided, only users with that exact gender value are returned; leave it empty to use the default nearby logic.',
     auth: { type: 'bearer' },
     baseUrlOverride: APP_URL,
     defaultHeaders: nextApiHeaders,
@@ -659,10 +659,18 @@ export const iosApiCatalog: ApiEndpointDoc[] = [
         description: 'User latitude used as Mapbox search proximity origin.',
         example: 35.6895,
       },
+      {
+        name: 'gender_filter',
+        in: 'body',
+        required: false,
+        description: 'Optional exact gender filter, for example "Female" or "Male". Empty or omitted means no gender filter.',
+        example: 'Female',
+      },
     ],
     requestExample: {
       longitude: 139.6917,
       latitude: 35.6895,
+      gender_filter: 'Female',
     },
     responseExample: [
       {

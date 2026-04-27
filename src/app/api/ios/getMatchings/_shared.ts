@@ -3,7 +3,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 type Body = {
   visitedUserIds?: unknown;
   count?: unknown;
+  image_count?: unknown;
   imageCount?: unknown;
+  gender_filter?: unknown;
+  digitalHumansOnly?: unknown;
 };
 
 type Candidate = {
@@ -40,14 +43,10 @@ function clampInt(v: unknown, def: number, min: number, max: number) {
   return Math.min(Math.max(Math.trunc(n), min), max);
 }
 
-function toPostgrestInList(values: string[]) {
-  // PostgREST expects "(a,b,c)" without quotes for uuid/text values.
-  // Note: values are not user-entered (UUIDs), but we still strip any parens/commas just in case.
-  const cleaned = values
-    .map((v) => v.trim())
-    .filter(Boolean)
-    .map((v) => v.replace(/[(),]/g, ''));
-  return `(${cleaned.join(',')})`;
+function optionalString(v: unknown) {
+  if (typeof v !== 'string') return null;
+  const trimmed = v.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 export async function buildMatchingsFeed(opts: {
@@ -58,22 +57,26 @@ export async function buildMatchingsFeed(opts: {
   const { supabase, viewerUserId, body } = opts;
   const visitedUserIds = asStringArray(body.visitedUserIds);
   const count = clampInt(body.count, 20, 1, 50);
-  const imageCount = clampInt(body.imageCount, 7, 1, 20);
-
-  const exclude = Array.from(new Set([viewerUserId, ...visitedUserIds]));
+  const imageCount = clampInt(body.image_count ?? body.imageCount, 7, 1, 20);
+  const genderFilter = optionalString(body.gender_filter);
+  const digitalHumansOnly = body.digitalHumansOnly === true;
+  const rpcLimitCount = genderFilter || digitalHumansOnly ? 50 : count;
 
   const { data: users, error: usersErr } = await supabase.rpc(
     'rpc_get_matching_candidates',
     {
       viewer_user_id: viewerUserId,
       visited_user_ids: visitedUserIds,
-      limit_count: count,
+      limit_count: rpcLimitCount,
     }
   );
 
   if (usersErr) throw new Error(usersErr.message);
 
-  const candidates = (users as Candidate[]).slice(0, count);
+  const candidates = (users as Candidate[])
+    .filter((user) => !digitalHumansOnly || user.is_digital_human === true)
+    .filter((user) => !genderFilter || user.gender === genderFilter)
+    .slice(0, count);
 
   const cards: MatchingsCard[] = [];
   for (const u of candidates) {
