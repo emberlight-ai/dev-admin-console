@@ -5,6 +5,7 @@ type RouteHandler<TArgs extends [NextRequest, ...unknown[]]> = (
 ) => Response | Promise<Response>;
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD']);
+const BODYLESS_STATUSES = new Set([204, 304]);
 
 function serializeFormValue(value: FormDataEntryValue) {
   if (value instanceof File) {
@@ -69,6 +70,37 @@ async function readBodyForLog(request: NextRequest): Promise<unknown> {
   }
 }
 
+async function readResponseForLog(response: Response): Promise<unknown> {
+  if (BODYLESS_STATUSES.has(response.status) || !response.body) {
+    return null;
+  }
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+  const clone = response.clone();
+
+  try {
+    if (contentType.includes('application/json') || contentType.includes('+json')) {
+      return await clone.json();
+    }
+
+    if (contentType.startsWith('text/')) {
+      const text = await clone.text();
+      return text.length > 0 ? text : null;
+    }
+
+    return {
+      unlogged: true,
+      reason: 'non-text response body',
+      contentType: contentType || null,
+    };
+  } catch (error) {
+    return {
+      unreadable: true,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export function withLogging<TArgs extends [NextRequest, ...unknown[]]>(
   handler: RouteHandler<TArgs>
 ) {
@@ -79,6 +111,14 @@ export function withLogging<TArgs extends [NextRequest, ...unknown[]]>(
 
     console.log(`[API request] ${request.method} ${url.pathname}`, body);
 
-    return handler(...args);
+    const response = await handler(...args);
+    const responseBody = await readResponseForLog(response);
+
+    console.log(
+      `[API response] ${request.method} ${url.pathname} ${response.status}`,
+      responseBody
+    );
+
+    return response;
   };
 }
