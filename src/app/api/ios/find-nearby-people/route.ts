@@ -411,7 +411,6 @@ export async function POST(req: NextRequest) {
       supabase,
       viewerUserId: authData.user.id,
       body: {
-        visitedUserIds: [],
         count: 50,
         image_count: 7,
         gender_filter: genderFilter,

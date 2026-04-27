@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Body = {
-  visitedUserIds?: unknown;
   count?: unknown;
   image_count?: unknown;
   imageCount?: unknown;
@@ -32,11 +31,6 @@ export type MatchingsCard = {
   postImages: string[];
 };
 
-function asStringArray(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return v.filter((x): x is string => typeof x === 'string' && x.length > 0);
-}
-
 function clampInt(v: unknown, def: number, min: number, max: number) {
   const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
   if (!Number.isFinite(n)) return def;
@@ -55,28 +49,24 @@ export async function buildMatchingsFeed(opts: {
   body: Body;
 }): Promise<MatchingsCard[]> {
   const { supabase, viewerUserId, body } = opts;
-  const visitedUserIds = asStringArray(body.visitedUserIds);
   const count = clampInt(body.count, 20, 1, 50);
   const imageCount = clampInt(body.image_count ?? body.imageCount, 7, 1, 20);
   const genderFilter = optionalString(body.gender_filter);
   const digitalHumansOnly = body.digitalHumansOnly === true;
-  const rpcLimitCount = genderFilter || digitalHumansOnly ? 50 : count;
 
   const { data: users, error: usersErr } = await supabase.rpc(
     'rpc_get_matching_candidates',
     {
       viewer_user_id: viewerUserId,
-      visited_user_ids: visitedUserIds,
-      limit_count: rpcLimitCount,
+      limit_count: count,
+      gender_filter: genderFilter,
+      digital_humans_only: digitalHumansOnly,
     }
   );
 
   if (usersErr) throw new Error(usersErr.message);
 
-  const candidates = (users as Candidate[])
-    .filter((user) => !digitalHumansOnly || user.is_digital_human === true)
-    .filter((user) => !genderFilter || user.gender === genderFilter)
-    .slice(0, count);
+  const candidates = (users as Candidate[]).slice(0, count);
 
   const cards: MatchingsCard[] = [];
   for (const u of candidates) {

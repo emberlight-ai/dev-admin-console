@@ -285,8 +285,9 @@ $$;
 -- RPC: Get matching candidates (filtering enabled digital humans)
 create or replace function public.rpc_get_matching_candidates(
   viewer_user_id uuid,
-  visited_user_ids uuid[],
-  limit_count integer
+  limit_count integer,
+  gender_filter text default null,
+  digital_humans_only boolean default false
 )
 returns setof public.users
 language sql
@@ -304,7 +305,8 @@ as $$
   ) sp_config on true
   where u.deleted_at is null
     and u.userid <> viewer_user_id
-    and (visited_user_ids is null or not (u.userid = any(visited_user_ids)))
+    and (nullif(btrim(gender_filter), '') is null or u.gender = btrim(gender_filter))
+    and (not digital_humans_only or coalesce(u.is_digital_human, false) = true)
     and not exists (
       select 1
       from public.blocks b
