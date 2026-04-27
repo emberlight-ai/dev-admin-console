@@ -22,7 +22,6 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -55,6 +54,10 @@ type WorkflowNodeData = Record<string, unknown> & {
   onOpenSettings?: () => void
 }
 type WorkflowGraphNode = Node<WorkflowNodeData>
+type PendingNavigation =
+  | { type: "back" }
+  | { type: "cancel" }
+  | { type: "href"; href: string }
 
 function WorkflowNode({ data }: NodeProps<WorkflowGraphNode>) {
   const onSettings = data.onOpenSettings
@@ -148,6 +151,39 @@ export function SystemPromptForm({
   const [settingsNodeId, setSettingsNodeId] = React.useState<
     "identity" | "matching" | "greeting" | "reply" | "followup" | null
   >(null)
+  const [pendingNavigation, setPendingNavigation] = React.useState<PendingNavigation | null>(null)
+  const allowNavigationRef = React.useRef(false)
+
+  const currentSnapshot = React.useCallback(
+    (): PromptSnapshot => ({
+      gender: gender.trim(),
+      personality: personality.trim(),
+      systemPrompt,
+      responseDelay,
+      matchingEnabled,
+      immediateMatchEnabled,
+      followUpEnabled,
+      followUpPrompt,
+      followUpDelay,
+      maxFollowUps,
+      activeGreetingEnabled,
+      activeGreetingPrompt,
+    }),
+    [
+      activeGreetingEnabled,
+      activeGreetingPrompt,
+      followUpDelay,
+      followUpEnabled,
+      followUpPrompt,
+      gender,
+      immediateMatchEnabled,
+      matchingEnabled,
+      maxFollowUps,
+      personality,
+      responseDelay,
+      systemPrompt,
+    ]
+  )
 
   const openSettings = React.useCallback(
     (id: "identity" | "matching" | "greeting" | "reply" | "followup") => {
@@ -190,72 +226,101 @@ export function SystemPromptForm({
   React.useEffect(() => {
     if (loading) return
     if (initialSnapshot) return
-    setInitialSnapshot({
-      gender: gender.trim(),
-      personality: personality.trim(),
-      systemPrompt,
-      responseDelay,
-      matchingEnabled,
-      immediateMatchEnabled,
-      followUpEnabled,
-      followUpPrompt,
-      followUpDelay,
-      maxFollowUps,
-      activeGreetingEnabled,
-      activeGreetingPrompt,
-    })
+    setInitialSnapshot(currentSnapshot())
   }, [
-    activeGreetingEnabled,
-    activeGreetingPrompt,
-    followUpDelay,
-    followUpEnabled,
-    followUpPrompt,
-    gender,
-    immediateMatchEnabled,
     initialSnapshot,
     loading,
-    matchingEnabled,
-    maxFollowUps,
-    personality,
-    responseDelay,
-    systemPrompt,
+    currentSnapshot,
   ])
 
   const isDirty = React.useMemo(() => {
     if (!initialSnapshot) return false
-    const curr: PromptSnapshot = {
-      gender: gender.trim(),
-      personality: personality.trim(),
-      systemPrompt,
-      responseDelay,
-      matchingEnabled,
-      immediateMatchEnabled,
-      followUpEnabled,
-      followUpPrompt,
-      followUpDelay,
-      maxFollowUps,
-      activeGreetingEnabled,
-      activeGreetingPrompt,
-    }
+    const curr = currentSnapshot()
     return Object.keys(curr).some((k) => {
       const key = k as keyof PromptSnapshot
       return curr[key] !== initialSnapshot[key]
     })
-  }, [
-    activeGreetingEnabled,
-    activeGreetingPrompt,
-    followUpDelay,
-    followUpEnabled,
-    followUpPrompt,
-    gender,
-    immediateMatchEnabled,
-    initialSnapshot,
-    matchingEnabled,
-    maxFollowUps,
-    personality,
-    responseDelay,
-    systemPrompt,
-  ])
+  }, [currentSnapshot, initialSnapshot])
+
+  const performNavigation = React.useCallback(
+    (navigation: PendingNavigation) => {
+      allowNavigationRef.current = true
+
+      if (navigation.type === "href") {
+        const targetUrl = new URL(navigation.href, window.location.href)
+        if (targetUrl.origin === window.location.origin) {
+          router.push(`${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`)
+        } else {
+          window.location.href = targetUrl.href
+        }
+        return
+      }
+
+      if (navigation.type === "cancel" && variant !== "page") {
+        onCancel?.()
+        return
+      }
+
+      router.back()
+    },
+    [onCancel, router, variant]
+  )
+
+  const requestNavigation = React.useCallback(
+    (navigation: PendingNavigation) => {
+      if (saving) return
+      if (isDirty) {
+        setPendingNavigation(navigation)
+        return
+      }
+      performNavigation(navigation)
+    },
+    [isDirty, performNavigation, saving]
+  )
+
+  React.useEffect(() => {
+    if (!isDirty) return
+
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (allowNavigationRef.current) return
+      event.preventDefault()
+      event.returnValue = ""
+    }
+
+    window.addEventListener("beforeunload", onBeforeUnload)
+    return () => window.removeEventListener("beforeunload", onBeforeUnload)
+  }, [isDirty])
+
+  React.useEffect(() => {
+    if (!isDirty) return
+
+    const onDocumentClick = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return
+      }
+
+      const target = event.target instanceof Element ? event.target.closest("a[href]") : null
+      if (!target) return
+
+      const href = target.getAttribute("href")
+      if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) {
+        return
+      }
+
+      event.preventDefault()
+      requestNavigation({ type: "href", href })
+    }
+
+    document.addEventListener("click", onDocumentClick, true)
+    return () => document.removeEventListener("click", onDocumentClick, true)
+  }, [isDirty, requestNavigation])
 
   const testSystemPrompt = React.useMemo(() => {
     if (!systemPrompt) return ""
@@ -272,7 +337,7 @@ export function SystemPromptForm({
     )
   }, [systemPrompt, gender, personality])
 
-  const save = async () => {
+  const save = async ({ navigateAfterSave = true } = {}): Promise<boolean> => {
     const g = gender.trim()
     const p = personality.trim()
     const sp = systemPrompt
@@ -286,21 +351,39 @@ export function SystemPromptForm({
     const age = Boolean(activeGreetingEnabled)
     const agp = activeGreetingPrompt
 
-    if (!g) return toast.error("Gender is required")
-    if (!p) return toast.error("Personality is required")
-    if (!sp.trim()) return toast.error("System prompt is required")
+    if (!g) {
+      toast.error("Gender is required")
+      return false
+    }
+    if (!p) {
+      toast.error("Personality is required")
+      return false
+    }
+    if (!sp.trim()) {
+      toast.error("System prompt is required")
+      return false
+    }
     if (!PLACEHOLDER_RE.test(sp)) {
-      return toast.error("Prompt must include: <bot_profile> BOT_PROFILE_DETAILS </bot_profile>")
+      toast.error("Prompt must include: <bot_profile> BOT_PROFILE_DETAILS </bot_profile>")
+      return false
     }
     if (isNaN(rd) || rd < 0 || rd > 86400) {
-      return toast.error("Response delay must be between 0 and 86400 seconds")
+      toast.error("Response delay must be between 0 and 86400 seconds")
+      return false
     }
     if (age && !agp.trim()) {
-      return toast.error("Greeting prompt is required when active greeting is enabled")
+      toast.error("Greeting prompt is required when active greeting is enabled")
+      return false
     }
     if (fued) {
-      if (!fup.trim()) return toast.error("Follow-up prompt is required when enabled")
-      if (isNaN(fud) || fud <= 0) return toast.error("Follow-up delay must be positive")
+      if (!fup.trim()) {
+        toast.error("Follow-up prompt is required when enabled")
+        return false
+      }
+      if (isNaN(fud) || fud <= 0) {
+        toast.error("Follow-up delay must be positive")
+        return false
+      }
     }
 
     setSaving(true)
@@ -325,18 +408,47 @@ export function SystemPromptForm({
       })
       const json = (await res.json()) as { data?: unknown; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to save prompt")
+      setInitialSnapshot(currentSnapshot())
       toast.success(isEdit ? "New prompt version created" : "Prompt created")
-      if (variant === "page") {
+      if (navigateAfterSave && variant === "page") {
         router.push("/admin/system-prompts")
-      } else {
+      } else if (navigateAfterSave) {
         onSaved?.()
       }
+      return true
     } catch (err: unknown) {
       console.error(err)
       toast.error(err instanceof Error ? err.message : "Failed to save prompt")
+      return false
     } finally {
       setSaving(false)
     }
+  }
+
+  const closeSettingsAfterSave = async () => {
+    if (saving) return
+    if (isDirty) {
+      const saved = await save({ navigateAfterSave: false })
+      if (!saved) return
+    }
+    setSettingsOpen(false)
+    setSettingsNodeId(null)
+  }
+
+  const saveAndContinueNavigation = async () => {
+    if (!pendingNavigation) return
+    const navigation = pendingNavigation
+    const saved = await save({ navigateAfterSave: false })
+    if (!saved) return
+    setPendingNavigation(null)
+    performNavigation(navigation)
+  }
+
+  const leaveWithoutSaving = () => {
+    if (!pendingNavigation) return
+    const navigation = pendingNavigation
+    setPendingNavigation(null)
+    performNavigation(navigation)
   }
 
   const nodeTypes = React.useMemo<NodeTypes>(() => {
@@ -509,7 +621,7 @@ export function SystemPromptForm({
       {variant === "page" ? (
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => router.back()}>
+            <Button variant="ghost" size="icon" onClick={() => requestNavigation({ type: "back" })}>
               <ChevronLeft className="w-5 h-5" />
             </Button>
             <div>
@@ -533,14 +645,13 @@ export function SystemPromptForm({
             <Button
               variant="outline"
               onClick={() => {
-                if (variant === "page") router.back()
-                else onCancel?.()
+                requestNavigation({ type: "cancel" })
               }}
               disabled={saving}
             >
               Cancel
             </Button>
-            <Button onClick={save} disabled={saving || loading || !isDirty}>
+            <Button onClick={() => void save()} disabled={saving || loading || !isDirty}>
               {saving ? "Saving..." : "Save Changes"}
             </Button>
           </div>
@@ -612,12 +723,12 @@ export function SystemPromptForm({
         <div className="flex items-center justify-end gap-3 pt-2">
           <Button
             variant="outline"
-            onClick={() => onCancel?.()}
+            onClick={() => requestNavigation({ type: "cancel" })}
             disabled={saving}
           >
             Cancel
           </Button>
-          <Button onClick={save} disabled={saving || loading || !isDirty}>
+          <Button onClick={() => void save()} disabled={saving || loading || !isDirty}>
             {saving ? "Saving..." : "Save Changes"}
           </Button>
         </div>
@@ -626,8 +737,11 @@ export function SystemPromptForm({
       <Dialog
         open={settingsOpen}
         onOpenChange={(open) => {
-          setSettingsOpen(open)
-          if (!open) setSettingsNodeId(null)
+          if (open) {
+            setSettingsOpen(true)
+            return
+          }
+          void closeSettingsAfterSave()
         }}
       >
         <DialogContent className="max-w-3xl p-0">
@@ -819,11 +933,51 @@ export function SystemPromptForm({
             ) : null}
 
             <DialogFooter className="pt-6">
-              <DialogClose asChild>
-                <Button>Done</Button>
-              </DialogClose>
+              <Button onClick={() => void closeSettingsAfterSave()} disabled={saving}>
+                {saving ? "Saving..." : isDirty ? "Save & Done" : "Done"}
+              </Button>
             </DialogFooter>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={pendingNavigation !== null} onOpenChange={(open) => {
+        if (!open && !saving) setPendingNavigation(null)
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save prompt changes?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p>
+              You have unsaved prompt changes. Save them before leaving, discard them, or keep editing.
+            </p>
+            <p>
+              Refreshing or closing the tab will also show a browser warning while changes are unsaved.
+            </p>
+          </div>
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setPendingNavigation(null)}
+              disabled={saving}
+            >
+              Keep Editing
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={leaveWithoutSaving}
+              disabled={saving}
+            >
+              Leave Without Saving
+            </Button>
+            <Button
+              onClick={() => void saveAndContinueNavigation()}
+              disabled={saving}
+            >
+              {saving ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
