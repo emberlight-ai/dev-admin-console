@@ -5,6 +5,7 @@ import {
   buildMatchingsFeed,
   type MatchingsCard,
 } from '@/app/api/ios/getMatchings/_shared';
+import { withLogging } from '@/lib/with-logging';
 
 type NearbyPersonResponse = {
   userId: string;
@@ -361,7 +362,7 @@ function pairPeopleWithCoordinates(params: {
     .sort((a, b) => a.distanceMiles - b.distanceMiles);
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     console.info('[find-nearby-people] request start');
     const supabase = getUserSupabase(req);
@@ -496,3 +497,5 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+export const POST = withLogging(handlePOST);

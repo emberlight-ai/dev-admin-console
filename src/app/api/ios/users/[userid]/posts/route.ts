@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { withLogging } from '@/lib/with-logging';
 
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
@@ -15,7 +16,7 @@ const getUserSupabase = (req: NextRequest) => {
   );
 };
 
-export async function GET(
+async function handleGET(
   req: NextRequest,
   { params }: { params: Promise<{ userid: string }> }
 ) {
@@ -49,4 +50,6 @@ export async function GET(
     );
   }
 }
+
+export const GET = withLogging(handleGET);
 

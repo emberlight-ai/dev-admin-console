@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { withLogging } from "@/lib/with-logging";
 
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get("Authorization") || req.headers.get("authorization");
@@ -15,7 +16,7 @@ const getUserSupabase = (req: NextRequest) => {
   );
 };
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     const authHeader = req.headers.get("authorization") || req.headers.get("Authorization");
     if (!authHeader) {
@@ -56,11 +57,14 @@ export async function POST(req: NextRequest) {
     // Usually rpc_send_message returns a single message object when executed.
     // If you return the raw `data`, it should be the message.
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Chat Send Error:", error);
+    const message = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
+      { error: message },
       { status: 500 }
     );
   }
 }
+
+export const POST = withLogging(handlePOST);

@@ -10,6 +10,7 @@ import {
   type ActiveSubscriptionRow,
   type SubscriptionCatalogRow,
 } from '@/lib/subscription-entitlement';
+import { withLogging } from '@/lib/with-logging';
 
 export const runtime = 'nodejs';
 
@@ -31,7 +32,7 @@ function pickActiveSubscription(rows: ActiveSubscriptionRow[]): ActiveSubscripti
 /**
  * GET — remaining swipes/messages and active subscription summary (see docs/subscription-design.md §2.A).
  */
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   try {
     const supabase = getUserSupabase(req);
     const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -127,3 +128,5 @@ export async function GET(req: NextRequest) {
     return jsonError(message, message === 'Missing Authorization header' ? 401 : 500);
   }
 }
+
+export const GET = withLogging(handleGET);

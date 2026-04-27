@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { withLogging } from '@/lib/with-logging';
 
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
@@ -15,7 +16,7 @@ const getUserSupabase = (req: NextRequest) => {
   );
 };
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     const supabase = getUserSupabase(req);
     const body = await req.json();
@@ -56,4 +57,6 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+export const POST = withLogging(handlePOST);
 

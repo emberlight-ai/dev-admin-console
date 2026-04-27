@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserSupabase, jsonError } from '@/lib/ios-user-supabase';
+import { withLogging } from '@/lib/with-logging';
 
 export const runtime = 'nodejs';
 
@@ -8,7 +9,7 @@ export const runtime = 'nodejs';
  * Query: `subscription_id` optional; when omitted, returns the most recently updated row for the user
  * among CREATED, PURCHASING, ACTIVE, EXPIRED.
  */
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   try {
     const supabase = getUserSupabase(req);
     const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -81,3 +82,5 @@ export async function GET(req: NextRequest) {
     return jsonError(message, message === 'Missing Authorization header' ? 401 : 500);
   }
 }
+
+export const GET = withLogging(handleGET);

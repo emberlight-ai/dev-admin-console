@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 import { buildMatchingsFeed } from '@/app/api/ios/getMatchings/_shared';
+import { withLogging } from '@/lib/with-logging';
 
 type MatchingsRequestBody = {
   count?: unknown;
@@ -23,7 +24,7 @@ const getUserSupabase = (req: NextRequest) => {
   );
 };
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     const supabase = getUserSupabase(req);
 
@@ -62,3 +63,4 @@ export async function POST(req: NextRequest) {
 }
 
 
+export const POST = withLogging(handlePOST);

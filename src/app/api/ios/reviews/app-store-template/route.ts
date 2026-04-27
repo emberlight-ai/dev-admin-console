@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { generateGeminiContent } from '@/lib/gemini';
+import { withLogging } from '@/lib/with-logging';
 
 export const runtime = 'nodejs';
 // Never cache — every call must return a different review.
@@ -167,7 +168,8 @@ function tryParseReview(text: string): ReviewShape | null {
  * Every call produces a different compliment because the underlying prompt
  * is assembled from randomly sampled theme/tone/length/persona + a random seed.
  */
-export async function GET() {
+async function handleGET(request: NextRequest) {
+  void request;
   const prompt = buildPrompt();
 
   try {
@@ -212,3 +214,5 @@ export async function GET() {
     }
   );
 }
+
+export const GET = withLogging(handleGET);

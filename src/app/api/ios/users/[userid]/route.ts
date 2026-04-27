@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { withLogging } from '@/lib/with-logging';
 
 function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -48,7 +49,7 @@ function unknownUser(userid: string) {
   };
 }
 
-export async function GET(
+async function handleGET(
   req: NextRequest,
   { params }: { params: Promise<{ userid: string }> }
 ) {
@@ -97,7 +98,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   req: NextRequest,
   { params }: { params: Promise<{ userid: string }> }
 ) {
@@ -129,3 +130,6 @@ export async function PATCH(
     );
   }
 }
+
+export const GET = withLogging(handleGET);
+export const PATCH = withLogging(handlePATCH);

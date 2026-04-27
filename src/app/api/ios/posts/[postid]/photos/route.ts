@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { withLogging } from '@/lib/with-logging';
 
 // We need a Service Role client to write to the 'images' bucket if RLS is strict,
 // or we can use the user's token if the policy allows. 
@@ -34,7 +35,7 @@ function extFor(contentType: string) {
   return 'jpg';
 }
 
-export async function POST(
+async function handlePOST(
   req: NextRequest,
   { params }: { params: Promise<{ postid: string }> }
 ) {
@@ -129,3 +130,5 @@ export async function POST(
     added: newUrls 
   });
 }
+
+export const POST = withLogging(handlePOST);

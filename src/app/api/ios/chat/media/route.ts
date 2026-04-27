@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { withLogging } from "@/lib/with-logging";
 
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
@@ -15,7 +16,7 @@ const getUserSupabase = (req: NextRequest) => {
   );
 };
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     const supabase = getUserSupabase(req);
 
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest) {
     const path = matchId ? `${matchId}/${filename}` : `${filename}`;
 
     // 4. Upload to chat_media bucket
-    const { data: uploadData, error: uploadError } = await supabase.storage
+    const { error: uploadError } = await supabase.storage
       .from("chat_media")
       .upload(path, fileBuffer, {
         contentType: file.type || "image/jpeg",
@@ -79,3 +80,5 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+export const POST = withLogging(handlePOST);

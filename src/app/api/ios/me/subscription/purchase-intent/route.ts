@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserSupabase, jsonError } from '@/lib/ios-user-supabase';
 import { isFreeTierCatalogRow } from '@/lib/subscription-entitlement';
+import { withLogging } from '@/lib/with-logging';
 
 export const runtime = 'nodejs';
 
@@ -11,7 +12,7 @@ type Body = {
 /**
  * POST — create purchase intent (`subscription.status = CREATED`) (see docs/subscription-design.md §2.C).
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     const supabase = getUserSupabase(req);
     const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -65,3 +66,5 @@ export async function POST(req: NextRequest) {
     return jsonError(message, message === 'Missing Authorization header' ? 401 : 500);
   }
 }
+
+export const POST = withLogging(handlePOST);

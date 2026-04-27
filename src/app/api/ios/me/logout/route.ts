@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserSupabase } from '@/lib/ios-user-supabase';
+import { withLogging } from '@/lib/with-logging';
 
 export const runtime = 'nodejs';
 
@@ -12,7 +13,7 @@ function jsonError(message: string, status = 400) {
  * - Deletes the provided device push token for the authenticated user.
  * - Best-effort calls Supabase `auth.signOut()` (client should still clear local session).
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     const supabase = getUserSupabase(req);
 
@@ -57,4 +58,6 @@ export async function POST(req: NextRequest) {
     return jsonError(message, message === 'Missing Authorization header' ? 401 : 500);
   }
 }
+
+export const POST = withLogging(handlePOST);
 

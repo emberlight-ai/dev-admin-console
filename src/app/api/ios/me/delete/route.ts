@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import { supabaseAdmin } from '@/lib/supabase';
+import { withLogging } from '@/lib/with-logging';
 
 export const runtime = 'nodejs';
 
@@ -92,7 +93,7 @@ async function deleteUserImagesFolder(userId: string) {
   }
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     const supabase = getUserSupabase(req);
 
@@ -286,3 +287,5 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+export const POST = withLogging(handlePOST);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { getUserSupabase, jsonError } from '@/lib/ios-user-supabase';
+import { withLogging } from '@/lib/with-logging';
 
 export const runtime = 'nodejs';
 
@@ -8,7 +9,7 @@ export const runtime = 'nodejs';
  * POST — move subscription CREATED → PURCHASING when StoreKit flow starts (see docs/subscription-design.md).
  * Uses service role after JWT verification so clients cannot set ACTIVE/EXPIRED.
  */
-export async function POST(
+async function handlePOST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -46,3 +47,5 @@ export async function POST(
     return jsonError(message, message === 'Missing Authorization header' ? 401 : 500);
   }
 }
+
+export const POST = withLogging(handlePOST);
