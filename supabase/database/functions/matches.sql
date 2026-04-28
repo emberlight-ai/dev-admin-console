@@ -324,7 +324,7 @@ as $$
       or
       coalesce(sp_config.matching_enabled, true) = true
     )
-  order by u.created_at desc
+  order by random()
   limit limit_count;
 $$;
 

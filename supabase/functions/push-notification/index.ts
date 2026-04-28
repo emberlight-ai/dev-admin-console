@@ -35,6 +35,12 @@ interface WebhookPayload {
   schema: string;
 }
 
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 Deno.serve(async (req) => {
   try {
     const payload: WebhookPayload = await req.json();
@@ -66,25 +72,48 @@ Deno.serve(async (req) => {
 
     const fcmTokens = tokens.map((t) => t.token);
 
-    // 3. Send the Notification via Firebase
+    // 3. Get sender profile details for the notification title/avatar.
+    const { data: sender, error: senderError } = await supabase
+      .from('users')
+      .select('username, avatar')
+      .eq('userid', record.sender_id)
+      .maybeSingle();
+
+    if (senderError) {
+      console.error('Failed to fetch sender profile', {
+        senderId: record.sender_id,
+        error: senderError,
+      });
+    }
+
+    const senderName = nonEmptyString(sender?.username) ?? 'Someone';
+    const senderAvatarUrl = nonEmptyString(sender?.avatar);
+    const messageBody = nonEmptyString(record.content) ?? 'Sent a photo';
+
+    // 4. Send the Notification via Firebase
     // We send a "Data" message so the client can handle it in background (or "Notification" for auto-display)
     const message = {
       tokens: fcmTokens,
       notification: {
-        title: 'New Message',
-        body: record.content || 'Sent a photo',
+        title: senderName,
+        body: messageBody,
+        ...(senderAvatarUrl ? { imageUrl: senderAvatarUrl } : {}),
       },
       data: {
         match_id: record.match_id,
         sender_id: record.sender_id,
         message_id: record.id,
+        sender_name: senderName,
+        ...(senderAvatarUrl ? { sender_avatar_url: senderAvatarUrl } : {}),
         type: 'chat_message', // Helps client know how to route tap
       },
       apns: {
+        ...(senderAvatarUrl ? { fcmOptions: { imageUrl: senderAvatarUrl } } : {}),
         payload: {
           aps: {
             sound: 'default',
             badge: 1,
+            mutableContent: Boolean(senderAvatarUrl),
           },
         },
       },

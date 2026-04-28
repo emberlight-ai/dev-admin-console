@@ -4,18 +4,8 @@ import * as React from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Loader2, ArrowRightLeft, Copy, Image as ImageIcon, X, KeyRound } from 'lucide-react';
+import { Send, Loader2, Copy, Image as ImageIcon, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -97,7 +87,7 @@ const downsampleImage = (file: File, maxWidth = 1200): Promise<File> => {
   });
 };
 
-function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: string, matchPartnerId: string, currentUserId: string }) {
+function ChatInterface({ matchId, currentUserId }: { matchId: string, currentUserId: string }) {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [inputText, setInputText] = React.useState('');
@@ -105,42 +95,6 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
   const [imageFile, setImageFile] = React.useState<File | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
-
-  // Auth Prompt for image token
-  const [authPromptOpen, setAuthPromptOpen] = React.useState(false);
-  const [testPassword, setTestPassword] = React.useState('');
-  const [tokenLoading, setTokenLoading] = React.useState(false);
-  const [tokenError, setTokenError] = React.useState('');
-  const [customToken, setCustomToken] = React.useState('');
-
-  const runImageAuth = async () => {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
-    if (!testPassword) {
-      setTokenError('Password is required.');
-      return;
-    }
-    setTokenLoading(true);
-    setTokenError('');
-    try {
-      const res = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/token?grant_type=password`, {
-        method: 'POST',
-        headers: { apikey: anonKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'admin@emberlightai.com', password: testPassword }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error_description || json.msg || json.error || 'Login failed');
-      setCustomToken(json.access_token);
-      setAuthPromptOpen(false);
-      setTestPassword('');
-      // Need a slight delay before triggering the click to let the dialog close
-      setTimeout(() => fileInputRef.current?.click(), 100);
-    } catch (err: unknown) {
-      setTokenError(err instanceof Error ? err.message : 'Login failed');
-    } finally {
-      setTokenLoading(false);
-    }
-  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -223,23 +177,12 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
     try {
       let mediaUrl = null;
       if (imageFile) {
-        const supabase = getSupabase();
-        let token = customToken;
-        if (!token) {
-          const { data: sessionData } = await supabase.auth.getSession();
-          token = sessionData.session?.access_token || "";
-        }
-        if (!token) throw new Error("No session token to upload image. Generate one via Test Login.");
-
         const formData = new FormData();
         formData.append("files", imageFile);
         formData.append("match_id", matchId);
 
-        const res = await fetch("/api/ios/chat/media", {
+        const res = await fetch("/api/admin/chat/media", {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${token}`
-          },
           body: formData
         });
 
@@ -349,34 +292,6 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
       </ScrollArea>
 
       <div className="p-3 border-t bg-background flex flex-col gap-2 relative">
-        <Dialog open={authPromptOpen} onOpenChange={setAuthPromptOpen}>
-          <DialogContent className="sm:max-w-[425px]">
-            <DialogHeader>
-              <DialogTitle>Admin Authorization</DialogTitle>
-              <DialogDescription>
-                Image uploads require a valid session. Please sign in as admin@emberlightai.com.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="space-y-2">
-                <Label>Password</Label>
-                <Input 
-                  type="password" 
-                  value={testPassword} 
-                  onChange={(e) => setTestPassword(e.target.value)} 
-                  onKeyDown={(e) => e.key === 'Enter' && runImageAuth()}
-                />
-              </div>
-              {tokenError && <p className="text-xs text-rose-600">{tokenError}</p>}
-            </div>
-            <div className="flex justify-end">
-              <Button onClick={runImageAuth} disabled={tokenLoading}>
-                {tokenLoading ? 'Signing in...' : 'Sign In'}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-
         {imageFile && (
           <div className="flex items-center gap-2 overflow-hidden rounded-md border p-2 w-max bg-muted/50 relative">
             <img 
@@ -404,23 +319,16 @@ function ChatInterface({ matchId, matchPartnerId, currentUserId }: { matchId: st
             ref={fileInputRef} 
             onChange={handleFileChange} 
           />
-          {currentUserId === 'c3072d80-331d-4a5a-b93f-d1d5d5912fec' && (
-            <Button 
-              variant="outline" 
-              size="icon" 
-              type="button" 
-              disabled={sending}
-              onClick={() => {
-                if (customToken) {
-                  fileInputRef.current?.click();
-                } else {
-                  setAuthPromptOpen(true);
-                }
-              }}
-            >
-              <ImageIcon className="h-4 w-4" />
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="icon"
+            type="button"
+            disabled={sending}
+            title="Attach image"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <ImageIcon className="h-4 w-4" />
+          </Button>
           <Input
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
@@ -686,7 +594,6 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
           {selectedPartnerId && matches[selectedPartnerId] && (
             <ChatInterface
               matchId={matches[selectedPartnerId]}
-              matchPartnerId={selectedPartnerId}
               currentUserId={currentUserId}
             />
           )}
