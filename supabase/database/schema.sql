@@ -32,6 +32,8 @@ create table public.users (
   location_name text,
   longitude double precision,
   latitude double precision,
+  notification_enabled boolean not null default false,
+  location_enabled boolean not null default false,
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   deleted_at timestamptz,

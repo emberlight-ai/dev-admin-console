@@ -12,6 +12,11 @@ export type DbUser = {
   gender?: string | null
   personality?: string | null
   zipcode?: string | null
+  location_name?: string | null
+  longitude?: number | null
+  latitude?: number | null
+  notification_enabled?: boolean | null
+  location_enabled?: boolean | null
   bio?: string | null
   created_at?: string | null
   updated_at?: string | null

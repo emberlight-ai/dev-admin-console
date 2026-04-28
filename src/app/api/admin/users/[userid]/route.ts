@@ -49,7 +49,7 @@ export async function PATCH(
     .from('users')
     .update(updates)
     .eq('userid', userid)
-    .select('userid,username,profession,age,gender,personality,zipcode,bio,avatar,updated_at')
+    .select('userid,username,profession,age,gender,personality,zipcode,location_name,longitude,latitude,notification_enabled,location_enabled,bio,avatar,updated_at')
     .maybeSingle();
 
   if (error) return jsonError(error.message, 500);

@@ -57,6 +57,18 @@ type SubscriptionRecord = {
   } | null
 }
 
+function formatCoordinate(value: number | string | null | undefined) {
+  if (typeof value === "number" && Number.isFinite(value)) return value.toFixed(6)
+  if (typeof value === "string" && value.trim()) return value
+  return "—"
+}
+
+function permissionLabel(value: boolean | null | undefined) {
+  if (value === true) return "Enabled"
+  if (value === false) return "Disabled"
+  return "—"
+}
+
 export default function UserDetail() {
   const { id } = useParams()
   const router = useRouter()
@@ -84,7 +96,6 @@ export default function UserDetail() {
     created_at?: string
     app_metadata?: { provider?: string }
   } | null>(null)
-  const [authLoading, setAuthLoading] = React.useState(false)
 
   // Subscription Info
   const [subscriptions, setSubscriptions] = React.useState<SubscriptionRecord[]>([])
@@ -101,7 +112,6 @@ export default function UserDetail() {
   }, [id])
 
   const fetchAuthInfo = async () => {
-    setAuthLoading(true)
     try {
       const res = await fetch(`/api/admin/users/${encodeURIComponent(String(id))}/auth`)
       const json = await res.json()
@@ -111,7 +121,6 @@ export default function UserDetail() {
     } catch (err) {
       console.error(err)
     }
-    setAuthLoading(false)
   }
 
   const fetchSubscriptions = async () => {
@@ -219,7 +228,6 @@ export default function UserDetail() {
     : "Never"
 
   const isPremium = subscriptions.some(s => s.status === 'ACTIVE' && (!s.current_period_end || new Date(s.current_period_end) > new Date()))
-  const hasSubscriptionHistory = subscriptions.length > 0
 
   return (
     <div className="max-w-6xl space-y-4">
@@ -298,6 +306,38 @@ export default function UserDetail() {
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-muted-foreground">Location</dt>
                   <dd>{user ? (user.zipcode ?? "—") : (profileSnapshot.zipcode as string | undefined) ?? "—"}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">Location Name</dt>
+                  <dd className="text-right">
+                    {user
+                      ? (user.location_name ?? "—")
+                      : (profileSnapshot.location_name as string | undefined) ?? "—"}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">Longitude</dt>
+                  <dd>{formatCoordinate(user ? user.longitude : (profileSnapshot.longitude as number | string | null | undefined))}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">Latitude</dt>
+                  <dd>{formatCoordinate(user ? user.latitude : (profileSnapshot.latitude as number | string | null | undefined))}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">Notifications</dt>
+                  <dd>
+                    <Badge variant={user?.notification_enabled ? "default" : "secondary"}>
+                      {permissionLabel(user ? user.notification_enabled : (profileSnapshot.notification_enabled as boolean | null | undefined))}
+                    </Badge>
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">Geo Enabled</dt>
+                  <dd>
+                    <Badge variant={user?.location_enabled ? "default" : "secondary"}>
+                      {permissionLabel(user ? user.location_enabled : (profileSnapshot.location_enabled as boolean | null | undefined))}
+                    </Badge>
+                  </dd>
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-muted-foreground">User ID</dt>

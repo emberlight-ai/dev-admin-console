@@ -111,7 +111,7 @@ async function handlePOST(req: NextRequest) {
     const { data: profile } = await supabaseAdmin
       .from('users')
       .select(
-        'userid, username, age, gender, personality, zipcode, phone, bio, education, profession, avatar, created_at, updated_at, deleted_at, is_digital_human'
+        'userid, username, age, gender, personality, zipcode, phone, bio, education, profession, avatar, location_name, longitude, latitude, notification_enabled, location_enabled, created_at, updated_at, deleted_at, is_digital_human'
       )
       .eq('userid', userId)
       .maybeSingle();
