@@ -19,10 +19,10 @@ select cron.unschedule('dh-followup')          where exists (select 1 from cron.
 select cron.unschedule('dh-matching')          where exists (select 1 from cron.job where jobname = 'dh-matching');
 select cron.unschedule('dh-scheduled-replies') where exists (select 1 from cron.job where jobname = 'dh-scheduled-replies');
 
--- ---- 1. dh-followup: every 15 minutes ----------------------
+-- ---- 1. dh-followup: every 5 minutes -----------------------
 select cron.schedule(
   'dh-followup',
-  '*/15 * * * *',
+  '*/5 * * * *',
   $$
   select net.http_post(
     url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-followup',
@@ -35,10 +35,10 @@ select cron.schedule(
   $$
 );
 
--- ---- 2. dh-matching: every 15 min (offset by 7 min) ---------
+-- ---- 2. dh-matching: every 5 min, tiny batches (offset) -----
 select cron.schedule(
   'dh-matching',
-  '7,22,37,52 * * * *',
+  '1-59/5 * * * *',
   $$
   select net.http_post(
     url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-matching',

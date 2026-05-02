@@ -1,6 +1,6 @@
 // @ts-nocheck
 // Supabase Edge Function (Deno runtime) — replaces scripts/digital-human-followups.ts
-// Triggered by: pg_cron every 15 minutes via pg_net HTTP call
+// Triggered by: pg_cron every 5 minutes via pg_net HTTP call
 // See setup instructions in walkthrough.md
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { VertexAI } from 'npm:@google-cloud/vertexai';

@@ -572,7 +572,7 @@ create table if not exists public.digital_human_config (
 insert into public.digital_human_config (key, value, description)
 values
   ('max_invites_per_user', '5', 'Maximum invites a real user can receive from digital humans'),
-  ('invites_per_cron_run', '5', 'How many invites to send per cron execution'),
+  ('invites_per_cron_run', '1', 'How many invites to send per cron execution'),
   ('accept_rate_percentage', '30', 'Percentage of requests digital humans accept (0-100)'),
   ('active_hour_start', '5', 'Start hour for digital human activity in PST (0-23, 5 = 5 AM)'),
   ('active_hour_end', '23', 'End hour for digital human activity in PST (0-23, 23 = 11:59 PM)'),

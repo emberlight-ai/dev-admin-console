@@ -1,2 +1,14 @@
 [functions.push-notification]
 verify_jwt = false
+
+[functions.dh-auto-reply]
+verify_jwt = false
+
+[functions.dh-greeting]
+verify_jwt = false
+
+[functions.dh-followup]
+verify_jwt = false
+
+[functions.dh-matching]
+verify_jwt = false

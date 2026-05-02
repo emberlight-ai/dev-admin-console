@@ -293,37 +293,81 @@ returns setof public.users
 language sql
 security invoker
 as $$
-  select u.*
-  from public.users u
-  left join lateral (
-    select sp.matching_enabled
-    from public."SystemPrompts" sp
-    where sp.gender = u.gender
-      and sp.personality = u.personality
-    order by sp.created_at desc
-    limit 1
-  ) sp_config on true
-  where u.deleted_at is null
-    and u.userid <> viewer_user_id
-    and (nullif(btrim(gender_filter), '') is null or u.gender = btrim(gender_filter))
-    and (not digital_humans_only or coalesce(u.is_digital_human, false) = true)
-    and not exists (
-      select 1
-      from public.blocks b
-      where (b.blocker_id = viewer_user_id and b.blocked_id = u.userid)
-         or (b.blocker_id = u.userid and b.blocked_id = viewer_user_id)
-    )
-    and not exists (
-      select 1
-      from public.swipe s
-      where s.swiper_user_id = viewer_user_id
-        and s.target_user_id = u.userid
-    )
-    and (
-      coalesce(u.is_digital_human, false) = false
-      or
-      coalesce(sp_config.matching_enabled, true) = true
-    )
+  with whitelisted_users(userid) as (
+    values
+      ('b1f63e0b-4907-4c48-bf70-43d9cfe0afe1'::uuid),
+      ('d2d9c18c-f8d7-4381-b82a-5ca0db1dd229'::uuid),
+      ('f9d35dd1-1c30-4a6c-9000-7e5ab05c5795'::uuid),
+      ('550c2bb1-e593-4095-950b-7b48bfec6fd7'::uuid),
+      ('e82fb227-9516-4780-b012-9b8f1752c583'::uuid),
+      ('e3b4aaa9-d50c-42e4-aa1f-aba27310fe61'::uuid),
+      ('fa8ff235-497a-45a8-ba66-89898d7daf7b'::uuid),
+      ('dc1ec1a7-bd60-4549-9815-4d7f277c3a71'::uuid),
+      ('2e56005f-d840-4356-8d23-1bfdc49e7d37'::uuid),
+      ('e58e6de2-ee7a-40d5-acb2-81fd239670f9'::uuid),
+      ('477eaba2-eac2-47cd-85cb-f2cbb5c18100'::uuid),
+      ('154495e6-65b3-4f48-98ac-ccdfa8e996f4'::uuid),
+      ('13f9d9d1-7f19-4ed5-be95-aa84c2afdf50'::uuid),
+      ('d9b72470-7193-4029-b6e0-c48e479c77dd'::uuid),
+      ('4629d1c2-7777-40d6-8da5-98f5c549e3c8'::uuid)
+  ),
+  eligible_candidates as (
+    select u.*
+    from public.users u
+    left join lateral (
+      select sp.matching_enabled
+      from public."SystemPrompts" sp
+      where sp.gender = u.gender
+        and sp.personality = u.personality
+      order by sp.created_at desc
+      limit 1
+    ) sp_config on true
+    where u.deleted_at is null
+      and u.userid <> viewer_user_id
+      and (nullif(btrim(gender_filter), '') is null or u.gender = btrim(gender_filter))
+      and (not digital_humans_only or coalesce(u.is_digital_human, false) = true)
+      and not exists (
+        select 1
+        from public.blocks b
+        where (b.blocker_id = viewer_user_id and b.blocked_id = u.userid)
+           or (b.blocker_id = u.userid and b.blocked_id = viewer_user_id)
+      )
+      and not exists (
+        select 1
+        from public.swipe s
+        where s.swiper_user_id = viewer_user_id
+          and s.target_user_id = u.userid
+      )
+      and (
+        coalesce(u.is_digital_human, false) = false
+        or
+        coalesce(sp_config.matching_enabled, true) = true
+      )
+  ),
+  whitelisted_candidates as (
+    select ec.*
+    from eligible_candidates ec
+    join whitelisted_users wu on wu.userid = ec.userid
+  ),
+  candidate_pool as (
+    -- TEMP: prefer this curated whitelist while testing the matches list.
+    -- Remove whitelisted_users/whitelisted_candidates/candidate_pool later to
+    -- return directly to random eligible_candidates.
+    -- Gender, block, digital-human, and swipe filters are applied before this,
+    -- so users only see whitelisted cards that still match normal eligibility.
+    select wc.*
+    from whitelisted_candidates wc
+
+    union all
+
+    -- Once every eligible whitelisted card has been swiped/filtered out for
+    -- this viewer, fall back to the normal randomized match-card pool.
+    select ec.*
+    from eligible_candidates ec
+    where not exists (select 1 from whitelisted_candidates)
+  )
+  select candidate_pool.*
+  from candidate_pool
   order by random()
   limit limit_count;
 $$;
@@ -353,7 +397,7 @@ begin
     invites_per_run := p_limit;
   else
     select value::integer into invites_per_run from public.digital_human_config where key = 'invites_per_cron_run';
-    invites_per_run := coalesce(invites_per_run, 5);
+    invites_per_run := coalesce(invites_per_run, 1);
   end if;
   
   -- Loop to send invites

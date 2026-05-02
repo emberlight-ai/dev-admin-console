@@ -1,13 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// TEMP: buildMatchingsFeed unused while POST is stubbed — restore with uncommented handler below.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- TEMP stub
 import { buildMatchingsFeed, type MatchingsCard } from '@/app/api/ios/getMatchings/_shared';
 import { withLogging } from '@/lib/with-logging';
-
-// TEMP: POST handler below returns []; helpers are kept for quick restore. Re-enable and remove this.
-/* eslint-disable @typescript-eslint/no-unused-vars -- see note above */
 
 type NearbyPersonResponse = {
   userId: string;
@@ -365,12 +360,6 @@ function pairPeopleWithCoordinates(params: {
 }
 
 async function handlePOST(req: NextRequest) {
-  // TEMPORARY: disable full nearby-people flow; iOS receives an empty list.
-  // Restore by removing the early return and uncommenting the block below.
-  void req;
-  return NextResponse.json([] as NearbyPersonResponse[]);
-
-  /*
   try {
     console.info('[find-nearby-people] request start');
     const supabase = getUserSupabase(req);
@@ -504,7 +493,6 @@ async function handlePOST(req: NextRequest) {
       { status: message === 'Missing Authorization header' ? 401 : 500 },
     );
   }
-  */
 }
 
 export const POST = withLogging(handlePOST);

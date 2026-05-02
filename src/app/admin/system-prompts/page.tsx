@@ -215,7 +215,7 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
   const [saving, setSaving] = React.useState(false)
   const [config, setConfig] = React.useState({
     max_invites_per_user: "5",
-    invites_per_cron_run: "5",
+    invites_per_cron_run: "1",
     accept_rate_percentage: "30",
     active_hour_start: "5",
     active_hour_end: "23",
@@ -233,7 +233,7 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
             setConfig((prev) => ({ ...prev, ...json.data }))
           }
         })
-        .catch((err) => toast.error("Failed to load config"))
+        .catch(() => toast.error("Failed to load config"))
         .finally(() => setLoading(false))
     }
   }, [open])
@@ -249,7 +249,7 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
       if (!res.ok) throw new Error("Failed to save")
       toast.success("Configuration saved")
       setOpen(false)
-    } catch (error) {
+    } catch {
       toast.error("Failed to save configuration")
     } finally {
       setSaving(false)
@@ -322,7 +322,7 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
                   value={config.invites_per_cron_run}
                   onChange={(e) => setConfig({ ...config, invites_per_cron_run: e.target.value })}
                 />
-                <p className="text-xs text-muted-foreground">Invites sent every hour.</p>
+                <p className="text-xs text-muted-foreground">Max invites sent per matching cron run.</p>
               </div>
             </div>
 

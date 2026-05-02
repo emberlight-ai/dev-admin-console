@@ -1,6 +1,6 @@
 // @ts-nocheck
 // Supabase Edge Function (Deno runtime) — replaces scripts/digital-human-matching-automation.ts
-// Triggered by: pg_cron every 13–18 minutes (randomized via the SQL schedule) via pg_net HTTP call
+// Triggered by: pg_cron every 5 minutes via pg_net HTTP call
 // See setup instructions in walkthrough.md
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -24,7 +24,7 @@ let config: Config = globalConfig ?? {
   activeStart: 5,
   activeEnd: 23,
   maxInvitesPerUser: 5,
-  invitesPerRun: 5,
+  invitesPerRun: 1,
   exp: 0,
 };
 const CONFIG_TTL_MS = 5 * 60 * 1000;
@@ -38,7 +38,7 @@ async function ensureConfig() {
     activeStart: parseInt(map['active_hour_start'] ?? '5', 10),
     activeEnd: parseInt(map['active_hour_end'] ?? '23', 10),
     maxInvitesPerUser: parseInt(map['max_invites_per_user'] ?? '5', 10),
-    invitesPerRun: parseInt(map['invites_per_cron_run'] ?? '5', 10),
+    invitesPerRun: parseInt(map['invites_per_cron_run'] ?? '1', 10),
     exp: Date.now() + CONFIG_TTL_MS,
   };
   (globalThis as any).__dhMatchConfig = config;
