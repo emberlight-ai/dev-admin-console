@@ -41,6 +41,9 @@ const FALLBACK_MAX_DISTANCE_MILES = 10;
 const NEARBY_COUNT_MEAN = 7;
 const NEARBY_COUNT_VARIANCE = 3;
 
+/** Flip to `false` to restore normal nearby-people responses. */
+const TEMP_NEARBY_PEOPLE_RETURN_EMPTY = true;
+
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
@@ -373,6 +376,11 @@ async function handlePOST(req: NextRequest) {
     console.info('[find-nearby-people] authenticated', {
       viewerUserId: authData.user.id,
     });
+
+    if (TEMP_NEARBY_PEOPLE_RETURN_EMPTY) {
+      console.info('[find-nearby-people] TEMPORARY: returning empty array');
+      return NextResponse.json([]);
+    }
 
     let body: Record<string, unknown> = {};
     try {
