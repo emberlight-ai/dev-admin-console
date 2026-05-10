@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 import { buildMatchingsFeed, type MatchingsCard } from '@/app/api/ios/getMatchings/_shared';
+import { supabaseAdmin } from '@/lib/supabase';
 import { withLogging } from '@/lib/with-logging';
 
 type NearbyPersonResponse = {
@@ -41,9 +42,6 @@ const FALLBACK_MAX_DISTANCE_MILES = 10;
 const NEARBY_COUNT_MEAN = 7;
 const NEARBY_COUNT_VARIANCE = 3;
 
-/** Flip to `false` to restore normal nearby-people responses. */
-const TEMP_NEARBY_PEOPLE_RETURN_EMPTY = true;
-
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
@@ -57,6 +55,23 @@ const getUserSupabase = (req: NextRequest) => {
     },
   );
 };
+
+async function isFindNearbyPeopleEnabled() {
+  const { data, error } = await supabaseAdmin
+    .from('digital_human_config')
+    .select('value')
+    .eq('key', 'enable_find_nearby_people')
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[find-nearby-people] config lookup failed', {
+      error: error.message,
+    });
+    return false;
+  }
+
+  return data?.value === 'true';
+}
 
 function parseCoordinate(value: unknown): number | null {
   const num =
@@ -377,8 +392,11 @@ async function handlePOST(req: NextRequest) {
       viewerUserId: authData.user.id,
     });
 
-    if (TEMP_NEARBY_PEOPLE_RETURN_EMPTY) {
-      console.info('[find-nearby-people] TEMPORARY: returning empty array');
+    const findNearbyPeopleEnabled = await isFindNearbyPeopleEnabled();
+    if (!findNearbyPeopleEnabled) {
+      console.info(
+        '[find-nearby-people] returning empty because feature is disabled',
+      );
       return NextResponse.json([]);
     }
 

@@ -3,7 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase"
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
     const { data, error } = await supabaseAdmin
       .from("digital_human_config")
@@ -39,8 +39,12 @@ export async function POST(req: NextRequest) {
       "accept_rate_percentage",
       "active_hour_start",
       "active_hour_end",
+      "enable_digital_human_matching",
+      "enable_digital_human_greeting",
       "enable_digital_human_auto_response",
       "enable_digital_human_follow_up",
+      "enable_find_nearby_people",
+      "min_user_age_minutes_for_invites",
     ]
 
     for (const key of allowedKeys) {

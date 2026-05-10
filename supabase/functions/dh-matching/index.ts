@@ -12,6 +12,7 @@ const supabase = createClient(
 
 // ── Config cache ───────────────────────────────────────────────────────────────
 interface Config {
+  matchingEnabled: boolean;
   activeStart: number;
   activeEnd: number;
   maxInvitesPerUser: number;
@@ -21,6 +22,7 @@ interface Config {
 
 const globalConfig = (globalThis as any).__dhMatchConfig as Config | undefined;
 let config: Config = globalConfig ?? {
+  matchingEnabled: true,
   activeStart: 5,
   activeEnd: 23,
   maxInvitesPerUser: 5,
@@ -35,6 +37,7 @@ async function ensureConfig() {
   const map: Record<string, string> = {};
   for (const r of data ?? []) map[r.key] = r.value;
   config = {
+    matchingEnabled: map['enable_digital_human_matching'] !== 'false',
     activeStart: parseInt(map['active_hour_start'] ?? '5', 10),
     activeEnd: parseInt(map['active_hour_end'] ?? '23', 10),
     maxInvitesPerUser: parseInt(map['max_invites_per_user'] ?? '5', 10),
@@ -64,6 +67,13 @@ Deno.serve(async (req) => {
   // No custom check needed — if we reach here, the service_role JWT was valid.
   try {
     await ensureConfig();
+
+    if (!config.matchingEnabled) {
+      console.log('[dh-matching] Matching disabled. Skipping.');
+      return new Response(JSON.stringify({ ok: true, skipped: 'matching disabled' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
     if (!isActiveHour()) {
       console.log('[dh-matching] Outside active hours (PST). Skipping.');

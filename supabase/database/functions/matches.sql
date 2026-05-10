@@ -387,10 +387,15 @@ declare
   digital_human_id uuid;
   real_user_id uuid;
   max_invites integer;
+  min_user_age_minutes integer;
 begin
   -- Get configuration for max invites per user
   select value::integer into max_invites from public.digital_human_config where key = 'max_invites_per_user';
   max_invites := coalesce(max_invites, 5);
+
+  -- Avoid inviting users immediately after signup.
+  select value::integer into min_user_age_minutes from public.digital_human_config where key = 'min_user_age_minutes_for_invites';
+  min_user_age_minutes := greatest(coalesce(min_user_age_minutes, 10), 0);
 
   -- Determine how many to send: use p_limit if provided, otherwise fallback to config
   if p_limit is not null then
@@ -428,6 +433,7 @@ begin
     left join public.digital_human_invites_tracking dt on dt.user_id = u.userid
     where u.is_digital_human = false
       and u.deleted_at is null
+      and u.created_at <= now() - make_interval(mins => min_user_age_minutes)
       and coalesce(dt.invite_count, 0) < max_invites
       and not exists (
         select 1 from public.match_requests mr

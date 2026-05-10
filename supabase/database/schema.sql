@@ -576,8 +576,12 @@ values
   ('accept_rate_percentage', '30', 'Percentage of requests digital humans accept (0-100)'),
   ('active_hour_start', '5', 'Start hour for digital human activity in PST (0-23, 5 = 5 AM)'),
   ('active_hour_end', '23', 'End hour for digital human activity in PST (0-23, 23 = 11:59 PM)'),
+  ('enable_digital_human_matching', 'true', 'Global toggle for digital human matching automation'),
+  ('enable_digital_human_greeting', 'true', 'Global toggle for digital human greeting messages'),
   ('enable_digital_human_auto_response', 'true', 'Global toggle for digital human auto-replies'),
-  ('enable_digital_human_follow_up', 'true', 'Global toggle for digital human follow-up messages')
+  ('enable_digital_human_follow_up', 'true', 'Global toggle for digital human follow-up messages'),
+  ('enable_find_nearby_people', 'false', 'Global toggle for find nearby people responses'),
+  ('min_user_age_minutes_for_invites', '10', 'Minimum user account age before receiving digital human invites')
 on conflict (key) do nothing;
 
 -- ==============================================================================

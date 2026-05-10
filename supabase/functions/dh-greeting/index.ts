@@ -67,6 +67,23 @@ let lastPromptRefresh = globalPromptCacheTs ?? 0;
 const PROMPT_TTL_MS = 60 * 60 * 1000;
 const LOCK_DURATION_SECONDS = 30;
 
+const globalConfigCache = (globalThis as any).__dhGreetConfigCache as { greetingEnabled: boolean; exp: number } | undefined;
+let configCache: { greetingEnabled: boolean; exp: number } = globalConfigCache ?? { greetingEnabled: true, exp: 0 };
+const CONFIG_TTL_MS = 5 * 60 * 1000;
+
+async function getGreetingEnabled(): Promise<boolean> {
+  if (Date.now() < configCache.exp) return configCache.greetingEnabled;
+  const { data } = await supabase.from('digital_human_config').select('key, value');
+  const map: Record<string, string> = {};
+  for (const r of data ?? []) map[r.key] = r.value;
+  configCache = {
+    greetingEnabled: map['enable_digital_human_greeting'] !== 'false',
+    exp: Date.now() + CONFIG_TTL_MS,
+  };
+  (globalThis as any).__dhGreetConfigCache = configCache;
+  return configCache.greetingEnabled;
+}
+
 async function refreshPrompts() {
   const { data } = await supabase
     .from('SystemPrompts')
@@ -179,6 +196,10 @@ Deno.serve(async (req) => {
 
     if (payload.type !== 'INSERT' || payload.table !== 'user_matches') {
       return new Response('Ignored', { status: 200 });
+    }
+
+    if (!(await getGreetingEnabled())) {
+      return new Response('Greeting disabled', { status: 200 });
     }
 
     await ensurePrompts();

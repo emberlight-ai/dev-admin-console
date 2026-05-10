@@ -219,8 +219,12 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
     accept_rate_percentage: "30",
     active_hour_start: "5",
     active_hour_end: "23",
+    enable_digital_human_matching: "true",
+    enable_digital_human_greeting: "true",
     enable_digital_human_auto_response: "true",
     enable_digital_human_follow_up: "true",
+    enable_find_nearby_people: "false",
+    min_user_age_minutes_for_invites: "10",
   })
 
   React.useEffect(() => {
@@ -275,6 +279,40 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
                 <div className="flex items-center space-x-2">
                   <input
                     type="checkbox"
+                    id="g-matching"
+                    className="h-4 w-4 rounded border-gray-300 accent-primary"
+                    checked={config.enable_digital_human_matching !== "false"}
+                    onChange={(e) =>
+                      setConfig({ ...config, enable_digital_human_matching: e.target.checked ? "true" : "false" })
+                    }
+                  />
+                  <Label htmlFor="g-matching">Enable Matching</Label>
+                </div>
+                <p className="text-xs text-muted-foreground ml-6">
+                  Digital humans will send invites and process pending requests.
+                </p>
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="g-greeting"
+                    className="h-4 w-4 rounded border-gray-300 accent-primary"
+                    checked={config.enable_digital_human_greeting !== "false"}
+                    onChange={(e) =>
+                      setConfig({ ...config, enable_digital_human_greeting: e.target.checked ? "true" : "false" })
+                    }
+                  />
+                  <Label htmlFor="g-greeting">Enable Greetings</Label>
+                </div>
+                <p className="text-xs text-muted-foreground ml-6">
+                  Digital humans will send greeting messages when a new match is created.
+                </p>
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
                     id="g-auto-reply"
                     className="h-4 w-4 rounded border-gray-300 accent-primary"
                     checked={config.enable_digital_human_auto_response !== "false"}
@@ -303,6 +341,23 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
                   Digital humans will send check-in messages if user is inactive (if enabled per bot).
                 </p>
               </div>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="g-find-nearby-people"
+                    className="h-4 w-4 rounded border-gray-300 accent-primary"
+                    checked={config.enable_find_nearby_people === "true"}
+                    onChange={(e) =>
+                      setConfig({ ...config, enable_find_nearby_people: e.target.checked ? "true" : "false" })
+                    }
+                  />
+                  <Label htmlFor="g-find-nearby-people">Enable Find Nearby People</Label>
+                </div>
+                <p className="text-xs text-muted-foreground ml-6">
+                  iOS nearby people endpoint will return normal matching results when enabled.
+                </p>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -323,6 +378,16 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
                   onChange={(e) => setConfig({ ...config, invites_per_cron_run: e.target.value })}
                 />
                 <p className="text-xs text-muted-foreground">Max invites sent per matching cron run.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Minimum user age before invites (minutes)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={config.min_user_age_minutes_for_invites}
+                  onChange={(e) => setConfig({ ...config, min_user_age_minutes_for_invites: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">New users must wait this long before digital humans invite them.</p>
               </div>
             </div>
 
