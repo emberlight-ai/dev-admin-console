@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Check, Heart, Loader2, X as XIcon } from 'lucide-react';
+import { Check, Heart, Inbox, Loader2, X as XIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -30,10 +30,17 @@ type RightSwipe = {
 
 type MatchEntry = { match_id: string; created_at: string | null; partner: UserLite | null };
 
+type InboundRequest = {
+  match_request_id: string;
+  created_at: string | null;
+  from_user: UserLite | null;
+};
+
 type RelationshipsResponse = {
   left_swipes: LeftSwipe[];
   right_swipes: RightSwipe[];
   matches: MatchEntry[];
+  inbound_requests: InboundRequest[];
 };
 
 function initials(name: string) {
@@ -82,6 +89,34 @@ function StatusBadge({ status }: { status: RightSwipe['status'] }) {
     <Badge variant="outline" className="text-muted-foreground">
       Declined
     </Badge>
+  );
+}
+
+function AcceptButton({
+  label,
+  busy,
+  onClick,
+}: {
+  label: string;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      size="sm"
+      className="h-7 bg-amber-500 hover:bg-amber-600 text-white"
+      onClick={onClick}
+      disabled={busy}
+    >
+      {busy ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <>
+          <Check className="h-3 w-3 mr-1" />
+          {label}
+        </>
+      )}
+    </Button>
   );
 }
 
@@ -151,7 +186,8 @@ interface Props {
 export function RelationshipsTable({ rootUserId, rootIsDigitalHuman }: Props) {
   const [data, setData] = React.useState<RelationshipsResponse | null>(null);
   const [loading, setLoading] = React.useState(true);
-  const [acceptingId, setAcceptingId] = React.useState<string | null>(null);
+  // Keyed by the digital human's userid so the right row shows the spinner.
+  const [acceptingDhId, setAcceptingDhId] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -165,6 +201,7 @@ export function RelationshipsTable({ rootUserId, rootIsDigitalHuman }: Props) {
         left_swipes: json.left_swipes ?? [],
         right_swipes: json.right_swipes ?? [],
         matches: json.matches ?? [],
+        inbound_requests: json.inbound_requests ?? [],
       });
     } catch (err) {
       console.error(err);
@@ -177,23 +214,26 @@ export function RelationshipsTable({ rootUserId, rootIsDigitalHuman }: Props) {
     void load();
   }, [load]);
 
-  const handleAccept = async (matchRequestId: string) => {
-    setAcceptingId(matchRequestId);
+  // Force a match between the real user (rootUserId) and a digital human.
+  // Works whether the user's request is still pending or was already rejected
+  // by the DH cron — the endpoint matches by pair, not by request id.
+  const handleAccept = async (dhId: string) => {
+    setAcceptingDhId(dhId);
     try {
       const res = await fetch('/api/admin/matching/accept-request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ match_request_id: matchRequestId }),
+        body: JSON.stringify({ user_id: rootUserId, dh_id: dhId }),
       });
       const json = (await res.json()) as { match_id?: string; error?: string };
-      if (!res.ok) throw new Error(json.error ?? 'Failed to accept request');
+      if (!res.ok) throw new Error(json.error ?? 'Failed to create match');
       toast.success('Matched on behalf of digital human');
       await load();
     } catch (err) {
       console.error(err);
-      toast.error(err instanceof Error ? err.message : 'Failed to accept request');
+      toast.error(err instanceof Error ? err.message : 'Failed to create match');
     } finally {
-      setAcceptingId(null);
+      setAcceptingDhId(null);
     }
   };
 
@@ -221,11 +261,11 @@ export function RelationshipsTable({ rootUserId, rootIsDigitalHuman }: Props) {
         empty="No right swipes yet."
       >
         {data.right_swipes.map((r) => {
+          // Offer the override whenever the target is a DH and they're not
+          // matched yet — covers both "pending" (cron hasn't run) and
+          // "declined" (cron rejected and deleted the request).
           const canAccept =
-            !rootIsDigitalHuman &&
-            !!r.target?.is_digital_human &&
-            r.status === 'pending' &&
-            !!r.match_request_id;
+            !rootIsDigitalHuman && !!r.target?.is_digital_human && r.status !== 'matched';
           return (
             <tr key={r.swipe_id} className="border-b last:border-0 hover:bg-muted/40">
               <td className="p-3">
@@ -238,26 +278,55 @@ export function RelationshipsTable({ rootUserId, rootIsDigitalHuman }: Props) {
                 {r.created_at ? new Date(r.created_at).toLocaleString() : '—'}
               </td>
               <td className="p-3 text-right">
-                {canAccept ? (
-                  <Button
-                    size="sm"
-                    className="h-7 bg-amber-500 hover:bg-amber-600 text-white"
-                    onClick={() => handleAccept(r.match_request_id as string)}
-                    disabled={acceptingId === r.match_request_id}
-                  >
-                    {acceptingId === r.match_request_id ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <>
-                        <Check className="h-3 w-3 mr-1" />
-                        Accept as DH
-                      </>
-                    )}
-                  </Button>
+                {canAccept && r.target ? (
+                  <AcceptButton
+                    label="Accept as DH"
+                    busy={acceptingDhId === r.target.userid}
+                    onClick={() => handleAccept(r.target!.userid)}
+                  />
                 ) : r.match_id ? (
                   <span className="text-xs text-muted-foreground font-mono">
                     {r.match_id.slice(0, 8)}…
                   </span>
+                ) : null}
+              </td>
+            </tr>
+          );
+        })}
+      </Section>
+
+      <Section
+        icon={<Inbox className="h-4 w-4 text-sky-500" />}
+        title="Inbound invites (they invited this user)"
+        count={data.inbound_requests.length}
+        columns={[
+          { label: 'From' },
+          { label: 'When' },
+          { label: '', align: 'right' },
+        ]}
+        empty="No inbound invites."
+      >
+        {data.inbound_requests.map((r) => {
+          // Inbound invites are pending by definition (a match would have
+          // deleted the request). Offer the accept shortcut when the inviter
+          // is a DH so the admin can connect them on the user's behalf.
+          const canAccept =
+            !rootIsDigitalHuman && !!r.from_user?.is_digital_human;
+          return (
+            <tr key={r.match_request_id} className="border-b last:border-0 hover:bg-muted/40">
+              <td className="p-3">
+                <UserCell user={r.from_user} />
+              </td>
+              <td className="p-3 text-xs text-muted-foreground">
+                {r.created_at ? new Date(r.created_at).toLocaleString() : '—'}
+              </td>
+              <td className="p-3 text-right">
+                {canAccept && r.from_user ? (
+                  <AcceptButton
+                    label="Accept"
+                    busy={acceptingDhId === r.from_user.userid}
+                    onClick={() => handleAccept(r.from_user!.userid)}
+                  />
                 ) : null}
               </td>
             </tr>

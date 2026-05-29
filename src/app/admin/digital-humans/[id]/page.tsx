@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useParams } from "next/navigation"
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
 import { toast } from "sonner"
 
@@ -20,6 +20,18 @@ import type { DbUser } from "./_components/types"
 
 export default function DigitalHumanDetail() {
   const { id } = useParams();
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  // URL-driven tabs so other pages can deep-link (e.g. "Take over" → ?tab=history).
+  const currentTab = searchParams.get("tab") || "posts"
+  const handleTabChange = (value: string) => {
+    const newParams = new URLSearchParams(searchParams.toString())
+    newParams.set("tab", value)
+    router.replace(`${pathname}?${newParams.toString()}`, { scroll: false })
+  }
+
   const [user, setUser] = React.useState<DbUser | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [computedSystemPrompt, setComputedSystemPrompt] = React.useState<string | null>(null)
@@ -165,7 +177,7 @@ export default function DigitalHumanDetail() {
         {/* Right Column: Tabs (Chat & Posts) */}
         <div className="lg:col-span-2">
           <Card className="p-6">
-            <Tabs defaultValue="posts" className="w-full">
+            <Tabs value={currentTab} onValueChange={handleTabChange} className="w-full">
               <TabsList>
                 <TabsTrigger value="posts">Post History</TabsTrigger>
                 <TabsTrigger value="chat-images">Chat Images</TabsTrigger>
@@ -174,7 +186,7 @@ export default function DigitalHumanDetail() {
 
 
               <TabsContent value="history">
-                <ChatHistory currentUserId={user.userid} />
+                <ChatHistory currentUserId={user.userid} currentUserIsDigitalHuman />
               </TabsContent>
 
               <TabsContent value="posts" className="mt-4">

@@ -37,6 +37,12 @@ type MatchEntry = {
   partner: UserLite | null;
 };
 
+type InboundRequest = {
+  match_request_id: string;
+  created_at: string | null;
+  from_user: UserLite | null;
+};
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ userid: string }> }
@@ -52,6 +58,7 @@ export async function GET(
   const [
     { data: swipesData, error: swipesErr },
     { data: outboundRequests, error: requestsErr },
+    { data: inboundRequests, error: inboundErr },
     { data: matchesData, error: matchesErr },
   ] = await Promise.all([
     supabaseAdmin
@@ -64,6 +71,13 @@ export async function GET(
       .from('match_requests')
       .select('id,to_user_id,created_at')
       .eq('from_user_id', userid),
+    // Inbound: requests where someone (typically a digital human via
+    // `send_digital_human_invites`) invited this user.
+    supabaseAdmin
+      .from('match_requests')
+      .select('id,from_user_id,created_at')
+      .eq('to_user_id', userid)
+      .order('created_at', { ascending: false }),
     supabaseAdmin
       .from('user_matches')
       .select('id,user_a,user_b,created_at')
@@ -73,12 +87,14 @@ export async function GET(
 
   if (swipesErr) return jsonError(swipesErr.message, 500);
   if (requestsErr) return jsonError(requestsErr.message, 500);
+  if (inboundErr) return jsonError(inboundErr.message, 500);
   if (matchesErr) return jsonError(matchesErr.message, 500);
 
   // Resolve every counterparty in a single batched users query.
   const involvedIds = new Set<string>();
   for (const s of swipesData ?? []) involvedIds.add(s.target_user_id);
   for (const r of outboundRequests ?? []) involvedIds.add(r.to_user_id);
+  for (const r of inboundRequests ?? []) involvedIds.add(r.from_user_id);
   for (const m of matchesData ?? []) {
     involvedIds.add(m.user_a === userid ? m.user_b : m.user_a);
   }
@@ -153,5 +169,11 @@ export async function GET(
     };
   });
 
-  return NextResponse.json({ left_swipes, right_swipes, matches });
+  const inbound_requests: InboundRequest[] = (inboundRequests ?? []).map((r) => ({
+    match_request_id: r.id,
+    created_at: r.created_at ?? null,
+    from_user: usersMap.get(r.from_user_id) ?? null,
+  }));
+
+  return NextResponse.json({ left_swipes, right_swipes, matches, inbound_requests });
 }

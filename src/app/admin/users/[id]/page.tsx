@@ -506,7 +506,10 @@ export default function UserDetail() {
 
               <TabsContent value="history" className="mt-4">
                 {user ? (
-                  <ChatHistory currentUserId={user.userid} />
+                  <ChatHistory
+                    currentUserId={user.userid}
+                    currentUserIsDigitalHuman={Boolean((user as UserWithDhFlag).is_digital_human)}
+                  />
                 ) : (
                   <div className="space-y-3">
                     <div className="text-sm text-muted-foreground">

@@ -1,11 +1,12 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Loader2, Copy, Image as ImageIcon, X } from 'lucide-react';
+import { Send, Loader2, Copy, Image as ImageIcon, LogIn, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -31,11 +32,15 @@ interface Message {
 
 interface ChatHistoryProps {
   currentUserId: string;
+  /** Only digital humans can be "operated" by the admin. When false (a real
+   *  user), the chat composer is read-only so we never message on their behalf. */
+  currentUserIsDigitalHuman?: boolean;
 }
 
 interface MatchedUser {
   userid: string;
   username: string;
+  is_digital_human?: boolean;
 }
 
 type UserSearchResult = {
@@ -87,7 +92,7 @@ const downsampleImage = (file: File, maxWidth = 1200): Promise<File> => {
   });
 };
 
-function ChatInterface({ matchId, currentUserId }: { matchId: string, currentUserId: string }) {
+function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, currentUserId: string, canSend: boolean }) {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [inputText, setInputText] = React.useState('');
@@ -171,6 +176,10 @@ function ChatInterface({ matchId, currentUserId }: { matchId: string, currentUse
   }, [messages]);
 
   const handleSend = async () => {
+    // Guard: never send as a real user (only digital humans can be operated by
+    // the admin). The UI also disables the controls, but this protects against
+    // the Enter-key path too.
+    if (!canSend) return;
     if (!inputText.trim() && !imageFile) return;
     setSending(true);
 
@@ -311,20 +320,25 @@ function ChatInterface({ matchId, currentUserId }: { matchId: string, currentUse
             </Button>
           </div>
         )}
+        {!canSend && (
+          <div className="text-xs text-muted-foreground">
+            Read-only — you can only send messages on behalf of a digital human, not a real user.
+          </div>
+        )}
         <div className="flex gap-2 w-full">
-          <input 
-            type="file" 
-            accept="image/*" 
-            className="hidden" 
-            ref={fileInputRef} 
-            onChange={handleFileChange} 
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            ref={fileInputRef}
+            onChange={handleFileChange}
           />
           <Button
             variant="outline"
             size="icon"
             type="button"
-            disabled={sending}
-            title="Attach image"
+            disabled={sending || !canSend}
+            title={canSend ? "Attach image" : "Sending is disabled for real users"}
             onClick={() => fileInputRef.current?.click()}
           >
             <ImageIcon className="h-4 w-4" />
@@ -332,11 +346,11 @@ function ChatInterface({ matchId, currentUserId }: { matchId: string, currentUse
           <Input
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="Type a message..."
+            placeholder={canSend ? "Type a message..." : "Read-only (real user)"}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            disabled={sending}
+            disabled={sending || !canSend}
           />
-          <Button size="icon" onClick={handleSend} disabled={sending || (!inputText.trim() && !imageFile)}>
+          <Button size="icon" onClick={handleSend} disabled={sending || !canSend || (!inputText.trim() && !imageFile)}>
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
@@ -345,7 +359,7 @@ function ChatInterface({ matchId, currentUserId }: { matchId: string, currentUse
   );
 }
 
-export function ChatHistory({ currentUserId }: ChatHistoryProps) {
+export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }: ChatHistoryProps) {
   const [matchedUsers, setMatchedUsers] = React.useState<MatchedUser[]>([]);
   const [selectedPartnerId, setSelectedPartnerId] = React.useState<string | null>(null);
   const [matches, setMatches] = React.useState<Record<string, string>>({}); // partnerId -> matchId
@@ -395,7 +409,7 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
     if (partnerIds.length > 0) {
       const { data: usersData, error: usersError } = await supabase
         .from('users')
-        .select('userid, username')
+        .select('userid, username, is_digital_human')
         .in('userid', partnerIds);
 
       if (usersError) {
@@ -487,6 +501,13 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
     return <div className="text-sm text-muted-foreground p-4">Loading matches...</div>;
   }
 
+  const selectedPartner = matchedUsers.find((u) => u.userid === selectedPartnerId) ?? null;
+  // "Take over" jumps to the partner's own admin page (chat history tab). If the
+  // partner is a digital human, that page lets you send messages as them.
+  const takeOverHref = selectedPartner
+    ? `${selectedPartner.is_digital_human ? '/admin/digital-humans' : '/admin/users'}/${selectedPartner.userid}?tab=history`
+    : null;
+
   return (
     <div className="space-y-4">
       <div className="rounded-md border p-3">
@@ -557,26 +578,45 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
 
       {matchedUsers.length > 0 ? (
         <>
-          <div className="w-full max-w-xs">
+          <div className="w-full max-w-md">
             <label className="text-sm font-medium mb-1 block">Select Partner</label>
-            <Select value={selectedPartnerId || ''} onValueChange={setSelectedPartnerId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select a matched user" />
-              </SelectTrigger>
-              <SelectContent>
-                {matchedUsers.map((user) => (
-                  <SelectItem key={user.userid} value={user.userid}>
-                    {user.username || 'Unknown User'}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <Select value={selectedPartnerId || ''} onValueChange={setSelectedPartnerId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a matched user" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {matchedUsers.map((user) => (
+                      <SelectItem key={user.userid} value={user.userid}>
+                        {user.username || 'Unknown User'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {takeOverHref && (
+                <Button
+                  asChild
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  title="Open this partner's page to chat as them"
+                >
+                  <Link href={takeOverHref}>
+                    <LogIn className="h-4 w-4 mr-1" />
+                    Take over
+                  </Link>
+                </Button>
+              )}
+            </div>
           </div>
 
           {selectedPartnerId && matches[selectedPartnerId] && (
             <ChatInterface
               matchId={matches[selectedPartnerId]}
               currentUserId={currentUserId}
+              canSend={currentUserIsDigitalHuman}
             />
           )}
         </>

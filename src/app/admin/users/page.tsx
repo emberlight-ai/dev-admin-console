@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { format, subDays } from "date-fns"
-import { Eye } from "lucide-react"
+import { ChevronDown, Eye } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -123,6 +123,9 @@ function StatCard({
 export default function ManageUsers() {
   const [users, setUsers] = React.useState<UserRow[]>([])
   const [loading, setLoading] = React.useState(true)
+  // User List is collapsed by default; admins expand it on demand so the page
+  // isn't dominated by a long table they usually scroll past.
+  const [usersExpanded, setUsersExpanded] = React.useState(false)
   const [deletedUsers, setDeletedUsers] = React.useState<DeletedUserRow[]>([])
   const [deletedLoading, setDeletedLoading] = React.useState(true)
   const [chartRows, setChartRows] = React.useState<
@@ -485,12 +488,28 @@ export default function ManageUsers() {
       </Card>
 
       <Card className="p-0">
-        <div className="p-6">
-          <div className="text-sm font-medium">User List</div>
-          <div className="text-xs text-muted-foreground">
-            {loading ? "Loading..." : `${users.length} users`}
+        <button
+          type="button"
+          onClick={() => setUsersExpanded((v) => !v)}
+          aria-expanded={usersExpanded}
+          className="flex w-full items-center justify-between gap-4 p-6 text-left transition-colors hover:bg-muted/40"
+        >
+          <div>
+            <div className="text-sm font-medium">User List</div>
+            <div className="text-xs text-muted-foreground">
+              {loading
+                ? "Loading..."
+                : `${users.length} users · click to ${usersExpanded ? "collapse" : "expand"}`}
+            </div>
           </div>
-        </div>
+          <ChevronDown
+            className={cn(
+              "h-5 w-5 shrink-0 text-muted-foreground transition-transform",
+              usersExpanded && "rotate-180"
+            )}
+          />
+        </button>
+        {usersExpanded ? (
         <div className="border-t">
           {loading ? (
             <div className="py-10 text-center text-muted-foreground">Loading...</div>
@@ -547,6 +566,7 @@ export default function ManageUsers() {
             </Table>
           )}
         </div>
+        ) : null}
       </Card>
 
       <Card className="p-0">
