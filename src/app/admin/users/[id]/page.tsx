@@ -28,9 +28,13 @@ import {
 import { ImageZoomDialog } from "@/app/admin/digital-humans/[id]/_components/image-zoom-dialog"
 import { ProfileEditSheet } from "@/app/admin/digital-humans/[id]/_components/profile-edit-sheet"
 import { PostsPanel } from "@/app/admin/digital-humans/[id]/_components/posts-panel"
-import { RelationshipGraph } from "@/components/matching/relationship-graph"
+import { RelationshipsTable } from "@/components/matching/relationships-table"
 import { ChatHistory } from "@/components/matching/chat-history"
 import type { DbUser } from "@/app/admin/digital-humans/[id]/_components/types"
+
+// DbUser is shared with the digital-humans pages and doesn't carry the flag,
+// but the users-by-id API returns the full row including is_digital_human.
+type UserWithDhFlag = DbUser & { is_digital_human?: boolean | null }
 
 type DeletionAudit = {
   deleted_user_id: string
@@ -614,19 +618,16 @@ export default function UserDetail() {
                 <div className="mt-6">
                   <div className="text-sm font-medium">Matchings</div>
                   <div className="mt-3">
-                    <Card className="p-4">
-                      {user ? (
-                        <RelationshipGraph
-                          initialRootUserId={user.userid}
-                          showPicker={false}
-                          heightClassName="h-[420px]"
-                        />
-                      ) : (
-                        <div className="text-sm text-muted-foreground">
-                          Relationship graph is not available for deleted users (live data is removed).
-                        </div>
-                      )}
-                    </Card>
+                    {user ? (
+                      <RelationshipsTable
+                        rootUserId={user.userid}
+                        rootIsDigitalHuman={Boolean((user as UserWithDhFlag).is_digital_human)}
+                      />
+                    ) : (
+                      <Card className="p-4 text-sm text-muted-foreground">
+                        Relationships are not available for deleted users (live data is removed).
+                      </Card>
+                    )}
                   </div>
                 </div>
               </TabsContent>

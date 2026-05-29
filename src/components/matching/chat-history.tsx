@@ -354,8 +354,9 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [searching, setSearching] = React.useState(false);
   const [searchResults, setSearchResults] = React.useState<UserSearchResult[]>([]);
-  const [selectedSearchUserId, setSelectedSearchUserId] = React.useState<string | null>(null);
-  const [sendingMatchRequest, setSendingMatchRequest] = React.useState(false);
+  // Per-row sending state, so multiple invites in flight don't fight over a
+  // single boolean and the right button shows the spinner.
+  const [pendingInviteUserId, setPendingInviteUserId] = React.useState<string | null>(null);
 
   const fetchMatches = React.useCallback(async () => {
     setLoading(true);
@@ -417,16 +418,14 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
     }
   }, [currentUserId, fetchMatches]);
 
-  // Debounced search effect
+  // Debounced search: short delay so typing feels responsive, no extra "Search"
+  // button to click. Results land directly in the list below the input.
   React.useEffect(() => {
     const q = searchQuery.trim();
     if (!q) {
       setSearchResults([]);
-      setSelectedSearchUserId(null);
       return;
     }
-    // Clear selected user when search query changes
-    setSelectedSearchUserId(null);
 
     const timeoutId = setTimeout(async () => {
       setSearching(true);
@@ -438,50 +437,21 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
         if (!res.ok) throw new Error(json.error || 'Failed to search users');
         const results = (json.data ?? []).filter((u) => u.userid !== currentUserId);
         setSearchResults(results);
-        // Don't auto-select - let user choose
       } catch (err: unknown) {
         console.error(err);
         toast.error(err instanceof Error ? err.message : 'Failed to search users');
         setSearchResults([]);
-        setSelectedSearchUserId(null);
       } finally {
         setSearching(false);
       }
-    }, 1000); // 1 second debounce
+    }, 300);
 
     return () => clearTimeout(timeoutId);
   }, [searchQuery, currentUserId]);
 
-  const searchUsers = async () => {
-    const q = searchQuery.trim();
-    if (!q) {
-      setSearchResults([]);
-      setSelectedSearchUserId(null);
-      return;
-    }
-    setSearching(true);
-    try {
-      const res = await fetch(
-        `/api/admin/users?mode=search&q=${encodeURIComponent(q)}&is_digital_human=false&limit=20`
-      );
-      const json = (await res.json()) as { data?: UserSearchResult[]; error?: string };
-      if (!res.ok) throw new Error(json.error || 'Failed to search users');
-      const results = (json.data ?? []).filter((u) => u.userid !== currentUserId);
-      setSearchResults(results);
-      // Don't auto-select - let user choose
-    } catch (err: unknown) {
-      console.error(err);
-      toast.error(err instanceof Error ? err.message : 'Failed to search users');
-      setSearchResults([]);
-      setSelectedSearchUserId(null);
-    } finally {
-      setSearching(false);
-    }
-  };
-
   const sendMatchRequest = React.useCallback(async (userId: string) => {
     if (!userId) return;
-    setSendingMatchRequest(true);
+    setPendingInviteUserId(userId);
     try {
       const res = await fetch('/api/admin/matching/send-match-request', {
         method: 'POST',
@@ -500,15 +470,15 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
       } else {
         toast.success(`Match request sent: ${json.id}`);
       }
-      // Clear search after successful invite
-      setSearchQuery('');
-      setSearchResults([]);
-      setSelectedSearchUserId(null);
+      // Drop the just-invited user from the results so the admin can keep
+      // inviting others without seeing duplicates. Keep the search query so
+      // they can continue down the list.
+      setSearchResults((prev) => prev.filter((u) => u.userid !== userId));
     } catch (err: unknown) {
       console.error(err);
       toast.error(err instanceof Error ? err.message : 'Failed to send match request');
     } finally {
-      setSendingMatchRequest(false);
+      setPendingInviteUserId(null);
     }
   }, [currentUserId, fetchMatches]);
 
@@ -521,56 +491,68 @@ export function ChatHistory({ currentUserId }: ChatHistoryProps) {
     <div className="space-y-4">
       <div className="rounded-md border p-3">
         <div className="text-sm font-medium">Send Match Request</div>
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="flex-1 relative">
-            <Input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search real user by username prefix…"
-            />
-            {searching && (
-              <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        <div className="mt-2 relative">
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search real user by username prefix…"
+          />
+          {searching && (
+            <div className="absolute right-2 top-1/2 -translate-y-1/2">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            </div>
+          )}
+        </div>
+
+        {searchQuery.trim() ? (
+          <div className="mt-2 rounded-md border bg-background overflow-hidden">
+            {searchResults.length === 0 && !searching ? (
+              <div className="p-3 text-sm text-muted-foreground text-center">
+                No users found.
               </div>
-            )}
-            {searchResults.length > 0 && (
-              <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-auto">
-                {searchResults.map((u) => (
-                  <button
-                    key={u.userid}
-                    type="button"
-                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent rounded-md"
-                    onClick={() => {
-                      setSelectedSearchUserId(u.userid);
-                      setSearchQuery(u.username || u.userid);
-                      setSearchResults([]);
-                    }}
-                  >
-                    <Avatar className="h-6 w-6 shrink-0">
-                      <AvatarImage src={u.avatar ?? undefined} alt={u.username} />
-                      <AvatarFallback className="text-xs">{initials(u.username || u.userid)}</AvatarFallback>
-                    </Avatar>
-                    <span className="truncate">{u.username || u.userid}</span>
-                  </button>
-                ))}
-              </div>
+            ) : (
+              <ul className="divide-y max-h-64 overflow-auto">
+                {searchResults.map((u) => {
+                  const isPending = pendingInviteUserId === u.userid;
+                  return (
+                    <li
+                      key={u.userid}
+                      className="flex items-center justify-between gap-2 px-3 py-2"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Avatar className="h-7 w-7 shrink-0">
+                          <AvatarImage src={u.avatar ?? undefined} alt={u.username} />
+                          <AvatarFallback className="text-xs">
+                            {initials(u.username || u.userid)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="text-sm truncate">
+                          {u.username || u.userid}
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={isPending}
+                        onClick={() => void sendMatchRequest(u.userid)}
+                      >
+                        {isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <>
+                            <Send className="h-3 w-3 mr-1" />
+                            Send
+                          </>
+                        )}
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              if (selectedSearchUserId) {
-                void sendMatchRequest(selectedSearchUserId);
-              } else {
-                void searchUsers();
-              }
-            }}
-            disabled={searching || (!searchQuery.trim() && !selectedSearchUserId) || sendingMatchRequest}
-          >
-            {sendingMatchRequest ? 'Inviting…' : 'Invite Match'}
-          </Button>
-        </div>
+        ) : null}
       </div>
 
       {matchedUsers.length > 0 ? (
