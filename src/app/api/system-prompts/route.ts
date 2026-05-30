@@ -12,7 +12,6 @@ export async function POST(req: NextRequest) {
     const gender = typeof body?.gender === "string" ? body.gender.trim() : ""
     const personality = typeof body?.personality === "string" ? body.personality.trim() : ""
     const system_prompt = typeof body?.system_prompt === "string" ? body.system_prompt : ""
-    const response_delay = typeof body?.response_delay === "number" ? body.response_delay : 0
     const matching_enabled =
       typeof body?.matching_enabled === "boolean" ? body.matching_enabled : true
     const immediate_match_enabled =
@@ -29,7 +28,6 @@ export async function POST(req: NextRequest) {
     if (!gender) return jsonError("Missing required field: gender", 400)
     if (!personality) return jsonError("Missing required field: personality", 400)
     if (!system_prompt.trim()) return jsonError("Missing required field: system_prompt", 400)
-    if (response_delay < 0 || response_delay > 86400) return jsonError("response_delay must be between 0 and 86400", 400)
     if (follow_up_delay < 0) return jsonError("follow_up_delay must be positive", 400)
     if (max_follow_ups < 0 || max_follow_ups > 10) return jsonError("max_follow_ups should be reasonable (0-10)", 400)
 
@@ -42,8 +40,7 @@ export async function POST(req: NextRequest) {
       .insert({ 
         gender, 
         personality, 
-        system_prompt, 
-        response_delay,
+        system_prompt,
         matching_enabled,
         immediate_match_enabled,
         follow_up_message_enabled,
@@ -53,7 +50,7 @@ export async function POST(req: NextRequest) {
         active_greeting_enabled,
         active_greeting_prompt: active_greeting_prompt.trim() || null
       })
-      .select("id,gender,personality,created_at,response_delay,matching_enabled")
+      .select("id,gender,personality,created_at,matching_enabled")
       .single()
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

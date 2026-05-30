@@ -51,37 +51,11 @@ select cron.schedule(
   $$
 );
 
--- ---- 3. dh-scheduled-replies: every minute ------------------
--- Fans out one dh-auto-reply call per match with a past-due
--- scheduled_response_at (handles the response-delay feature).
-select cron.schedule(
-  'dh-scheduled-replies',
-  '* * * * *',
-  $$
-  select net.http_post(
-    url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-auto-reply',
-    headers := jsonb_build_object(
-      'Content-Type',  'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2Y3d2amxtbmpudnlibHJ5Y3hqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTgzNjcyMCwiZXhwIjoyMDgxNDEyNzIwfQ.9oeRPz5_q3DrPy-T3LZm5Fsdt-o-ZbKiqI1bqGzhqiI'
-    ),
-    body    := jsonb_build_object(
-      'type',   'INSERT',
-      'table',  'messages',
-      'schema', 'public',
-      'record', jsonb_build_object(
-        'id',         '__scheduled__',
-        'match_id',   s.match_id,
-        'sender_id',  s.real_user_id,
-        'created_at', now()
-      )
-    )
-  )
-  from user_match_ai_state s
-  where s.scheduled_response_at is not null
-    and s.scheduled_response_at <= now()
-    and s.ai_locked_until is null;
-  $$
-);
+-- ---- 3. dh-scheduled-replies: REMOVED ----------------------
+-- The fixed response-delay mechanism is gone — dh-auto-reply now applies a
+-- natural typing delay inline (response length / ~40 WPM). The unschedule near
+-- the top of this file drops the old job when re-run. To remove the live job
+-- once, run:  select cron.unschedule('dh-scheduled-replies');
 
 -- ---- Verify all jobs are registered -------------------------
 select jobname, schedule, active from cron.job order by jobname;

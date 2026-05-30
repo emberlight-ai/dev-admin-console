@@ -36,7 +36,6 @@ const PLACEHOLDER_RE = /<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot
 export type SystemPromptLatest = {
   system_prompt: string
   created_at: string
-  response_delay: number
   matching_enabled: boolean
   immediate_match_enabled: boolean
   follow_up_message_enabled: boolean
@@ -119,7 +118,6 @@ export function SystemPromptForm({
   const [gender, setGender] = React.useState(initialGender || "Female")
   const [personality, setPersonality] = React.useState(initialPersonality || "")
   const [systemPrompt, setSystemPrompt] = React.useState("")
-  const [responseDelay, setResponseDelay] = React.useState<number>(0)
 
   const [matchingEnabled, setMatchingEnabled] = React.useState(true)
   const [immediateMatchEnabled, setImmediateMatchEnabled] = React.useState(false)
@@ -134,7 +132,6 @@ export function SystemPromptForm({
     gender: string
     personality: string
     systemPrompt: string
-    responseDelay: number
     matchingEnabled: boolean
     immediateMatchEnabled: boolean
     followUpEnabled: boolean
@@ -159,7 +156,6 @@ export function SystemPromptForm({
       gender: gender.trim(),
       personality: personality.trim(),
       systemPrompt,
-      responseDelay,
       matchingEnabled,
       immediateMatchEnabled,
       followUpEnabled,
@@ -180,7 +176,6 @@ export function SystemPromptForm({
       matchingEnabled,
       maxFollowUps,
       personality,
-      responseDelay,
       systemPrompt,
     ]
   )
@@ -206,7 +201,6 @@ export function SystemPromptForm({
         if (json.data) {
           const d = json.data as Partial<SystemPromptLatest>
           setSystemPrompt(d.system_prompt ?? "")
-          setResponseDelay(d.response_delay ?? 0)
           setMatchingEnabled(d.matching_enabled ?? true)
           setImmediateMatchEnabled(d.immediate_match_enabled ?? false)
           setFollowUpEnabled(d.follow_up_message_enabled ?? false)
@@ -341,7 +335,6 @@ export function SystemPromptForm({
     const g = gender.trim()
     const p = personality.trim()
     const sp = systemPrompt
-    const rd = Number(responseDelay)
     const me = Boolean(matchingEnabled)
     const imm = Boolean(immediateMatchEnabled)
     const fued = Boolean(followUpEnabled)
@@ -365,10 +358,6 @@ export function SystemPromptForm({
     }
     if (!PLACEHOLDER_RE.test(sp)) {
       toast.error("Prompt must include: <bot_profile> BOT_PROFILE_DETAILS </bot_profile>")
-      return false
-    }
-    if (isNaN(rd) || rd < 0 || rd > 86400) {
-      toast.error("Response delay must be between 0 and 86400 seconds")
       return false
     }
     if (age && !agp.trim()) {
@@ -395,7 +384,6 @@ export function SystemPromptForm({
           gender: g,
           personality: p,
           system_prompt: sp,
-          response_delay: rd,
           matching_enabled: me,
           immediate_match_enabled: imm,
           follow_up_message_enabled: fued,
@@ -541,17 +529,10 @@ export function SystemPromptForm({
         position: { x: 800, y: 170 },
         data: {
           title: "3) Reply",
-          description: "Core response behavior: delay + system prompt template.",
+          description: "Core response behavior: system prompt template.",
           onOpenSettings: () => openSettings("reply"),
           children: (
             <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">Response Delay</div>
-                  <div className="text-xs text-muted-foreground">Seconds</div>
-                </div>
-                <div className="text-sm font-semibold tabular-nums">{responseDelay}</div>
-              </div>
               <PromptPreview text={systemPromptPreview} />
             </div>
           ),
@@ -602,7 +583,6 @@ export function SystemPromptForm({
     immediateMatchEnabled,
     matchingEnabled,
     maxFollowUps,
-    responseDelay,
     systemPrompt,
   ])
 
@@ -854,17 +834,6 @@ export function SystemPromptForm({
 
             {settingsNodeId === "reply" ? (
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Initial Response Delay (seconds)</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={86400}
-                    value={responseDelay}
-                    onChange={(e) => setResponseDelay(Number(e.target.value))}
-                  />
-                  <div className="text-xs text-muted-foreground">0–86400 seconds</div>
-                </div>
                 <div className="space-y-2">
                   <Label>System Prompt Template</Label>
                   <Textarea

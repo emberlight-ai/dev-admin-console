@@ -38,7 +38,6 @@ const model = vertexAI.getGenerativeModel({
 // ── In-process cache ──────────────────────────────────────────────────────────
 interface CachedPrompt {
   template: string;
-  responseDelay: number;
   immediateMatchEnabled: boolean;
   followUpEnabled: boolean;
   followUpPrompt?: string;
@@ -90,7 +89,7 @@ async function refreshPrompts() {
   const { data } = await supabase
     .from('SystemPrompts')
     .select(
-      'gender, personality, system_prompt, response_delay, immediate_match_enabled, follow_up_message_enabled, follow_up_message_prompt, follow_up_delay, max_follow_ups, active_greeting_enabled, active_greeting_prompt, created_at'
+      'gender, personality, system_prompt, immediate_match_enabled, follow_up_message_enabled, follow_up_message_prompt, follow_up_delay, max_follow_ups, active_greeting_enabled, active_greeting_prompt, created_at'
     )
     .order('created_at', { ascending: false });
 
@@ -100,7 +99,6 @@ async function refreshPrompts() {
     if (newCache.has(key)) continue;
     newCache.set(key, {
       template: row.system_prompt,
-      responseDelay: row.response_delay || 0,
       immediateMatchEnabled: row.immediate_match_enabled || false,
       followUpEnabled: row.follow_up_message_enabled || false,
       followUpPrompt: row.follow_up_message_prompt || undefined,

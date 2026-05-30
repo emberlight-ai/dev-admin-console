@@ -37,7 +37,6 @@ export default function DigitalHumanDetail() {
   const [computedSystemPrompt, setComputedSystemPrompt] = React.useState<string | null>(null)
   const [effectiveSystemPrompt, setEffectiveSystemPrompt] = React.useState<string | null>(null)
   const [systemPromptMeta, setSystemPromptMeta] = React.useState<{
-    response_delay: number
     immediate_match_enabled: boolean
     follow_up_message_enabled: boolean
     active_greeting_enabled: boolean
@@ -89,7 +88,6 @@ export default function DigitalHumanDetail() {
         data?: {
           system_prompt: string
           created_at: string
-          response_delay?: number
           immediate_match_enabled?: boolean
           follow_up_message_enabled?: boolean
           follow_up_message_prompt?: string
@@ -103,7 +101,6 @@ export default function DigitalHumanDetail() {
       if (!res.ok) throw new Error(json.error || "Failed to load system prompt template")
 
       setSystemPromptMeta({
-        response_delay: json.data?.response_delay ?? 0,
         immediate_match_enabled: json.data?.immediate_match_enabled ?? false,
         follow_up_message_enabled: json.data?.follow_up_message_enabled ?? false,
         active_greeting_enabled: json.data?.active_greeting_enabled ?? false,

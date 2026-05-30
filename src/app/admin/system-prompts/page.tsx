@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CheckCircle2, Clock } from "lucide-react"
+import { CheckCircle2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -34,7 +34,6 @@ type KeyRow = {
   gender: string
   personality: string
   created_at: string
-  response_delay: number
   matching_enabled: boolean
   immediate_match_enabled: boolean
   follow_up_message_enabled: boolean
@@ -117,7 +116,6 @@ export default function SystemPromptsPage() {
               <TableRow>
                 <TableHead>Gender</TableHead>
                 <TableHead>Personality</TableHead>
-                <TableHead>Response Delay</TableHead>
                 <TableHead>Matching Enabled</TableHead>
                 <TableHead>Immediate Match</TableHead>
                 <TableHead>Follow-up</TableHead>
@@ -143,12 +141,6 @@ export default function SystemPromptsPage() {
                   <TableRow key={`${k.gender}::${k.personality}`} className="hover:bg-muted/20">
                     <TableCell>{k.gender}</TableCell>
                     <TableCell className="font-medium">{k.personality}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                        <Clock className="h-4 w-4" />
-                        {k.response_delay > 0 ? <span>{k.response_delay}s</span> : <span className="text-muted-foreground/60">Instant</span>}
-                      </div>
-                    </TableCell>
                     <TableCell>
                       {k.matching_enabled ? (
                         <div className="flex items-center gap-1.5 text-sm">

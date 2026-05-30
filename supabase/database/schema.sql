@@ -76,7 +76,6 @@ create table public."SystemPrompts" (
   gender text not null,
   personality text not null,
   system_prompt text not null,
-  response_delay integer default 0,
   immediate_match_enabled boolean not null default false,
   matching_enabled boolean default true,
   follow_up_message_enabled boolean default false,

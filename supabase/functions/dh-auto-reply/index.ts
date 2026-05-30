@@ -59,7 +59,6 @@ const model = vertexAI.getGenerativeModel({
 // ── In-process cache (survives warm invocations on Deno Deploy) ───────────────
 interface CachedPrompt {
   template: string;
-  responseDelay: number;
   followUpEnabled: boolean;
   followUpPrompt?: string;
   followUpDelay: number;
@@ -117,7 +116,7 @@ async function refreshPrompts() {
   const { data } = await supabase
     .from('SystemPrompts')
     .select(
-      'gender, personality, system_prompt, response_delay, immediate_match_enabled, follow_up_message_enabled, follow_up_message_prompt, follow_up_delay, max_follow_ups, active_greeting_enabled, active_greeting_prompt, created_at'
+      'gender, personality, system_prompt, immediate_match_enabled, follow_up_message_enabled, follow_up_message_prompt, follow_up_delay, max_follow_ups, active_greeting_enabled, active_greeting_prompt, created_at'
     )
     .order('created_at', { ascending: false });
 
@@ -127,7 +126,6 @@ async function refreshPrompts() {
     if (newCache.has(key)) continue;
     newCache.set(key, {
       template: row.system_prompt,
-      responseDelay: row.response_delay || 0,
       immediateMatchEnabled: row.immediate_match_enabled || false,
       followUpEnabled: row.follow_up_message_enabled || false,
       followUpPrompt: row.follow_up_message_prompt || undefined,
@@ -409,6 +407,7 @@ Deno.serve(async (req) => {
     const { record } = payload;
     const matchId = record.match_id;
     const senderId = record.sender_id;
+    const startTime = Date.now(); // timer for the natural typing delay (step 11b)
 
     // 1. Bail-out checks
     if (!(await getAutoReplyEnabled())) {
@@ -420,7 +419,7 @@ Deno.serve(async (req) => {
     // 2. Fetch ai state for this match
     const { data: stateData, error: stateErr } = await supabase
       .from('user_match_ai_state')
-      .select('match_id, last_message_id, last_message_at, ai_last_processed_message_id, ai_locked_until, scheduled_response_at, dh_user_id, real_user_id, ai_state, intimacy_score, intimacy_m, intimacy_v, last_selfie_sent_at')
+      .select('match_id, last_message_id, last_message_at, ai_last_processed_message_id, ai_locked_until, dh_user_id, real_user_id, ai_state, intimacy_score, intimacy_m, intimacy_v, last_selfie_sent_at')
       .eq('match_id', matchId)
       .single();
 
@@ -461,33 +460,8 @@ Deno.serve(async (req) => {
 
     const promptConfig = getPromptConfig(bot);
 
-    // 7. Response delay.
-    //    Short ("typing") delays are honored INLINE — we wait the remaining time
-    //    here and reply in the SAME invocation. Previously every delay was handed
-    //    off to the `dh-scheduled-replies` pg_cron, which runs only once a MINUTE,
-    //    so a 3s delay couldn't fire until the next minute tick (felt like ~20-60s).
-    //    Long delays still defer to the cron (we can't hold the function open that
-    //    long), capped so we stay within the function's wall-clock budget.
-    const INLINE_DELAY_MAX_MS = 55_000;
-    if (promptConfig?.responseDelay && promptConfig.responseDelay > 0 && stateData.last_message_at) {
-      const targetTime = new Date(stateData.last_message_at).getTime() + promptConfig.responseDelay * 1000;
-      const remainingMs = targetTime - Date.now();
-      if (remainingMs > 0) {
-        if (promptConfig.responseDelay * 1000 <= INLINE_DELAY_MAX_MS) {
-          // Short delay: wait it out, then fall through and reply now.
-          console.log('[dh-auto-reply] Inline delay', remainingMs, 'ms for', matchId);
-          await new Promise((r) => setTimeout(r, remainingMs));
-        } else if (!stateData.scheduled_response_at) {
-          // Long delay: hand off to the per-minute cron re-trigger.
-          await supabase
-            .from('user_match_ai_state')
-            .update({ scheduled_response_at: new Date(targetTime).toISOString() })
-            .eq('match_id', matchId);
-          console.log('[dh-auto-reply] Scheduled (long) response for', matchId, 'at', new Date(targetTime).toISOString());
-          return new Response('Scheduled', { status: 200 });
-        }
-      }
-    }
+    // (Fixed response-delay removed — replies now use a natural typing delay
+    //  applied AFTER generation; see step 11b.)
 
     // 8. Acquire lock
     const lockTime = new Date(Date.now() + LOCK_DURATION_SECONDS * 1000).toISOString();
@@ -582,6 +556,25 @@ Deno.serve(async (req) => {
       const respData = await result.response;
       const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
 
+      // 11b. Natural typing delay. The total time from receiving the user's message
+      //      to replying should feel like a human read it and typed the answer
+      //      (~40 WPM). Time already spent generating counts toward that — so a short
+      //      reply the model lingered on goes out right away, while a long reply waits
+      //      out the remaining "typing" time. Capped so nobody waits more than ~12s.
+      const TYPING_CHARS_PER_SEC = (40 * 5) / 60; // ~40 WPM, 5 chars/word ≈ 3.3 chars/s
+      const READ_LEAD_MS = 1000;                  // "saw your message, starting to type"
+      const MAX_TYPING_MS = 12000;
+      const jitter = 0.85 + Math.random() * 0.3;  // ±15% so the cadence isn't metronomic
+      const typingTargetMs = Math.min(
+        MAX_TYPING_MS,
+        (READ_LEAD_MS + (responseText.length / TYPING_CHARS_PER_SEC) * 1000) * jitter
+      );
+      const typingSleepMs = Math.max(0, Math.round(typingTargetMs) - (Date.now() - startTime));
+      if (typingSleepMs > 0) {
+        console.log('[dh-auto-reply] typing delay', typingSleepMs, 'ms for', matchId, '(', responseText.length, 'chars)');
+        await new Promise((r) => setTimeout(r, typingSleepMs));
+      }
+
       // 12. Insert reply
       const { error: sendError } = await supabase.rpc('rpc_send_message', {
         match_id: matchId,
@@ -634,7 +627,6 @@ Deno.serve(async (req) => {
         .from('user_match_ai_state')
         .update({
           ai_last_processed_message_id: checkpointId,
-          scheduled_response_at: null,
           ai_locked_until: null,
           ai_follow_up_count: 0,
           ai_state: 2, // DH Sent

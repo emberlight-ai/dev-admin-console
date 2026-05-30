@@ -33,7 +33,6 @@ export function ProfileCard({
   onEdit: () => void
   onZoomAvatar: () => void
   systemPromptMeta?: {
-    response_delay: number
     immediate_match_enabled: boolean
     follow_up_message_enabled: boolean
     active_greeting_enabled: boolean
@@ -144,10 +143,6 @@ export function ProfileCard({
         </div>
         <Separator className="my-0" />
         <dl className="space-y-3 text-sm">
-          <div className="flex items-center justify-between gap-4">
-            <dt className="text-muted-foreground">Response Delay</dt>
-            <dd>{(systemPromptMeta?.response_delay ?? 0) > 0 ? `${systemPromptMeta?.response_delay}s` : "Instant"}</dd>
-          </div>
           <div className="flex items-center justify-between gap-4">
             <dt className="text-muted-foreground">Immediate Match</dt>
             <dd>
