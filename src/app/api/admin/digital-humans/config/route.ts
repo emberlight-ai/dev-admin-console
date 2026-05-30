@@ -45,6 +45,13 @@ export async function POST(req: NextRequest) {
       "enable_digital_human_follow_up",
       "enable_find_nearby_people",
       "min_user_age_minutes_for_invites",
+      "enable_digital_human_selfies",
+      "selfie_intimacy_threshold",
+      "selfie_cooldown_hours",
+      "enable_proactive_double_text",
+      "proactive_intimacy_drive_threshold",
+      "proactive_delay_minutes",
+      "proactive_extra_followups",
     ]
 
     for (const key of allowedKeys) {

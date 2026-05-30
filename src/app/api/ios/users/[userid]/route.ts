@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import tzlookup from 'tz-lookup';
 import { withLogging } from '@/lib/with-logging';
 
 function isUuid(v: string) {
@@ -192,6 +193,21 @@ async function handlePATCH(
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Invalid JSON body';
       return NextResponse.json({ error: message }, { status: 400 });
+    }
+
+    // Keep `timezone` in sync whenever coordinates change, derived server-side
+    // (reliable) so DH messaging can show the user's correct local time instead
+    // of asking the model to convert UTC via zipcode.
+    const lat = updates.latitude;
+    const lon = updates.longitude;
+    if (typeof lat === 'number' && typeof lon === 'number') {
+      try {
+        updates.timezone = tzlookup(lat, lon);
+      } catch {
+        // Out-of-range / ocean coordinates — leave timezone unchanged.
+      }
+    } else if (lat === null && lon === null) {
+      updates.timezone = null;
     }
 
     if (Object.keys(updates).length === 0) {

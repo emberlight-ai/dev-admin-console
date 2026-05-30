@@ -79,6 +79,8 @@ interface UserRow {
   bio: string | null;
   profession: string | null;
   zipcode: string | null;
+  location_name: string | null;
+  timezone: string | null;
 }
 
 const globalPromptCache = (globalThis as any).__dhPromptCache as Map<string, CachedPrompt> | undefined;
@@ -151,7 +153,7 @@ async function getUserRow(userid: string): Promise<UserRow | null> {
 
   const { data, error } = await supabase
     .from('users')
-    .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode')
+    .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode, location_name, timezone')
     .eq('userid', userid)
     .single();
   if (error || !data) return null;
@@ -205,20 +207,45 @@ function generateBotProfileBlock(input: {
 </bot_profile>`;
 }
 
+// User-local time, computed server-side from the stored IANA timezone. We no
+// longer ask the model to convert UTC via zipcode (unreliable, and zipcode is
+// mostly empty). Falls back to Pacific when the timezone is unknown.
+const DEFAULT_TZ = 'America/Los_Angeles';
+function describeLocalTime(timezone?: string | null): string {
+  const tz = timezone || DEFAULT_TZ;
+  try {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, weekday: 'long', hour: 'numeric', minute: '2-digit', hour12: true,
+    }).formatToParts(now);
+    const get = (t: string) => parts.find((x) => x.type === t)?.value ?? '';
+    const h23 = Number(
+      new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(now)
+    );
+    const partOfDay =
+      h23 < 5 ? 'late at night' : h23 < 12 ? 'in the morning' : h23 < 17 ? 'in the afternoon' : h23 < 21 ? 'in the evening' : 'at night';
+    const approx = timezone ? '' : ' (approx — timezone unknown)';
+    return `${get('weekday')} ${get('hour')}:${get('minute')} ${get('dayPeriod')}, ${partOfDay}${approx}`;
+  } catch {
+    return new Date().toISOString();
+  }
+}
+
 function generateUserProfileBlock(input: {
   username?: string | null;
   age?: number | null;
   bio?: string | null;
-  zipcode?: string | null;
+  locationName?: string | null;
   profession?: string | null;
+  timezone?: string | null;
 }): string {
   return `<user_profile>
 **Username:** ${input.username || 'N/A'}
 **Bio:** ${input.bio || 'N/A'}
 **Age:** ${input.age ?? '—'}
-**Zipcode:** ${input.zipcode || 'N/A'}
+**Location:** ${input.locationName || 'Unknown'}
 **Profession:** ${input.profession || 'N/A'}
-**Current UTC Time:** ${new Date().toISOString()} (convert to user local time using Zipcode)
+**Their local time right now:** ${describeLocalTime(input.timezone)}
 </user_profile>`;
 }
 
@@ -233,14 +260,125 @@ function composeSystemInstruction(template: string, bot: UserRow, human: UserRow
     username: human.username,
     age: human.age,
     bio: human.bio,
-    zipcode: human.zipcode,
+    locationName: human.location_name,
     profession: human.profession,
+    timezone: human.timezone,
   });
 
   let prompt = template;
   prompt = prompt.replace(/<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot_profile>/i, botBlock);
   prompt = prompt.replace(/<user_profile>[\s\r\n]*USER_PROFILE_DETAILS[\s\r\n]*<\/user_profile>/i, userBlock);
   return prompt;
+}
+
+// ── Intimacy critic + Adam-style momentum + selfie picker ─────────────────────
+const globalSelfieCfg = (globalThis as any).__dhSelfieCfg as
+  | { value: { enabled: boolean; threshold: number; cooldownHours: number }; exp: number }
+  | undefined;
+let selfieCfgCache = globalSelfieCfg ?? {
+  value: { enabled: true, threshold: 55, cooldownHours: 3 },
+  exp: 0,
+};
+async function getSelfieConfig() {
+  if (Date.now() < selfieCfgCache.exp) return selfieCfgCache.value;
+  const { data } = await supabase.from('digital_human_config').select('key, value');
+  const map: Record<string, string> = {};
+  for (const r of data ?? []) map[r.key] = r.value;
+  const value = {
+    enabled: map['enable_digital_human_selfies'] !== 'false',
+    threshold: Number(map['selfie_intimacy_threshold'] ?? '55') || 55,
+    cooldownHours: Number(map['selfie_cooldown_hours'] ?? '3') || 3,
+  };
+  selfieCfgCache = { value, exp: Date.now() + CONFIG_TTL_MS };
+  (globalThis as any).__dhSelfieCfg = selfieCfgCache;
+  return value;
+}
+
+interface IntimacyResult {
+  intimacy: number;            // 0-100 current closeness from the user's side
+  selfieAppropriate: boolean;  // would sharing a personal selfie feel natural/welcome now?
+  userRequestedPhoto: boolean; // did the user explicitly ask to see them / a pic?
+}
+
+// A separate "referee" call, kept apart from reply generation so it can't game
+// its own score. Uses structured JSON output for a reliable parse.
+async function scoreIntimacy(systemText: string, transcript: string): Promise<IntimacyResult | null> {
+  try {
+    const judgePrompt = `${systemText}
+
+You are an objective relationship analyst observing the conversation below. Do NOT role-play or reply. Judge the CURRENT emotional/romantic closeness from the user's side, and whether the digital human sharing a personal selfie would feel natural and welcome right at this moment.
+
+Conversation:
+${transcript}
+
+Respond with JSON only.`;
+    const res = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: judgePrompt }] }],
+      generationConfig: {
+        temperature: 0.2,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'OBJECT',
+          properties: {
+            intimacy: { type: 'NUMBER' },
+            selfie_appropriate: { type: 'BOOLEAN' },
+            user_requested_photo: { type: 'BOOLEAN' },
+          },
+          required: ['intimacy', 'selfie_appropriate', 'user_requested_photo'],
+        },
+      },
+    });
+    const txt =
+      res.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? res.response?.text?.() ?? '';
+    const parsed = JSON.parse(txt);
+    const intimacy = Math.max(0, Math.min(100, Number(parsed.intimacy) || 0));
+    return {
+      intimacy,
+      selfieAppropriate: !!parsed.selfie_appropriate,
+      userRequestedPhoto: !!parsed.user_requested_photo,
+    };
+  } catch (e) {
+    console.error('[dh-auto-reply] intimacy critic failed', e);
+    return null;
+  }
+}
+
+// Adam-style update on the intimacy signal: g = gradient (score change),
+// m = velocity (1st moment), v = variance (2nd moment). `drive` saturates near
+// +/-1 for steady trends, so downstream cadence can scale smoothly.
+function adamStep(prevScore: number | null, m: number, v: number, score: number) {
+  const B1 = 0.8;
+  const B2 = 0.9;
+  const EPS = 1e-3;
+  const g = prevScore == null ? 0 : score - prevScore;
+  const nm = B1 * m + (1 - B1) * g;
+  const nv = B2 * v + (1 - B2) * g * g;
+  const drive = nm / (Math.sqrt(nv) + EPS);
+  return { m: nm, v: nv, drive };
+}
+
+// Lowest-ordinal selfie this DH hasn't already sent in this match (progressive release).
+async function pickUnsentSelfie(
+  dhId: string,
+  matchId: string
+): Promise<{ id: string; public_url: string; ordinal: number } | null> {
+  const { data: imgs } = await supabase
+    .from('dh_chat_images')
+    .select('id, public_url, ordinal')
+    .eq('dh_user_id', dhId)
+    .eq('active', true)
+    .order('ordinal', { ascending: true });
+  if (!imgs || imgs.length === 0) return null;
+  const { data: sent } = await supabase
+    .from('dh_sent_images')
+    .select('image_id')
+    .eq('match_id', matchId);
+  const sentIds = new Set((sent ?? []).map((s: { image_id: string }) => s.image_id));
+  return (
+    (imgs as Array<{ id: string; public_url: string; ordinal: number }>).find(
+      (img) => !sentIds.has(img.id)
+    ) ?? null
+  );
 }
 
 // ── Webhook payload ───────────────────────────────────────────────────────────
@@ -282,7 +420,7 @@ Deno.serve(async (req) => {
     // 2. Fetch ai state for this match
     const { data: stateData, error: stateErr } = await supabase
       .from('user_match_ai_state')
-      .select('match_id, last_message_id, last_message_at, ai_last_processed_message_id, ai_locked_until, scheduled_response_at, dh_user_id, real_user_id, ai_state')
+      .select('match_id, last_message_id, last_message_at, ai_last_processed_message_id, ai_locked_until, scheduled_response_at, dh_user_id, real_user_id, ai_state, intimacy_score, intimacy_m, intimacy_v, last_selfie_sent_at')
       .eq('match_id', matchId)
       .single();
 
@@ -419,12 +557,15 @@ Deno.serve(async (req) => {
 
       const systemInstruction = composeSystemInstruction(template, bot, human);
       const transcript = buildTranscript([...msgRows].reverse(), bot.userid, bot.username ?? 'Bot');
-      const prompt = `${systemInstruction}\n\nConversation so far:\n${transcript}\n\nWrite the next message as ${bot.username ?? 'the bot'}. Reply with only the message text.`;
+      const replyPrompt = `${systemInstruction}\n\nConversation so far:\n${transcript}\n\nWrite the next message as ${bot.username ?? 'the bot'}. Reply with only the message text.`;
 
-      // 11. Call Gemini
+      // 11. Generate the reply and score intimacy in parallel (independent calls).
       console.log('[dh-auto-reply] systemInstruction', systemInstruction);
       console.log('[dh-auto-reply] transcript', transcript);
-      const result = await model.generateContent(prompt);
+      const [result, critic] = await Promise.all([
+        model.generateContent(replyPrompt),
+        scoreIntimacy(systemInstruction, transcript),
+      ]);
       const respData = await result.response;
       const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
 
@@ -436,7 +577,46 @@ Deno.serve(async (req) => {
       });
       if (sendError) throw sendError;
 
-      // 13. Update state
+      // 12b. Maybe send a preserved selfie — when the referee says it's welcome
+      //      (or the user asked) AND intimacy clears the threshold AND we're past
+      //      the cooldown AND the DH still has an unsent selfie for this match.
+      let selfieSentAt: string | null = null;
+      try {
+        const selfieCfg = await getSelfieConfig();
+        const wantsSelfie =
+          !!critic &&
+          selfieCfg.enabled &&
+          (critic.userRequestedPhoto || (critic.selfieAppropriate && critic.intimacy >= selfieCfg.threshold));
+        const cooledDown =
+          !stateData.last_selfie_sent_at ||
+          Date.now() - new Date(stateData.last_selfie_sent_at).getTime() >= selfieCfg.cooldownHours * 3600_000;
+        if (wantsSelfie && cooledDown) {
+          const selfie = await pickUnsentSelfie(dhId, matchId);
+          if (selfie) {
+            const { data: imgMsg, error: imgErr } = await supabase.rpc('rpc_send_message', {
+              match_id: matchId,
+              media_url: selfie.public_url,
+              sender_id: bot.userid,
+            });
+            if (!imgErr) {
+              selfieSentAt = new Date().toISOString();
+              await supabase.from('dh_sent_images').insert({
+                match_id: matchId,
+                image_id: selfie.id,
+                message_id: (imgMsg as { id?: string } | null)?.id ?? null,
+              });
+              console.log('[dh-auto-reply] Sent selfie', selfie.id, 'to match', matchId, '(intimacy', critic?.intimacy, ')');
+            }
+          }
+        }
+      } catch (selfieErr) {
+        console.error('[dh-auto-reply] selfie send failed', selfieErr);
+      }
+
+      // 13. Update state (+ intimacy momentum)
+      const adam = critic
+        ? adamStep(stateData.intimacy_score ?? null, stateData.intimacy_m ?? 0, stateData.intimacy_v ?? 0, critic.intimacy)
+        : null;
       await supabase
         .from('user_match_ai_state')
         .update({
@@ -445,10 +625,19 @@ Deno.serve(async (req) => {
           ai_locked_until: null,
           ai_follow_up_count: 0,
           ai_state: 2, // DH Sent
+          ...(critic
+            ? {
+                intimacy_score: critic.intimacy,
+                intimacy_m: adam!.m,
+                intimacy_v: adam!.v,
+                intimacy_updated_at: new Date().toISOString(),
+              }
+            : {}),
+          ...(selfieSentAt ? { last_selfie_sent_at: selfieSentAt } : {}),
         })
         .eq('match_id', matchId);
 
-      console.log('[dh-auto-reply] Replied to match', matchId);
+      console.log('[dh-auto-reply] Replied to match', matchId, '(intimacy', critic?.intimacy ?? 'n/a', ')');
       return new Response(JSON.stringify({ ok: true }), {
         headers: { 'Content-Type': 'application/json' },
       });

@@ -59,6 +59,8 @@ interface UserRow {
   bio: string | null;
   profession: string | null;
   zipcode: string | null;
+  location_name: string | null;
+  timezone: string | null;
 }
 
 const globalPromptCache = (globalThis as any).__dhFollowPromptCache as Map<string, CachedPrompt> | undefined;
@@ -88,6 +90,36 @@ async function getFollowUpEnabled(): Promise<boolean> {
   };
   (globalThis as any).__dhFollowConfigCache = configCache;
   return configCache.followUpEnabled;
+}
+
+// Proactive double-text settings (admin-tunable via digital_human_config).
+interface ProactiveConfig {
+  enabled: boolean;
+  driveThreshold: number; // momentum drive at/above which a convo is "hot"
+  delayMinutes: number;   // how soon a hot convo gets a proactive double-text
+  extra: number;          // extra follow-ups granted beyond the per-bot max when hot
+}
+const globalProactiveCfg = (globalThis as any).__dhProactiveCfg as
+  | { value: ProactiveConfig; exp: number }
+  | undefined;
+let proactiveCfgCache = globalProactiveCfg ?? {
+  value: { enabled: true, driveThreshold: 0.3, delayMinutes: 90, extra: 2 },
+  exp: 0,
+};
+async function getProactiveConfig(): Promise<ProactiveConfig> {
+  if (Date.now() < proactiveCfgCache.exp) return proactiveCfgCache.value;
+  const { data } = await supabase.from('digital_human_config').select('key, value');
+  const map: Record<string, string> = {};
+  for (const r of data ?? []) map[r.key] = r.value;
+  const value: ProactiveConfig = {
+    enabled: map['enable_proactive_double_text'] !== 'false',
+    driveThreshold: Number(map['proactive_intimacy_drive_threshold'] ?? '0.3') || 0.3,
+    delayMinutes: Number(map['proactive_delay_minutes'] ?? '90') || 90,
+    extra: Number(map['proactive_extra_followups'] ?? '2') || 2,
+  };
+  proactiveCfgCache = { value, exp: Date.now() + CONFIG_TTL_MS };
+  (globalThis as any).__dhProactiveCfg = proactiveCfgCache;
+  return value;
 }
 
 async function refreshPrompts() {
@@ -136,7 +168,7 @@ async function getUserRow(userid: string): Promise<UserRow | null> {
 
   const { data, error } = await supabase
     .from('users')
-    .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode')
+    .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode, location_name, timezone')
     .eq('userid', userid)
     .single();
   if (error || !data) return null;
@@ -161,26 +193,51 @@ function generateBotProfileBlock(input: {
 </bot_profile>`;
 }
 
+// User-local time, computed server-side from the stored IANA timezone. We no
+// longer ask the model to convert UTC via zipcode (unreliable, and zipcode is
+// mostly empty). Falls back to Pacific when the timezone is unknown.
+const DEFAULT_TZ = 'America/Los_Angeles';
+function describeLocalTime(timezone?: string | null): string {
+  const tz = timezone || DEFAULT_TZ;
+  try {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, weekday: 'long', hour: 'numeric', minute: '2-digit', hour12: true,
+    }).formatToParts(now);
+    const get = (t: string) => parts.find((x) => x.type === t)?.value ?? '';
+    const h23 = Number(
+      new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(now)
+    );
+    const partOfDay =
+      h23 < 5 ? 'late at night' : h23 < 12 ? 'in the morning' : h23 < 17 ? 'in the afternoon' : h23 < 21 ? 'in the evening' : 'at night';
+    const approx = timezone ? '' : ' (approx — timezone unknown)';
+    return `${get('weekday')} ${get('hour')}:${get('minute')} ${get('dayPeriod')}, ${partOfDay}${approx}`;
+  } catch {
+    return new Date().toISOString();
+  }
+}
+
 function generateUserProfileBlock(input: {
   username?: string | null;
   age?: number | null;
   bio?: string | null;
-  zipcode?: string | null;
+  locationName?: string | null;
   profession?: string | null;
+  timezone?: string | null;
 }): string {
   return `<user_profile>
 **Username:** ${input.username || 'N/A'}
 **Bio:** ${input.bio || 'N/A'}
 **Age:** ${input.age ?? '—'}
-**Zipcode:** ${input.zipcode || 'N/A'}
+**Location:** ${input.locationName || 'Unknown'}
 **Profession:** ${input.profession || 'N/A'}
-**Current UTC Time:** ${new Date().toISOString()} (convert to user local time using Zipcode)
+**Their local time right now:** ${describeLocalTime(input.timezone)}
 </user_profile>`;
 }
 
 function composeSystemText(template: string, bot: UserRow, human: UserRow): string {
   const botBlock = generateBotProfileBlock({ name: bot.username ?? 'Digital Human', age: bot.age, archetype: bot.profession, bio: bot.bio });
-  const userBlock = generateUserProfileBlock({ username: human.username, age: human.age, bio: human.bio, zipcode: human.zipcode, profession: human.profession });
+  const userBlock = generateUserProfileBlock({ username: human.username, age: human.age, bio: human.bio, locationName: human.location_name, profession: human.profession, timezone: human.timezone });
   let prompt = template;
   prompt = prompt.replace(/<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot_profile>/i, botBlock);
   prompt = prompt.replace(/<user_profile>[\s\r\n]*USER_PROFILE_DETAILS[\s\r\n]*<\/user_profile>/i, userBlock);
@@ -213,6 +270,7 @@ Deno.serve(async (req) => {
     }
 
     await ensurePrompts();
+    const proactiveCfg = await getProactiveConfig();
 
     const now = Date.now();
     const oneHourAgo = new Date(now - 60 * 60 * 1000).toISOString();
@@ -220,7 +278,7 @@ Deno.serve(async (req) => {
     // Find follow-up candidates: DH sent last message (state 2 or 4), not locked, enough time passed
     const { data, error } = await supabase
       .from('user_match_ai_state')
-      .select('match_id, last_message_id, last_message_at, ai_follow_up_count, ai_locked_until, dh_user_id, real_user_id')
+      .select('match_id, last_message_id, last_message_at, ai_follow_up_count, ai_locked_until, dh_user_id, real_user_id, intimacy_m, intimacy_v')
       .in('ai_state', [2, 4])
       .lt('last_message_at', oneHourAgo)
       .is('ai_locked_until', null)
@@ -246,10 +304,31 @@ Deno.serve(async (req) => {
       const promptConfig = getPromptConfig(botUser);
       if (!promptConfig || !promptConfig.followUpEnabled || !promptConfig.followUpPrompt) continue;
 
-      const max = promptConfig.maxFollowUps || 3;
-      if ((c.ai_follow_up_count || 0) >= max) continue;
+      // Intimacy momentum drives cadence. drive ~ [-1, 1]: hot = warming fast.
+      const drive = (c.intimacy_m ?? 0) / (Math.sqrt(c.intimacy_v ?? 0) + 1e-3);
+      const hot = proactiveCfg.enabled && drive >= proactiveCfg.driveThreshold;
+      const cold = drive <= -proactiveCfg.driveThreshold;
 
-      const delayMs = (promptConfig.followUpDelay || 86400) * 1000;
+      // Allowed follow-ups: more when hot (eager double-texting), fewer when cold
+      // (don't pester someone losing interest).
+      const baseMax = promptConfig.maxFollowUps || 3;
+      const effectiveMax = hot
+        ? baseMax + proactiveCfg.extra
+        : cold
+          ? Math.max(1, baseMax - 2)
+          : baseMax;
+      if ((c.ai_follow_up_count || 0) >= effectiveMax) continue;
+
+      // Wait time: a hot convo gets a short proactive double-text; otherwise scale
+      // the configured delay by momentum (0.4x..1.6x). Note the candidate query
+      // already enforces a >= 1h floor since the DH's last message.
+      let delayMs: number;
+      if (hot) {
+        delayMs = proactiveCfg.delayMinutes * 60 * 1000;
+      } else {
+        const momentumFactor = Math.max(0.4, Math.min(1.6, 1 - 0.6 * drive));
+        delayMs = (promptConfig.followUpDelay || 86400) * 1000 * momentumFactor;
+      }
       const lastMsgTime = new Date(c.last_message_at).getTime();
       if (now < lastMsgTime + delayMs) continue;
 

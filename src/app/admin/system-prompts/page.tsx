@@ -225,6 +225,13 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
     enable_digital_human_follow_up: "true",
     enable_find_nearby_people: "false",
     min_user_age_minutes_for_invites: "10",
+    enable_digital_human_selfies: "true",
+    selfie_intimacy_threshold: "55",
+    selfie_cooldown_hours: "3",
+    enable_proactive_double_text: "true",
+    proactive_intimacy_drive_threshold: "0.3",
+    proactive_delay_minutes: "90",
+    proactive_extra_followups: "2",
   })
 
   React.useEffect(() => {
@@ -423,6 +430,102 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
                   value={config.active_hour_end}
                   onChange={(e) => setConfig({ ...config, active_hour_end: e.target.value })}
                 />
+              </div>
+            </div>
+
+            {/* Selfies & proactive outreach */}
+            <div className="grid gap-4 border-t pt-4">
+              <div className="text-sm font-medium">Selfies &amp; proactive outreach</div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="g-selfies"
+                      className="h-4 w-4 rounded border-gray-300 accent-primary"
+                      checked={config.enable_digital_human_selfies !== "false"}
+                      onChange={(e) =>
+                        setConfig({ ...config, enable_digital_human_selfies: e.target.checked ? "true" : "false" })
+                      }
+                    />
+                    <Label htmlFor="g-selfies">Enable Selfies</Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground ml-6">
+                    Digital humans send a preserved selfie when intimacy is high enough (or the user asks).
+                  </p>
+                </div>
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="g-proactive"
+                      className="h-4 w-4 rounded border-gray-300 accent-primary"
+                      checked={config.enable_proactive_double_text !== "false"}
+                      onChange={(e) =>
+                        setConfig({ ...config, enable_proactive_double_text: e.target.checked ? "true" : "false" })
+                      }
+                    />
+                    <Label htmlFor="g-proactive">Enable Proactive Double-Texting</Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground ml-6">
+                    When momentum is hot, digital humans reach out again sooner and a bit more.
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Selfie intimacy threshold (0-100)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={config.selfie_intimacy_threshold}
+                    onChange={(e) => setConfig({ ...config, selfie_intimacy_threshold: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Min closeness score before a selfie may be sent.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Selfie cooldown (hours)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={config.selfie_cooldown_hours}
+                    onChange={(e) => setConfig({ ...config, selfie_cooldown_hours: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Min hours between selfies in one conversation.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Proactive drive threshold (0-1)</Label>
+                  <Input
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    max="1"
+                    value={config.proactive_intimacy_drive_threshold}
+                    onChange={(e) => setConfig({ ...config, proactive_intimacy_drive_threshold: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">How &quot;hot&quot; momentum must be to trigger proactive outreach.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Proactive delay (minutes)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={config.proactive_delay_minutes}
+                    onChange={(e) => setConfig({ ...config, proactive_delay_minutes: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">How soon a hot convo gets a double-text (a 1h floor still applies).</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Proactive extra follow-ups</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={config.proactive_extra_followups}
+                    onChange={(e) => setConfig({ ...config, proactive_extra_followups: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Extra messages allowed beyond the per-bot max when hot.</p>
+                </div>
               </div>
             </div>
           </div>

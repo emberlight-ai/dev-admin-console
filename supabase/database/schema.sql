@@ -32,6 +32,7 @@ create table public.users (
   location_name text,
   longitude double precision,
   latitude double precision,
+  timezone text, -- IANA timezone (e.g. America/Chicago) derived from lat/long; powers DH local-time messaging
   notification_enabled boolean not null default false,
   location_enabled boolean not null default false,
   created_at timestamptz default now(),
@@ -581,7 +582,14 @@ values
   ('enable_digital_human_auto_response', 'true', 'Global toggle for digital human auto-replies'),
   ('enable_digital_human_follow_up', 'true', 'Global toggle for digital human follow-up messages'),
   ('enable_find_nearby_people', 'false', 'Global toggle for find nearby people responses'),
-  ('min_user_age_minutes_for_invites', '10', 'Minimum user account age before receiving digital human invites')
+  ('min_user_age_minutes_for_invites', '10', 'Minimum user account age before receiving digital human invites'),
+  ('enable_digital_human_selfies', 'true', 'Allow DHs to send preserved selfies when intimacy is high enough'),
+  ('selfie_intimacy_threshold', '55', 'Min intimacy score (0-100) before a DH may send a selfie'),
+  ('selfie_cooldown_hours', '3', 'Min hours between selfies a DH sends within one conversation'),
+  ('enable_proactive_double_text', 'true', 'Allow DHs to proactively double-text when intimacy momentum is hot'),
+  ('proactive_intimacy_drive_threshold', '0.3', 'Momentum drive (m/sqrt(v), ~-1..1) at/above which a conversation counts as hot'),
+  ('proactive_delay_minutes', '90', 'How soon a hot conversation gets a proactive double-text after the DH last message (minutes)'),
+  ('proactive_extra_followups', '2', 'Extra follow-up messages granted beyond the per-bot max when a conversation is hot')
 on conflict (key) do nothing;
 
 -- ==============================================================================
@@ -615,9 +623,45 @@ create table if not exists public.user_match_ai_state (
   dh_user_id uuid references public.users(userid) on delete cascade not null,
   real_user_id uuid references public.users(userid) on delete cascade not null,
   ai_state integer default 0, -- 0=Matched, 1=GreetingSent/Skipped, 2=DHSent, 3=UserSent, 4=DHFollowUp
-  
+
+  -- Intimacy signal + Adam-style momentum (see functions/dh-auto-reply). A referee LLM
+  -- scores closeness 0-100 each turn; m = velocity (1st moment), v = variance (2nd moment).
+  intimacy_score double precision,
+  intimacy_m double precision not null default 0,
+  intimacy_v double precision not null default 0,
+  intimacy_updated_at timestamptz,
+  last_selfie_sent_at timestamptz, -- selfie cooldown per match
+
   updated_at timestamptz default now()
 );
+
+-- ── DH preserved selfies: inventory + per-conversation sent ledger ──────────────
+-- Some digital humans have curated selfies at images/{dh}/chat_images/pic_N.{jpg,png}.
+-- A DH releases them in order as intimacy grows; the ledger prevents repeats per match.
+create table if not exists public.dh_chat_images (
+  id uuid primary key default gen_random_uuid(),
+  dh_user_id uuid not null references public.users(userid) on delete cascade,
+  storage_path text not null unique,
+  public_url text not null,
+  ordinal int not null default 0,        -- release order, parsed from pic_N
+  caption text,                          -- vision-generated at ingest (nullable)
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index if not exists dh_chat_images_dh_idx on public.dh_chat_images (dh_user_id, ordinal);
+
+create table if not exists public.dh_sent_images (
+  match_id uuid not null references public.user_matches(id) on delete cascade,
+  image_id uuid not null references public.dh_chat_images(id) on delete cascade,
+  message_id uuid references public.messages(id) on delete set null,
+  sent_at timestamptz not null default now(),
+  primary key (match_id, image_id)
+);
+create index if not exists dh_sent_images_match_idx on public.dh_sent_images (match_id);
+
+-- Service-role only (bypasses RLS); no anon/auth access needed.
+alter table public.dh_chat_images enable row level security;
+alter table public.dh_sent_images enable row level security;
 
 alter table public.user_match_ai_state enable row level security;
 

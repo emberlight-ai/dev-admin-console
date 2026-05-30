@@ -58,6 +58,8 @@ interface UserRow {
   bio: string | null;
   profession: string | null;
   zipcode: string | null;
+  location_name: string | null;
+  timezone: string | null;
 }
 
 const globalPromptCache = (globalThis as any).__dhGreetPromptCache as Map<string, CachedPrompt> | undefined;
@@ -139,20 +141,45 @@ function generateBotProfileBlock(input: {
 </bot_profile>`;
 }
 
+// User-local time, computed server-side from the stored IANA timezone. We no
+// longer ask the model to convert UTC via zipcode (unreliable, and zipcode is
+// mostly empty). Falls back to Pacific when the timezone is unknown.
+const DEFAULT_TZ = 'America/Los_Angeles';
+function describeLocalTime(timezone?: string | null): string {
+  const tz = timezone || DEFAULT_TZ;
+  try {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, weekday: 'long', hour: 'numeric', minute: '2-digit', hour12: true,
+    }).formatToParts(now);
+    const get = (t: string) => parts.find((x) => x.type === t)?.value ?? '';
+    const h23 = Number(
+      new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(now)
+    );
+    const partOfDay =
+      h23 < 5 ? 'late at night' : h23 < 12 ? 'in the morning' : h23 < 17 ? 'in the afternoon' : h23 < 21 ? 'in the evening' : 'at night';
+    const approx = timezone ? '' : ' (approx — timezone unknown)';
+    return `${get('weekday')} ${get('hour')}:${get('minute')} ${get('dayPeriod')}, ${partOfDay}${approx}`;
+  } catch {
+    return new Date().toISOString();
+  }
+}
+
 function generateUserProfileBlock(input: {
   username?: string | null;
   age?: number | null;
   bio?: string | null;
-  zipcode?: string | null;
+  locationName?: string | null;
   profession?: string | null;
+  timezone?: string | null;
 }): string {
   return `<user_profile>
 **Username:** ${input.username || 'N/A'}
 **Bio:** ${input.bio || 'N/A'}
 **Age:** ${input.age ?? '—'}
-**Zipcode:** ${input.zipcode || 'N/A'}
+**Location:** ${input.locationName || 'Unknown'}
 **Profession:** ${input.profession || 'N/A'}
-**Current UTC Time:** ${new Date().toISOString()} (convert to user local time using Zipcode)
+**Their local time right now:** ${describeLocalTime(input.timezone)}
 </user_profile>`;
 }
 
@@ -167,8 +194,9 @@ function composeSystemText(template: string, bot: UserRow, human: UserRow): stri
     username: human.username,
     age: human.age,
     bio: human.bio,
-    zipcode: human.zipcode,
+    locationName: human.location_name,
     profession: human.profession,
+    timezone: human.timezone,
   });
   let prompt = template;
   prompt = prompt.replace(/<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot_profile>/i, botBlock);
@@ -211,7 +239,7 @@ Deno.serve(async (req) => {
     // 1. Fetch both users
     const { data: users, error: usersErr } = await supabase
       .from('users')
-      .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode')
+      .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode, location_name, timezone')
       .in('userid', [userAId, userBId]);
 
     if (usersErr || !users || users.length < 2) {
