@@ -461,16 +461,29 @@ Deno.serve(async (req) => {
 
     const promptConfig = getPromptConfig(bot);
 
-    // 7. Response delay — set scheduled_response_at and return; pg_cron will re-trigger
-    if (!stateData.scheduled_response_at && promptConfig?.responseDelay && promptConfig.responseDelay > 0) {
-      if (stateData.last_message_at) {
-        const targetTime = new Date(stateData.last_message_at).getTime() + promptConfig.responseDelay * 1000;
-        if (targetTime > Date.now()) {
+    // 7. Response delay.
+    //    Short ("typing") delays are honored INLINE — we wait the remaining time
+    //    here and reply in the SAME invocation. Previously every delay was handed
+    //    off to the `dh-scheduled-replies` pg_cron, which runs only once a MINUTE,
+    //    so a 3s delay couldn't fire until the next minute tick (felt like ~20-60s).
+    //    Long delays still defer to the cron (we can't hold the function open that
+    //    long), capped so we stay within the function's wall-clock budget.
+    const INLINE_DELAY_MAX_MS = 55_000;
+    if (promptConfig?.responseDelay && promptConfig.responseDelay > 0 && stateData.last_message_at) {
+      const targetTime = new Date(stateData.last_message_at).getTime() + promptConfig.responseDelay * 1000;
+      const remainingMs = targetTime - Date.now();
+      if (remainingMs > 0) {
+        if (promptConfig.responseDelay * 1000 <= INLINE_DELAY_MAX_MS) {
+          // Short delay: wait it out, then fall through and reply now.
+          console.log('[dh-auto-reply] Inline delay', remainingMs, 'ms for', matchId);
+          await new Promise((r) => setTimeout(r, remainingMs));
+        } else if (!stateData.scheduled_response_at) {
+          // Long delay: hand off to the per-minute cron re-trigger.
           await supabase
             .from('user_match_ai_state')
             .update({ scheduled_response_at: new Date(targetTime).toISOString() })
             .eq('match_id', matchId);
-          console.log('[dh-auto-reply] Scheduled response for', matchId, 'at', new Date(targetTime).toISOString());
+          console.log('[dh-auto-reply] Scheduled (long) response for', matchId, 'at', new Date(targetTime).toISOString());
           return new Response('Scheduled', { status: 200 });
         }
       }
