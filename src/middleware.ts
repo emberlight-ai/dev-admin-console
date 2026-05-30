@@ -37,6 +37,19 @@ export async function middleware(request: NextRequest) {
       res.cookies.delete('admin_session');
       return res;
     }
+
+    // Valid session → refresh it (sliding 30-day expiry) so an active admin
+    // stays signed in instead of being asked to log in again on later visits.
+    const proto = request.headers.get('x-forwarded-proto') ?? 'http';
+    const refreshed = NextResponse.next();
+    refreshed.cookies.set('admin_session', adminSession, {
+      httpOnly: true,
+      secure: proto === 'https',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 30,
+    });
+    return refreshed;
   }
 
   return NextResponse.next();

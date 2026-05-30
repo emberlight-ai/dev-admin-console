@@ -27,6 +27,7 @@ export async function login(formData: FormData) {
     const proto = headerStore.get('x-forwarded-proto') ?? 'http';
     const isSecure = proto === 'https';
 
+    const MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days; refreshed on each /admin visit (sliding)
     cookieStore.set(SESSION_COOKIE_NAME, adminCredsVersion(), {
       httpOnly: true,
       // Respect TLS termination in front of Next (e.g. Nginx/Cloudflare).
@@ -36,8 +37,10 @@ export async function login(formData: FormData) {
       // Lax is sufficient here and is more robust across typical navigation flows.
       sameSite: 'lax',
       path: '/',
-      // Persist a bit so refreshes / new tabs don't unexpectedly log you out.
-      maxAge: 60 * 60 * 24 * 7, // 7 days
+      // Set both maxAge and expires for cross-browser persistence (some browsers
+      // drop one when a cookie is set inside a redirecting server action).
+      maxAge: MAX_AGE_SECONDS,
+      expires: new Date(Date.now() + MAX_AGE_SECONDS * 1000),
     });
     redirect('/admin/users');
   } else {
