@@ -51,10 +51,32 @@ const safetySettings = [
   },
 ];
 
+// Utility model (cheap/fast): intimacy critic + image description.
 const model = vertexAI.getGenerativeModel({
   model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-3.1-flash-lite-preview',
   safetySettings,
 });
+
+// Reply model (higher quality): the user-facing message. Gemini 3 Pro follows
+// long, nuanced persona prompts far better than flash-lite (which tends to
+// flatten into generic replies). Override via the AI_REPLY_MODEL secret if your
+// Google Cloud project exposes a different id.
+const replyModel = vertexAI.getGenerativeModel({
+  model: Deno.env.get('AI_REPLY_MODEL') ?? 'gemini-3-pro-preview',
+  safetySettings,
+});
+
+// Generate the user-facing reply with the Pro model, falling back to the utility
+// model if the configured reply model id is unavailable — so a bad id degrades
+// gracefully instead of breaking replies in production.
+async function generateReply(prompt: string) {
+  try {
+    return await replyModel.generateContent(prompt);
+  } catch (err) {
+    console.error('[dh-auto-reply] reply model failed; falling back to utility model', err);
+    return await model.generateContent(prompt);
+  }
+}
 
 // ── In-process cache (survives warm invocations on Deno Deploy) ───────────────
 interface CachedPrompt {
@@ -550,7 +572,7 @@ Deno.serve(async (req) => {
       console.log('[dh-auto-reply] systemInstruction', systemInstruction);
       console.log('[dh-auto-reply] transcript', transcript);
       const [result, critic] = await Promise.all([
-        model.generateContent(replyPrompt),
+        generateReply(replyPrompt),
         scoreIntimacy(systemInstruction, transcript),
       ]);
       const respData = await result.response;
