@@ -291,25 +291,24 @@ create or replace function public.rpc_get_matching_candidates(
 )
 returns setof public.users
 language sql
-security invoker
+-- security definer so the function can read dh_chat_images (RLS-locked to the
+-- service role) for the image-rich whitelist below. Safe because this function is
+-- param-driven (viewer_user_id), not auth.uid()-based.
+security definer
+set search_path = public
 as $$
   with whitelisted_users(userid) as (
-    values
-      ('b1f63e0b-4907-4c48-bf70-43d9cfe0afe1'::uuid),
-      ('d2d9c18c-f8d7-4381-b82a-5ca0db1dd229'::uuid),
-      ('f9d35dd1-1c30-4a6c-9000-7e5ab05c5795'::uuid),
-      ('550c2bb1-e593-4095-950b-7b48bfec6fd7'::uuid),
-      ('e82fb227-9516-4780-b012-9b8f1752c583'::uuid),
-      ('e3b4aaa9-d50c-42e4-aa1f-aba27310fe61'::uuid),
-      ('fa8ff235-497a-45a8-ba66-89898d7daf7b'::uuid),
-      ('dc1ec1a7-bd60-4549-9815-4d7f277c3a71'::uuid),
-      ('2e56005f-d840-4356-8d23-1bfdc49e7d37'::uuid),
-      ('e58e6de2-ee7a-40d5-acb2-81fd239670f9'::uuid),
-      ('477eaba2-eac2-47cd-85cb-f2cbb5c18100'::uuid),
-      ('154495e6-65b3-4f48-98ac-ccdfa8e996f4'::uuid),
-      ('13f9d9d1-7f19-4ed5-be95-aa84c2afdf50'::uuid),
-      ('d9b72470-7193-4029-b6e0-c48e479c77dd'::uuid),
-      ('4629d1c2-7777-40d6-8da5-98f5c549e3c8'::uuid)
+    -- Feature digital humans with a rich library of chat images (selfies they can
+    -- send as intimacy grows in dh-auto-reply). Data-driven + self-maintaining:
+    -- replaces the old hardcoded UUID list. "Rich" = at least 3 active chat images.
+    select i.dh_user_id
+    from public.dh_chat_images i
+    join public.users u on u.userid = i.dh_user_id
+    where i.active
+      and coalesce(u.is_digital_human, false) = true
+      and u.deleted_at is null
+    group by i.dh_user_id
+    having count(*) >= 3
   ),
   eligible_candidates as (
     select u.*
@@ -350,18 +349,16 @@ as $$
     join whitelisted_users wu on wu.userid = ec.userid
   ),
   candidate_pool as (
-    -- TEMP: prefer this curated whitelist while testing the matches list.
-    -- Remove whitelisted_users/whitelisted_candidates/candidate_pool later to
-    -- return directly to random eligible_candidates.
-    -- Gender, block, digital-human, and swipe filters are applied before this,
-    -- so users only see whitelisted cards that still match normal eligibility.
+    -- Prefer image-rich digital humans (the whitelist above) so the cards users
+    -- see can actually send selfies. Gender, block, digital-human, and swipe
+    -- filters are applied before this, so only eligible image-rich cards appear.
     select wc.*
     from whitelisted_candidates wc
 
     union all
 
-    -- Once every eligible whitelisted card has been swiped/filtered out for
-    -- this viewer, fall back to the normal randomized match-card pool.
+    -- Once every eligible image-rich card has been swiped/filtered out for this
+    -- viewer, fall back to the normal randomized match-card pool.
     select ec.*
     from eligible_candidates ec
     where not exists (select 1 from whitelisted_candidates)
@@ -385,6 +382,8 @@ declare
   invites_per_run integer;
   invites_sent integer := 0;
   digital_human_id uuid;
+  digital_human_gender text;
+  target_real_user_gender text;
   real_user_id uuid;
   max_invites integer;
   min_user_age_minutes integer;
@@ -406,14 +405,13 @@ begin
   end if;
   
   -- Loop to send invites
-  
-  -- Loop to send invites
   for i in 1..invites_per_run loop
     -- Select a random digital human
-    select userid into digital_human_id
+    select userid, lower(trim(gender)) into digital_human_id, digital_human_gender
     from public.users
     where is_digital_human = true
     and deleted_at is null
+    and lower(trim(coalesce(gender, ''))) in ('female', 'male')
     order by random()
     limit 1;
     
@@ -421,18 +419,30 @@ begin
     if digital_human_id is null then
       exit;
     end if;
+
+    target_real_user_gender := case
+      when digital_human_gender = 'female' then 'male'
+      when digital_human_gender = 'male' then 'female'
+      else null
+    end;
+
+    if target_real_user_gender is null then
+      continue;
+    end if;
     
     -- Select a real user who:
     -- 1. Hasn't exceeded max invites
     -- 2. Doesn't already have a pending request with this digital human
     -- 3. Isn't already matched with this digital human
     -- 4. Isn't blocked by or blocking this digital human
+    -- 5. Has the opposite gender for this digital human
     -- Prioritize older users first (newer users last) by ordering by created_at ASC
     select u.userid into real_user_id
     from public.users u
     left join public.digital_human_invites_tracking dt on dt.user_id = u.userid
     where u.is_digital_human = false
       and u.deleted_at is null
+      and lower(trim(coalesce(u.gender, ''))) = target_real_user_gender
       and u.created_at <= now() - make_interval(mins => min_user_age_minutes)
       and coalesce(dt.invite_count, 0) < max_invites
       and not exists (
