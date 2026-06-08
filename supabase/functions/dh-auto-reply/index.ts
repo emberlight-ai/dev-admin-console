@@ -293,10 +293,19 @@ function composeSystemInstruction(template: string, bot: UserRow, human: UserRow
 
 // ── Intimacy critic + Adam-style momentum + selfie picker ─────────────────────
 const globalSelfieCfg = (globalThis as any).__dhSelfieCfg as
-  | { value: { enabled: boolean; threshold: number; cooldownHours: number }; exp: number }
+  | {
+      value: {
+        enabled: boolean;
+        threshold: number;
+        cooldownMinutes: number;
+        reciprocateGapMinutes: number;
+        reciprocateOnUserImage: boolean;
+      };
+      exp: number;
+    }
   | undefined;
 let selfieCfgCache = globalSelfieCfg ?? {
-  value: { enabled: true, threshold: 55, cooldownHours: 3 },
+  value: { enabled: true, threshold: 55, cooldownMinutes: 30, reciprocateGapMinutes: 2, reciprocateOnUserImage: true },
   exp: 0,
 };
 async function getSelfieConfig() {
@@ -304,10 +313,22 @@ async function getSelfieConfig() {
   const { data } = await supabase.from('digital_human_config').select('key, value');
   const map: Record<string, string> = {};
   for (const r of data ?? []) map[r.key] = r.value;
+  // Parse a numeric knob, falling back ONLY when the value is missing or
+  // non-numeric — so an intentional 0 (e.g. "no gap, reciprocate every time")
+  // is honored instead of being clobbered by a truthiness `|| default`.
+  const num = (raw: string | undefined, fallback: number) => {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  // Spontaneous (intimacy-driven) selfies are paced by `cooldownMinutes`. The
+  // legacy `selfie_cooldown_hours` key (3h) is intentionally NOT read anymore —
+  // it was the reason a DH only ever sent one selfie per conversation.
   const value = {
     enabled: map['enable_digital_human_selfies'] !== 'false',
-    threshold: Number(map['selfie_intimacy_threshold'] ?? '55') || 55,
-    cooldownHours: Number(map['selfie_cooldown_hours'] ?? '3') || 3,
+    threshold: num(map['selfie_intimacy_threshold'], 55),
+    cooldownMinutes: num(map['selfie_cooldown_minutes'], 30),
+    reciprocateGapMinutes: num(map['selfie_reciprocate_gap_minutes'], 2),
+    reciprocateOnUserImage: map['enable_selfie_reciprocation'] !== 'false',
   };
   selfieCfgCache = { value, exp: Date.now() + CONFIG_TTL_MS };
   (globalThis as any).__dhSelfieCfg = selfieCfgCache;
@@ -605,19 +626,37 @@ Deno.serve(async (req) => {
       });
       if (sendError) throw sendError;
 
-      // 12b. Maybe send a preserved selfie — when the referee says it's welcome
-      //      (or the user asked) AND intimacy clears the threshold AND we're past
-      //      the cooldown AND the DH still has an unsent selfie for this match.
+      // 12b. Maybe send a preserved selfie. Two paths feed the gate:
+      //   • Strong cue — the user just sent a pic of their own (reciprocate in
+      //     kind) or explicitly asked to see them. Bypasses the intimacy
+      //     threshold and only needs a short anti-spam gap, so a photo gets
+      //     answered with a photo within the same conversation. Reciprocation
+      //     works even if the intimacy critic call failed (it's our own signal).
+      //   • Passive — intimacy clears the threshold and the referee says a selfie
+      //     would land well. Paced by the longer `cooldownMinutes` so spontaneous
+      //     selfies trickle out as the chat continues instead of all at once.
+      // pickUnsentSelfie still guarantees we never repeat an image in a match and
+      // naturally stops once the DH's inventory is exhausted — so neither path
+      // can spam (a DH has at most a handful of selfies).
       let selfieSentAt: string | null = null;
       try {
         const selfieCfg = await getSelfieConfig();
-        const wantsSelfie =
-          !!critic &&
-          selfieCfg.enabled &&
-          (critic.userRequestedPhoto || (critic.selfieAppropriate && critic.intimacy >= selfieCfg.threshold));
-        const cooledDown =
-          !stateData.last_selfie_sent_at ||
-          Date.now() - new Date(stateData.last_selfie_sent_at).getTime() >= selfieCfg.cooldownHours * 3600_000;
+
+        const userSentImage = !!latestUserMsg?.media_url;
+        const reciprocate = userSentImage && selfieCfg.reciprocateOnUserImage;
+        const userAskedToSee = !!critic && critic.userRequestedPhoto;
+        const strongCue = reciprocate || userAskedToSee;
+        const passiveOk = !!critic && critic.selfieAppropriate && critic.intimacy >= selfieCfg.threshold;
+
+        const wantsSelfie = selfieCfg.enabled && (strongCue || passiveOk);
+
+        const lastSelfieMs = stateData.last_selfie_sent_at
+          ? new Date(stateData.last_selfie_sent_at).getTime()
+          : 0;
+        const requiredGapMs =
+          (strongCue ? selfieCfg.reciprocateGapMinutes : selfieCfg.cooldownMinutes) * 60_000;
+        const cooledDown = !lastSelfieMs || Date.now() - lastSelfieMs >= requiredGapMs;
+
         if (wantsSelfie && cooledDown) {
           const selfie = await pickUnsentSelfie(dhId, matchId);
           if (selfie) {
@@ -627,13 +666,28 @@ Deno.serve(async (req) => {
               sender_id: bot.userid,
             });
             if (!imgErr) {
+              // The image genuinely went out, so arm the cooldown regardless of
+              // what happens next.
               selfieSentAt = new Date().toISOString();
-              await supabase.from('dh_sent_images').insert({
+              // Record it in the per-match ledger so it's never resent. A silent
+              // failure here is the one thing that breaks the no-repeat guarantee
+              // (pickUnsentSelfie would pick it again), so log it loudly.
+              const { error: ledgerErr } = await supabase.from('dh_sent_images').insert({
                 match_id: matchId,
                 image_id: selfie.id,
                 message_id: (imgMsg as { id?: string } | null)?.id ?? null,
               });
-              console.log('[dh-auto-reply] Sent selfie', selfie.id, 'to match', matchId, '(intimacy', critic?.intimacy, ')');
+              if (ledgerErr) {
+                console.error(
+                  '[dh-auto-reply] Failed to record selfie in dh_sent_images (may resend)',
+                  selfie.id, 'match', matchId, ledgerErr
+                );
+              }
+              const cue = reciprocate ? 'reciprocate' : userAskedToSee ? 'requested' : 'passive';
+              console.log(
+                '[dh-auto-reply] Sent selfie', selfie.id, 'ordinal', selfie.ordinal,
+                'to match', matchId, '(cue', cue, ', intimacy', critic?.intimacy ?? 'n/a', ')'
+              );
             }
           }
         }
