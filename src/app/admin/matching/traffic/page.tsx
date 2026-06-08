@@ -14,7 +14,8 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, RefreshCcw, MessageSquare } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Loader2, RefreshCcw, MessageSquare, Trophy } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 
@@ -23,6 +24,16 @@ type TrafficStats = {
   last_1h: number;
   last_24h: number;
 };
+
+type TopDh = {
+  userid: string;
+  username: string;
+  avatar?: string | null;
+  personality?: string | null;
+  messages: number;
+};
+
+type WindowSel = '1h' | '24h' | '7d';
 
 type UserDetails = {
   userid: string;
@@ -43,6 +54,8 @@ type RecentConversation = {
 
 export default function ChatTrafficPage() {
   const [stats, setStats] = React.useState<TrafficStats | null>(null);
+  const [topDhs, setTopDhs] = React.useState<TopDh[]>([]);
+  const [windowSel, setWindowSel] = React.useState<WindowSel>('24h');
   const [conversations, setConversations] = React.useState<RecentConversation[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -52,12 +65,13 @@ export default function ChatTrafficPage() {
     else setLoading(true);
 
     try {
-      const res = await fetch('/api/admin/matching/traffic');
+      const res = await fetch(`/api/admin/matching/traffic?window=${windowSel}`);
       const json = await res.json();
 
       if (!res.ok) throw new Error(json.error || 'Failed to fetch traffic data');
 
       setStats(json.stats);
+      setTopDhs(json.top_dhs || []);
       setConversations(json.recent_conversations || []);
     } catch (error: unknown) {
       console.error(error);
@@ -66,7 +80,9 @@ export default function ChatTrafficPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [windowSel]);
+
+  const windowLabel = windowSel === '1h' ? 'hour' : windowSel === '7d' ? '7 days' : '24 hours';
 
   React.useEffect(() => {
     fetchData();
@@ -95,15 +111,24 @@ export default function ChatTrafficPage() {
           <h1 className="text-2xl font-bold tracking-tight">Chat Traffic</h1>
           <p className="text-muted-foreground">Monitor AI response volume and active conversations.</p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => fetchData(true)}
-          disabled={loading || refreshing}
-        >
-          <RefreshCcw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-3">
+          <Tabs value={windowSel} onValueChange={(v) => setWindowSel(v as WindowSel)}>
+            <TabsList>
+              <TabsTrigger value="1h">1 hour</TabsTrigger>
+              <TabsTrigger value="24h">24 hours</TabsTrigger>
+              <TabsTrigger value="7d">7 days</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchData(true)}
+            disabled={loading || refreshing}
+          >
+            <RefreshCcw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -122,6 +147,59 @@ export default function ChatTrafficPage() {
           value={stats?.last_24h ?? null}
           label="AI Messages Sent"
         />
+      </div>
+
+      <div className="rounded-md border">
+        <div className="p-4 border-b bg-muted/40 flex flex-wrap items-center gap-2">
+          <Trophy className="h-4 w-4 text-amber-500" />
+          <h3 className="font-semibold">Best performing digital humans</h3>
+          <span className="text-sm text-muted-foreground">by messages sent in the last {windowLabel}</span>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-12 pl-4">#</TableHead>
+              <TableHead>Digital Human</TableHead>
+              <TableHead>Personality</TableHead>
+              <TableHead className="text-right pr-4">Messages</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={4} className="h-24 text-center">
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
+                </TableCell>
+              </TableRow>
+            ) : topDhs.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
+                  No digital-human messages in this window.
+                </TableCell>
+              </TableRow>
+            ) : (
+              topDhs.map((d, i) => (
+                <TableRow key={d.userid}>
+                  <TableCell className="pl-4 text-muted-foreground">{i + 1}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Avatar className="h-8 w-8">
+                        <AvatarImage src={`/api/avatar/${d.userid}`} />
+                        <AvatarFallback>{d.username?.substring(0, 2)}</AvatarFallback>
+                      </Avatar>
+                      <Link href={`/admin/digital-humans/${d.userid}`} className="font-medium hover:underline">
+                        {d.username}
+                      </Link>
+                      <Badge variant="secondary" className="text-[10px] h-5">AI</Badge>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{d.personality || '—'}</TableCell>
+                  <TableCell className="text-right pr-4 font-semibold tabular-nums">{d.messages}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
       </div>
 
       <div className="rounded-md border">

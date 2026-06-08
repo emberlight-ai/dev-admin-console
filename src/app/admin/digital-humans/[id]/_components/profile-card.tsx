@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
-import { Copy, Pencil, Settings2, CheckCircle2, CircleMinus } from "lucide-react"
+import { Copy, Pencil, Settings2, CheckCircle2, CircleMinus, Star } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -27,6 +27,8 @@ export function ProfileCard({
   onZoomAvatar,
   systemPromptMeta,
   onPromptSaved,
+  onToggleWhitelist,
+  whitelistBusy,
 }: {
   user: DbUser
   avatarSrc?: string
@@ -43,6 +45,8 @@ export function ProfileCard({
     personality: string
   } | null
   onPromptSaved?: () => void
+  onToggleWhitelist?: () => void
+  whitelistBusy?: boolean
 }) {
   const [configOpen, setConfigOpen] = React.useState(false)
 
@@ -52,6 +56,17 @@ export function ProfileCard({
         <div className="flex items-start justify-between">
           <div className="text-sm font-medium">Profile</div>
           <div className="flex items-center gap-2">
+            <Button
+              variant={user.whitelisted ? "default" : "outline"}
+              size="sm"
+              className="gap-2"
+              onClick={onToggleWhitelist}
+              disabled={whitelistBusy}
+              title={user.whitelisted ? "Featured in the match deck — click to remove" : "Feature this DH at the top of the match deck"}
+            >
+              <Star className={`h-4 w-4 ${user.whitelisted ? "fill-current" : ""}`} />
+              {user.whitelisted ? "Whitelisted" : "Whitelist"}
+            </Button>
             <Button variant="outline" size="sm" className="gap-2" onClick={onEdit}>
               <Pencil className="h-4 w-4" />
               Edit

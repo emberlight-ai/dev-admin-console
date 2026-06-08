@@ -291,24 +291,17 @@ create or replace function public.rpc_get_matching_candidates(
 )
 returns setof public.users
 language sql
--- security definer so the function can read dh_chat_images (RLS-locked to the
--- service role) for the image-rich whitelist below. Safe because this function is
--- param-driven (viewer_user_id), not auth.uid()-based.
-security definer
-set search_path = public
+security invoker
 as $$
   with whitelisted_users(userid) as (
-    -- Feature digital humans with a rich library of chat images (selfies they can
-    -- send as intimacy grows in dh-auto-reply). Data-driven + self-maintaining:
-    -- replaces the old hardcoded UUID list. "Rich" = at least 3 active chat images.
-    select i.dh_user_id
-    from public.dh_chat_images i
-    join public.users u on u.userid = i.dh_user_id
-    where i.active
+    -- Admin-curated featured digital humans (users.whitelisted, toggled from the DH
+    -- detail page). Shown first in the match deck. users.whitelisted is readable by
+    -- the invoker via the "Public read profiles" policy, so no definer needed.
+    select u.userid
+    from public.users u
+    where coalesce(u.whitelisted, false) = true
       and coalesce(u.is_digital_human, false) = true
       and u.deleted_at is null
-    group by i.dh_user_id
-    having count(*) >= 3
   ),
   eligible_candidates as (
     select u.*

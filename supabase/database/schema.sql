@@ -38,7 +38,8 @@ create table public.users (
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   deleted_at timestamptz,
-  is_digital_human boolean default false
+  is_digital_human boolean default false,
+  whitelisted boolean not null default false -- admin-curated: featured at top of the match deck
 );
 
 drop trigger if exists users_set_updated_at on public.users;

@@ -40,6 +40,49 @@ export async function GET(req: NextRequest) {
         getCount(twentyFourHoursAgo)
     ]);
 
+    // 2b. Best-performing DHs by messages SENT in the selected window (default 24h).
+    const url = new URL(req.url);
+    const windowParam = url.searchParams.get('window') ?? '24h';
+    const windowMs =
+      windowParam === '1h' ? 60 * 60 * 1000
+      : windowParam === '7d' ? 7 * 24 * 60 * 60 * 1000
+      : 24 * 60 * 60 * 1000;
+    const windowSince = new Date(now.getTime() - windowMs).toISOString();
+
+    const { data: dhMsgs, error: dhMsgErr } = await supabase
+      .from('messages')
+      .select('sender_id, sender:users!sender_id!inner(is_digital_human)')
+      .eq('sender.is_digital_human', true)
+      .gt('created_at', windowSince);
+    if (dhMsgErr) throw dhMsgErr;
+
+    const dhCounts: Record<string, number> = {};
+    for (const m of (dhMsgs ?? []) as unknown as Array<{ sender_id: string }>) {
+      dhCounts[m.sender_id] = (dhCounts[m.sender_id] ?? 0) + 1;
+    }
+    const topIds = Object.entries(dhCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([id]) => id);
+
+    let topDhs: Array<{ userid: string; username: string; avatar: string | null; personality: string | null; messages: number }> = [];
+    if (topIds.length) {
+      const { data: topUsers } = await supabase
+        .from('users')
+        .select('userid, username, avatar, personality')
+        .in('userid', topIds);
+      const umap = new Map(
+        ((topUsers ?? []) as Array<{ userid: string; username: string | null; avatar: string | null; personality: string | null }>).map((u) => [u.userid, u])
+      );
+      topDhs = topIds.map((id) => ({
+        userid: id,
+        username: umap.get(id)?.username ?? 'Unknown',
+        avatar: umap.get(id)?.avatar ?? null,
+        personality: umap.get(id)?.personality ?? null,
+        messages: dhCounts[id],
+      }));
+    }
+
     // 3. Recent Conversations
     // From user_match_ai_state
     const { data: recent, error: recentError } = await supabase
@@ -105,6 +148,8 @@ export async function GET(req: NextRequest) {
         last_1h: count1h,
         last_24h: count24h
       },
+      window: windowParam,
+      top_dhs: topDhs,
       recent_conversations: detailedRecent
     });
 

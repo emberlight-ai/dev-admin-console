@@ -18,6 +18,7 @@ type DhRow = {
   personality?: string | null;
   created_at: string;
   updated_at: string;
+  whitelisted?: boolean | null;
 };
 
 export async function GET(req: NextRequest) {
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
   let q = supabaseAdmin
     .from('users')
     .select(
-      'userid,username,profession,avatar,gender,personality,created_at,updated_at'
+      'userid,username,profession,avatar,gender,personality,created_at,updated_at,whitelisted'
     )
     .eq('is_digital_human', true)
     .is('deleted_at', null)
@@ -66,8 +67,27 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const imgCounts: Record<string, number> = {};
+  if (ids.length) {
+    const { data: imgRows, error: imgErr } = await supabaseAdmin
+      .from('dh_chat_images')
+      .select('dh_user_id')
+      .in('dh_user_id', ids)
+      .eq('active', true);
+    if (!imgErr) {
+      for (const im of imgRows ?? []) {
+        const id = (im as { dh_user_id: string }).dh_user_id;
+        imgCounts[id] = (imgCounts[id] ?? 0) + 1;
+      }
+    }
+  }
+
   return NextResponse.json({
-    data: rows.map((r) => ({ ...r, postsCount: counts[r.userid] ?? 0 })),
+    data: rows.map((r) => ({
+      ...r,
+      postsCount: counts[r.userid] ?? 0,
+      chatImagesCount: imgCounts[r.userid] ?? 0,
+    })),
   });
 }
 

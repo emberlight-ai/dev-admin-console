@@ -14,6 +14,7 @@ import {
   Network,
   Flag,
   MessageSquare,
+  Star,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -39,6 +40,7 @@ const navGroups = [
     items: [
       { href: "/admin/matching/recommendations", label: "Recommendations", icon: Users },
       { href: "/admin/matching/matchings", label: "Matchings", icon: Network },
+      { href: "/admin/matching/whitelist", label: "Whitelist", icon: Star },
       { href: "/admin/matching/traffic", label: "Chat Traffic", icon: MessageSquare },
       { href: "/admin/matching/reports", label: "Reports", icon: Flag },
     ],

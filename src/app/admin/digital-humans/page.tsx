@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { ArrowUpDown, Eye, Plus, SlidersHorizontal } from "lucide-react"
+import { ArrowUpDown, Eye, Plus, SlidersHorizontal, Star } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter, useSearchParams, usePathname } from "next/navigation"
 
@@ -38,6 +38,8 @@ type Row = {
   created_at: string
   updated_at: string
   postsCount: number
+  chatImagesCount: number
+  whitelisted?: boolean | null
 }
 
 function ManageDigitalHumansContent() {
@@ -63,7 +65,7 @@ function ManageDigitalHumansContent() {
   // Fetched personalities based on gender filter
   const [personalities, setPersonalities] = React.useState<string[]>([])
 
-  type SortKey = "name" | "created" | "posts"
+  type SortKey = "name" | "created" | "posts" | "images"
   type SortDir = "asc" | "desc"
   const [sortKey, setSortKey] = React.useState<SortKey>("created")
   const [sortDir, setSortDir] = React.useState<SortDir>("desc")
@@ -73,6 +75,7 @@ function ManageDigitalHumansContent() {
     profession: true,
     personality: true,
     posts: true,
+    chatImages: true,
     created: false,
   })
 
@@ -98,6 +101,7 @@ function ManageDigitalHumansContent() {
       (columns.profession ? 1 : 0) +
       (columns.personality ? 1 : 0) +
       (columns.posts ? 1 : 0) +
+      (columns.chatImages ? 1 : 0) +
       (columns.created ? 1 : 0) +
       1
     )
@@ -124,6 +128,9 @@ function ManageDigitalHumansContent() {
       }
       if (sortKey === "posts") {
         return (a.postsCount - b.postsCount) * dir
+      }
+      if (sortKey === "images") {
+        return (a.chatImagesCount - b.chatImagesCount) * dir
       }
       // created
       return (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir
@@ -320,6 +327,15 @@ function ManageDigitalHumansContent() {
                   <input
                     type="checkbox"
                     className="h-4 w-4 rounded border-input bg-background"
+                    checked={columns.chatImages}
+                    onChange={(e) => setColumns((c) => ({ ...c, chatImages: e.target.checked }))}
+                  />
+                  Chat images
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-input bg-background"
                     checked={columns.created}
                     onChange={(e) => setColumns((c) => ({ ...c, created: e.target.checked }))}
                   />
@@ -335,6 +351,7 @@ function ManageDigitalHumansContent() {
                       profession: true,
                       personality: true,
                       posts: true,
+                      chatImages: true,
                       created: true,
                     })
                   }
@@ -419,6 +436,17 @@ function ManageDigitalHumansContent() {
                   </button>
                 </TableHead>
               ) : null}
+              {columns.chatImages ? (
+                <TableHead>
+                  <button
+                    type="button"
+                    onClick={() => toggleSort("images")}
+                    className="inline-flex items-center gap-1 text-left font-medium"
+                  >
+                    Chat Images <ArrowUpDown className="h-4 w-4 opacity-60" />
+                  </button>
+                </TableHead>
+              ) : null}
               {columns.created ? (
                 <TableHead>
                   <button
@@ -461,7 +489,14 @@ function ManageDigitalHumansContent() {
                         </Avatar>
                       </TableCell>
                     ) : null}
-                    <TableCell className="font-medium">{r.username}</TableCell>
+                    <TableCell className="font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        {r.username}
+                        {r.whitelisted ? (
+                          <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-400" aria-label="Whitelisted" />
+                        ) : null}
+                      </span>
+                    </TableCell>
                     {columns.profession ? (
                       <TableCell className="text-muted-foreground">{r.profession ?? "—"}</TableCell>
                     ) : null}
@@ -469,6 +504,7 @@ function ManageDigitalHumansContent() {
                       <TableCell className="text-muted-foreground">{r.personality ?? "—"}</TableCell>
                     ) : null}
                     {columns.posts ? <TableCell className="text-muted-foreground">{r.postsCount}</TableCell> : null}
+                    {columns.chatImages ? <TableCell className="text-muted-foreground">{r.chatImagesCount}</TableCell> : null}
                     {columns.created ? (
                       <TableCell className="text-muted-foreground">
                         {new Date(r.created_at).toLocaleDateString()}

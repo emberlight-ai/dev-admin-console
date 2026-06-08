@@ -48,6 +48,28 @@ export default function DigitalHumanDetail() {
   } | null>(null)
   const [zoomSrc, setZoomSrc] = React.useState<string | null>(null)
   const [profileOpen, setProfileOpen] = React.useState(false)
+  const [whitelistBusy, setWhitelistBusy] = React.useState(false)
+
+  const toggleWhitelist = async () => {
+    if (!user) return
+    const next = !user.whitelisted
+    setWhitelistBusy(true)
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(user.userid)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ whitelisted: next }),
+      })
+      if (!res.ok) throw new Error("Failed to update whitelist")
+      setUser((prev) => (prev ? { ...prev, whitelisted: next } : prev))
+      toast.success(next ? "Added to match-deck whitelist" : "Removed from whitelist")
+    } catch (err) {
+      console.error(err)
+      toast.error("Failed to update whitelist")
+    } finally {
+      setWhitelistBusy(false)
+    }
+  }
 
   // (FileDropzone extracted to src/components/file-dropzone.tsx)
 
@@ -168,6 +190,8 @@ export default function DigitalHumanDetail() {
             onZoomAvatar={() => setZoomSrc(avatarSrc)}
             systemPromptMeta={systemPromptMeta}
             onPromptSaved={() => void refreshSystemPromptInfo()}
+            onToggleWhitelist={toggleWhitelist}
+            whitelistBusy={whitelistBusy}
           />
         </div>
 
