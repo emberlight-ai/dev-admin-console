@@ -18,6 +18,7 @@ type Candidate = {
   profession: string | null;
   is_digital_human: boolean | null;
   personality: string | null;
+  whitelisted: boolean | null;
 };
 
 export type MatchingsCard = {
@@ -29,6 +30,11 @@ export type MatchingsCard = {
   bio: string | null;
   profession: string | null;
   postImages: string[];
+  // Admin-curated "featured" flag (`users.whitelisted`). Exposed to the iOS deck as
+  // `is_vip` (the semantic the client uses to render the VIP gold style); `whitelisted`
+  // is kept as the raw alias for compatibility.
+  whitelisted: boolean;
+  is_vip: boolean;
 };
 
 function clampInt(v: unknown, def: number, min: number, max: number) {
@@ -95,6 +101,7 @@ export async function buildMatchingsFeed(opts: {
       if (images.length >= imageCount) break;
     }
 
+    const isVip = u.whitelisted ?? false;
     cards.push({
       userId: u.userid,
       avatar: u.avatar,
@@ -104,6 +111,8 @@ export async function buildMatchingsFeed(opts: {
       bio: u.bio,
       profession: u.profession,
       postImages: images,
+      whitelisted: isVip,
+      is_vip: isVip,
     });
   }
 
