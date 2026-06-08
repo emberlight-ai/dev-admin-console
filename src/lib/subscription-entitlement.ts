@@ -7,6 +7,7 @@ export type SubscriptionCatalogRow = {
   name: string;
   swipes_per_day: number | null;
   messages_per_day: number | null;
+  image_per_day: number | null;
 };
 
 export type ActiveSubscriptionRow = {
@@ -53,6 +54,11 @@ export function freeTierMessagesPerDay(): number {
   return parsePositiveInt(process.env.FREE_TIER_MESSAGES_PER_DAY, 20);
 }
 
+/** Used only when no active plan and no free-tier catalog row was found. */
+export function freeTierImagesPerDay(): number {
+  return parsePositiveInt(process.env.FREE_TIER_IMAGES_PER_DAY, 1);
+}
+
 export function swipeQuotaForPlan(catalog: SubscriptionCatalogRow | null): number {
   if (catalog?.swipes_per_day != null && catalog.swipes_per_day >= 0) {
     return catalog.swipes_per_day;
@@ -67,11 +73,23 @@ export function messageQuotaForPlan(catalog: SubscriptionCatalogRow | null): num
   return catalog.messages_per_day;
 }
 
+/** `null` quota means unlimited (catalog `image_per_day` is null). */
+export function imageQuotaForPlan(catalog: SubscriptionCatalogRow | null): number | null {
+  if (catalog == null) return freeTierImagesPerDay();
+  if (catalog.image_per_day == null) return null;
+  return catalog.image_per_day;
+}
+
 export function remainingSwipes(quota: number, used: number): number {
   return Math.max(0, quota - used);
 }
 
 export function remainingMessages(quota: number | null, used: number): number | null {
+  if (quota === null) return null;
+  return Math.max(0, quota - used);
+}
+
+export function remainingImages(quota: number | null, used: number): number | null {
   if (quota === null) return null;
   return Math.max(0, quota - used);
 }

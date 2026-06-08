@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUserSupabase, jsonError } from '@/lib/ios-user-supabase';
 import {
   freeTierAppleProductId,
+  imageQuotaForPlan,
   messageQuotaForPlan,
+  remainingImages,
   remainingMessages,
   remainingSwipes,
   swipeQuotaForPlan,
@@ -54,7 +56,8 @@ async function handleGET(req: NextRequest) {
           apple_product_id,
           name,
           swipes_per_day,
-          messages_per_day
+          messages_per_day,
+          image_per_day
         )
       `
       )
@@ -71,7 +74,7 @@ async function handleGET(req: NextRequest) {
     if (!quotaCatalog) {
       const { data: freeRow, error: freeErr } = await supabase
         .from('subscription_catalog')
-        .select('id, apple_product_id, name, swipes_per_day, messages_per_day')
+        .select('id, apple_product_id, name, swipes_per_day, messages_per_day, image_per_day')
         .eq('apple_product_id', freeTierAppleProductId())
         .maybeSingle();
       if (freeErr) return jsonError(freeErr.message, 500);
@@ -80,6 +83,7 @@ async function handleGET(req: NextRequest) {
 
     const swipeQuota = swipeQuotaForPlan(quotaCatalog);
     const messageQuota = messageQuotaForPlan(quotaCatalog);
+    const imageQuota = imageQuotaForPlan(quotaCatalog);
     const { start, end } = utcDayBoundsIso();
 
     const swipeCountPromise = supabase
@@ -96,18 +100,35 @@ async function handleGET(req: NextRequest) {
       .gte('created_at', start)
       .lt('created_at', end);
 
-    const [{ count: swipeUsed, error: swipeErr }, { count: msgUsed, error: msgErr }] =
-      await Promise.all([swipeCountPromise, messageCountPromise]);
+    // Images the user has RECEIVED today (drives the per-image lock in chat).
+    const imageReceivedCountPromise = supabase
+      .from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('receiver_id', userId)
+      .not('media_url', 'is', null)
+      .gte('created_at', start)
+      .lt('created_at', end);
+
+    const [
+      { count: swipeUsed, error: swipeErr },
+      { count: msgUsed, error: msgErr },
+      { count: imgReceived, error: imgErr },
+    ] = await Promise.all([swipeCountPromise, messageCountPromise, imageReceivedCountPromise]);
 
     if (swipeErr) return jsonError(swipeErr.message, 500);
     if (msgErr) return jsonError(msgErr.message, 500);
+    if (imgErr) return jsonError(imgErr.message, 500);
 
     const usedSwipes = swipeUsed ?? 0;
     const usedMessages = msgUsed ?? 0;
+    const usedImages = imgReceived ?? 0;
 
     return NextResponse.json({
       remaining_swipes: remainingSwipes(swipeQuota, usedSwipes),
       remaining_messages: remainingMessages(messageQuota, usedMessages),
+      // Per-tier daily RECEIVED-image quota. `null` image_limit ⇒ unlimited (premium).
+      image_limit: imageQuota,
+      remaining_images: remainingImages(imageQuota, usedImages),
       subscription: activeSub
         ? {
             id: activeSub.id,

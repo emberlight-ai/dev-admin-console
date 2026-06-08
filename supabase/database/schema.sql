@@ -685,6 +685,7 @@ create table if not exists public.subscription_catalog (
   billing_period text not null check (billing_period in ('monthly', 'yearly')),
   swipes_per_day integer,
   messages_per_day integer,
+  image_per_day integer,                 -- max chat images a user may RECEIVE per UTC day (null = unlimited; free tier = 1)
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
