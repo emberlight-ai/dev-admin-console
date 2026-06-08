@@ -10,8 +10,6 @@ import {
   ScrollText,
   Menu,
   LayoutDashboard,
-  Users,
-  Network,
   Flag,
   MessageSquare,
   Star,
@@ -38,8 +36,6 @@ const navGroups = [
   {
     title: "Matching",
     items: [
-      { href: "/admin/matching/recommendations", label: "Recommendations", icon: Users },
-      { href: "/admin/matching/matchings", label: "Matchings", icon: Network },
       { href: "/admin/matching/whitelist", label: "Whitelist", icon: Star },
       { href: "/admin/matching/traffic", label: "Chat Traffic", icon: MessageSquare },
       { href: "/admin/matching/reports", label: "Reports", icon: Flag },
