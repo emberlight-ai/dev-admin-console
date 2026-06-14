@@ -16,7 +16,6 @@ import {
   DialogTitle,
   DialogXCloseButton,
 } from "@/components/ui/dialog"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -77,6 +76,8 @@ export function ChatImagesPanel({
   const [items, setItems] = React.useState<ChatImageItem[]>([])
   const [loading, setLoading] = React.useState(true)
   const [tierUpdating, setTierUpdating] = React.useState<Record<string, boolean>>({})
+  const [draggingName, setDraggingName] = React.useState<string | null>(null)
+  const [dragOverTier, setDragOverTier] = React.useState<ImageTier | null>(null)
 
   const [addOpen, setAddOpen] = React.useState(false)
   const [adding, setAdding] = React.useState(false)
@@ -123,7 +124,12 @@ export function ChatImagesPanel({
     void fetchImages()
   }, [fetchImages])
 
+  const itemByName = React.useMemo(() => new Map(items.map((item) => [item.name, item])), [items])
+
   const updateTier = async (name: string, imageTier: ImageTier) => {
+    const currentTier = itemByName.get(name)?.image_tier
+    if (currentTier === imageTier) return
+
     const prev = items
     setItems((current) =>
       current.map((item) => (item.name === name ? { ...item, image_tier: imageTier } : item))
@@ -156,6 +162,21 @@ export function ChatImagesPanel({
     } finally {
       setTierUpdating((current) => ({ ...current, [name]: false }))
     }
+  }
+
+  const beginDrag = (event: React.DragEvent<HTMLDivElement>, name: string) => {
+    event.dataTransfer.effectAllowed = "move"
+    event.dataTransfer.setData("text/plain", name)
+    setDraggingName(name)
+  }
+
+  const dropOnTier = (event: React.DragEvent<HTMLDivElement>, imageTier: ImageTier) => {
+    event.preventDefault()
+    const name = event.dataTransfer.getData("text/plain") || draggingName
+    setDragOverTier(null)
+    setDraggingName(null)
+    if (!name) return
+    void updateTier(name, imageTier)
   }
 
   const upload = async () => {
@@ -204,16 +225,46 @@ export function ChatImagesPanel({
               {IMAGE_TIERS.map((tier) => {
                 const tierItems = groupedItems.get(tier.value) ?? []
                 return (
-                  <div key={tier.value} className="grid grid-cols-[72px_1fr] overflow-hidden rounded-md border">
+                  <div
+                    key={tier.value}
+                    className={cn(
+                      "grid grid-cols-[104px_1fr] overflow-hidden rounded-md border transition-colors",
+                      dragOverTier === tier.value && "border-primary bg-primary/5"
+                    )}
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = "move"
+                      setDragOverTier(tier.value)
+                    }}
+                    onDragLeave={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        setDragOverTier(null)
+                      }
+                    }}
+                    onDrop={(event) => dropOnTier(event, tier.value)}
+                  >
                     <div className={cn("flex flex-col items-center justify-center gap-1 border-r p-2", tier.className)}>
                       <span className="text-base font-semibold leading-none">{tier.shortLabel}</span>
-                      <span className="max-w-full truncate text-[11px] font-medium leading-none">{tier.label}</span>
+                      <span className="text-[11px] font-medium leading-none">{tier.label}</span>
                     </div>
                     <div className="min-h-28 bg-muted/20 p-3">
                       {tierItems.length ? (
                         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                           {tierItems.map((it) => (
-                            <div key={it.name} className="overflow-hidden rounded-md border bg-background">
+                            <div
+                              key={it.name}
+                              draggable={!tierUpdating[it.name]}
+                              className={cn(
+                                "overflow-hidden rounded-md border bg-background transition-all",
+                                tierUpdating[it.name] && "opacity-60",
+                                draggingName === it.name && "scale-[0.98] opacity-50"
+                              )}
+                              onDragStart={(event) => beginDrag(event, it.name)}
+                              onDragEnd={() => {
+                                setDraggingName(null)
+                                setDragOverTier(null)
+                              }}
+                            >
                               <button
                                 type="button"
                                 className="block aspect-square w-full overflow-hidden bg-muted"
@@ -226,26 +277,10 @@ export function ChatImagesPanel({
                                   className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
                                 />
                               </button>
-                              <div className="space-y-2 p-2">
+                              <div className="p-2">
                                 <div className="truncate text-xs text-muted-foreground" title={it.name}>
                                   {it.name}
                                 </div>
-                                <Select
-                                  value={it.image_tier}
-                                  disabled={!!tierUpdating[it.name]}
-                                  onValueChange={(value) => void updateTier(it.name, value as ImageTier)}
-                                >
-                                  <SelectTrigger size="sm" className="w-full">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {IMAGE_TIERS.map((option) => (
-                                      <SelectItem key={option.value} value={option.value}>
-                                        {option.label}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
                               </div>
                             </div>
                           ))}
