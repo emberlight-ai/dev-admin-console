@@ -55,6 +55,10 @@ type ChatImageItem = { name: string; url: string; image_tier: ImageTier }
 
 const TIER_OPTIONS = IMAGE_TIERS.map((tier) => tier.value)
 
+function normalizeImageTier(value: unknown): ImageTier {
+  return TIER_OPTIONS.includes(value as ImageTier) ? (value as ImageTier) : "unspecified"
+}
+
 function validateOneFile(files: File[]) {
   if (!files.length) return { file: null as File | null, error: "No file selected" }
   const f = files[0]
@@ -94,7 +98,7 @@ export function ChatImagesPanel({
       setItems(
         (json.data ?? []).map((it) => ({
           ...it,
-          image_tier: TIER_OPTIONS.includes(it.image_tier) ? it.image_tier : "unspecified",
+          image_tier: normalizeImageTier(it.image_tier),
         }))
       )
     } catch (err: unknown) {
@@ -109,7 +113,7 @@ export function ChatImagesPanel({
     const groups = new Map<ImageTier, ChatImageItem[]>()
     for (const tier of TIER_OPTIONS) groups.set(tier, [])
     for (const item of items) {
-      const tier = TIER_OPTIONS.includes(item.image_tier) ? item.image_tier : "unspecified"
+      const tier = normalizeImageTier(item.image_tier)
       groups.get(tier)?.push(item)
     }
     return groups
@@ -132,8 +136,18 @@ export function ChatImagesPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, image_tier: imageTier }),
       })
-      const json = (await res.json()) as { error?: string }
+      const json = (await res.json()) as {
+        data?: { image_tier?: ImageTier; tier_available?: boolean }
+        error?: string
+      }
       if (!res.ok) throw new Error(json.error || "Failed to update image tier")
+      const savedTier = json.data?.tier_available === false
+        ? "unspecified"
+        : normalizeImageTier(json.data?.image_tier ?? imageTier)
+      setItems((current) =>
+        current.map((item) => (item.name === name ? { ...item, image_tier: savedTier } : item))
+      )
+      if (json.data?.tier_available === false) return
       toast.success("Image tier updated")
     } catch (err: unknown) {
       console.error(err)

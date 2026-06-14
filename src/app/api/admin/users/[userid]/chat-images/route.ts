@@ -36,6 +36,18 @@ function isImageTier(value: unknown): value is ImageTier {
   return typeof value === "string" && IMAGE_TIERS.includes(value as ImageTier)
 }
 
+function isMissingImageTierColumn(error: { code?: string; message?: string } | null) {
+  const message = error?.message ?? ""
+  return (
+    error?.code === "42703" ||
+    error?.code === "PGRST204" ||
+    message.includes("dh_chat_images.image_tier does not exist") ||
+    message.includes("column dh_chat_images.image_tier does not exist") ||
+    message.includes("column \"image_tier\" does not exist") ||
+    message.includes("'image_tier' column")
+  )
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ userid: string }> }
@@ -72,7 +84,7 @@ export async function GET(
       .from("dh_chat_images")
       .select("storage_path,image_tier")
       .in("storage_path", paths)
-    if (tierErr) return jsonError(tierErr.message, 500)
+    if (tierErr && !isMissingImageTierColumn(tierErr)) return jsonError(tierErr.message, 500)
 
     for (const row of rows ?? []) {
       const r = row as { storage_path?: string | null; image_tier?: string | null }
@@ -136,7 +148,21 @@ export async function POST(
     },
     { onConflict: "storage_path" }
   )
-  if (metaErr) return jsonError(metaErr.message, 500)
+  if (metaErr && isMissingImageTierColumn(metaErr)) {
+    const { error: legacyMetaErr } = await supabaseAdmin.from("dh_chat_images").upsert(
+      {
+        dh_user_id: userid,
+        storage_path: filePath,
+        public_url: pub.publicUrl,
+        ordinal: idx,
+        active: true,
+      },
+      { onConflict: "storage_path" }
+    )
+    if (legacyMetaErr) return jsonError(legacyMetaErr.message, 500)
+  } else if (metaErr) {
+    return jsonError(metaErr.message, 500)
+  }
 
   return NextResponse.json({
     added: { name: `pic_${idx}.${extFor(contentType)}`, url: pub.publicUrl, image_tier: imageTier },
@@ -183,6 +209,15 @@ export async function PATCH(
     .select("storage_path,image_tier")
     .maybeSingle()
 
+  if (error && isMissingImageTierColumn(error)) {
+    return NextResponse.json({
+      data: {
+        storage_path: storagePath,
+        image_tier: "unspecified",
+        tier_available: false,
+      },
+    })
+  }
   if (error) return jsonError(error.message, 500)
   return NextResponse.json({ data })
 }
