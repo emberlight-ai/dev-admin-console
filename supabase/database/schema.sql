@@ -650,6 +650,31 @@ create table if not exists public.dh_chat_images (
 );
 create index if not exists dh_chat_images_dh_idx on public.dh_chat_images (dh_user_id, ordinal);
 
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_type t
+    join pg_namespace n on n.oid = t.typnamespace
+    where n.nspname = 'public'
+      and t.typname = 'dh_image_tier'
+  ) then
+    create type public.dh_image_tier as enum (
+      'unspecified',
+      'casual',
+      'tease',
+      'reward'
+    );
+  end if;
+end
+$$;
+
+alter table public.dh_chat_images
+  add column if not exists image_tier public.dh_image_tier not null default 'unspecified';
+
+create index if not exists dh_chat_images_dh_tier_ordinal_idx
+  on public.dh_chat_images (dh_user_id, image_tier, ordinal);
+
 create table if not exists public.dh_sent_images (
   match_id uuid not null references public.user_matches(id) on delete cascade,
   image_id uuid not null references public.dh_chat_images(id) on delete cascade,
