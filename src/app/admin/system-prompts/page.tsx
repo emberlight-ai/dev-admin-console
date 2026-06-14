@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CheckCircle2 } from "lucide-react"
 import {
@@ -220,6 +221,14 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
     enable_digital_human_selfies: "true",
     selfie_intimacy_threshold: "55",
     selfie_cooldown_hours: "3",
+    selfie_cooldown_minutes: "30",
+    enable_selfie_reciprocation: "true",
+    selfie_reciprocate_gap_minutes: "2",
+    selfie_tease_intimacy_threshold: "45",
+    selfie_reward_intimacy_threshold: "75",
+    selfie_early_casual_after_messages: "2",
+    selfie_early_casual_max_intimacy: "45",
+    intimacy_warmup_rate: "normal",
     enable_proactive_double_text: "true",
     proactive_intimacy_drive_threshold: "0.3",
     proactive_delay_minutes: "90",
@@ -463,6 +472,23 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
                     When momentum is hot, digital humans reach out again sooner and a bit more.
                   </p>
                 </div>
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="g-selfie-reciprocation"
+                      className="h-4 w-4 rounded border-gray-300 accent-primary"
+                      checked={config.enable_selfie_reciprocation !== "false"}
+                      onChange={(e) =>
+                        setConfig({ ...config, enable_selfie_reciprocation: e.target.checked ? "true" : "false" })
+                      }
+                    />
+                    <Label htmlFor="g-selfie-reciprocation">Enable Photo Reciprocation</Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground ml-6">
+                    Digital humans may answer a user photo with a tiered image of their own.
+                  </p>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -477,14 +503,87 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
                   <p className="text-xs text-muted-foreground">Min closeness score before a selfie may be sent.</p>
                 </div>
                 <div className="space-y-2">
-                  <Label>Selfie cooldown (hours)</Label>
+                  <Label>Selfie cooldown (minutes)</Label>
                   <Input
                     type="number"
                     min="0"
-                    value={config.selfie_cooldown_hours}
-                    onChange={(e) => setConfig({ ...config, selfie_cooldown_hours: e.target.value })}
+                    value={config.selfie_cooldown_minutes}
+                    onChange={(e) => setConfig({ ...config, selfie_cooldown_minutes: e.target.value })}
                   />
-                  <p className="text-xs text-muted-foreground">Min hours between selfies in one conversation.</p>
+                  <p className="text-xs text-muted-foreground">Min minutes between spontaneous tiered images.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Tease threshold (0-100)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={config.selfie_tease_intimacy_threshold}
+                    onChange={(e) => setConfig({ ...config, selfie_tease_intimacy_threshold: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">At this score, image release moves from casual to tease.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Reward threshold (0-100)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={config.selfie_reward_intimacy_threshold}
+                    onChange={(e) => setConfig({ ...config, selfie_reward_intimacy_threshold: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">At this score, image release moves from tease to reward.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Photo reciprocation gap (minutes)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={config.selfie_reciprocate_gap_minutes}
+                    onChange={(e) => setConfig({ ...config, selfie_reciprocate_gap_minutes: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Short anti-spam gap when the user sends or requests a photo.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Early casual after user messages</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={config.selfie_early_casual_after_messages}
+                    onChange={(e) => setConfig({ ...config, selfie_early_casual_after_messages: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Cold chats can get one casual image after this many real-user messages.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Early casual max intimacy</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={config.selfie_early_casual_max_intimacy}
+                    onChange={(e) => setConfig({ ...config, selfie_early_casual_max_intimacy: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Only use the early casual path below this closeness score.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Relationship warm-up rate</Label>
+                  <Select
+                    value={config.intimacy_warmup_rate}
+                    onValueChange={(value) => setConfig({ ...config, intimacy_warmup_rate: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="very_low">Very low</SelectItem>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="normal">Normal</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                      <SelectItem value="very_high">Very high</SelectItem>
+                      <SelectItem value="extreme">Extreme</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Guides how quickly the judge can raise intimacy each turn.</p>
                 </div>
                 <div className="space-y-2">
                   <Label>Proactive drive threshold (0-1)</Label>
@@ -535,4 +634,3 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
     </Dialog>
   )
 }
-

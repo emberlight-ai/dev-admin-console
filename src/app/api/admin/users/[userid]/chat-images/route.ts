@@ -135,7 +135,7 @@ export async function POST(
   if (uploadError) return jsonError(uploadError.message, 500)
 
   const { data: pub } = supabaseAdmin.storage.from("images").getPublicUrl(filePath)
-  const imageTier: ImageTier = "unspecified"
+  const imageTier: ImageTier = "casual"
 
   const { error: metaErr } = await supabaseAdmin.from("dh_chat_images").upsert(
     {

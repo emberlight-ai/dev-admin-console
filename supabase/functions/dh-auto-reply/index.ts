@@ -297,17 +297,76 @@ const globalSelfieCfg = (globalThis as any).__dhSelfieCfg as
       value: {
         enabled: boolean;
         threshold: number;
+        teaseThreshold: number;
+        rewardThreshold: number;
         cooldownMinutes: number;
         reciprocateGapMinutes: number;
         reciprocateOnUserImage: boolean;
+        earlyCasualAfterMessages: number;
+        earlyCasualMaxIntimacy: number;
+        warmupRate: IntimacyWarmupRate;
       };
       exp: number;
     }
   | undefined;
 let selfieCfgCache = globalSelfieCfg ?? {
-  value: { enabled: true, threshold: 55, cooldownMinutes: 30, reciprocateGapMinutes: 2, reciprocateOnUserImage: true },
+  value: {
+    enabled: true,
+    threshold: 55,
+    teaseThreshold: 45,
+    rewardThreshold: 75,
+    cooldownMinutes: 30,
+    reciprocateGapMinutes: 2,
+    reciprocateOnUserImage: true,
+    earlyCasualAfterMessages: 2,
+    earlyCasualMaxIntimacy: 45,
+    warmupRate: 'normal',
+  },
   exp: 0,
 };
+
+type IntimacyWarmupRate = 'very_low' | 'low' | 'normal' | 'high' | 'very_high' | 'extreme';
+
+function parseWarmupRate(raw: string | undefined): IntimacyWarmupRate {
+  if (
+    raw === 'very_low' ||
+    raw === 'low' ||
+    raw === 'normal' ||
+    raw === 'high' ||
+    raw === 'very_high' ||
+    raw === 'extreme'
+  ) {
+    return raw;
+  }
+  if (raw === 'extremely_high') return 'extreme';
+  return 'normal';
+}
+
+function warmupGuidance(rate: IntimacyWarmupRate) {
+  switch (rate) {
+    case 'very_low':
+      return 'VERY LOW: be very conservative. If the user is warming up, usually raise intimacy by 0-2 points from the previous score; use 3-4 only for unusually clear romantic/sexual interest.';
+    case 'low':
+      return 'LOW: be conservative. If the user is warming up, usually raise intimacy by 0-4 points from the previous score; use 5-8 only for unusually clear romantic/sexual interest.';
+    case 'high':
+      return 'HIGH: be responsive. If the user is warming up, usually raise intimacy by 5-12 points from the previous score; use 13-18 only for strong, explicit interest.';
+    case 'very_high':
+      return 'VERY HIGH: warm up quickly but stay evidence-based. If the user is warming up, usually raise intimacy by 8-18 points from the previous score; use 19-25 only for very strong, explicit interest.';
+    case 'extreme':
+      return 'EXTREME: warm up very quickly, but still do not ignore the user signal. If the user is warming up, usually raise intimacy by 12-25 points from the previous score; use 26-35 only for very explicit, sustained interest. Never jump straight to 100 from a cold conversation.';
+    case 'normal':
+    default:
+      return 'NORMAL: be balanced. If the user is warming up, usually raise intimacy by 2-8 points from the previous score; use 9-12 only for clear romantic/sexual interest.';
+  }
+}
+
+function normalizeIntimacyScore(raw: unknown) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  const score = n > 0 && n <= 1 ? n * 100 : n;
+  return Math.max(0, Math.min(100, score));
+}
+
 async function getSelfieConfig() {
   if (Date.now() < selfieCfgCache.exp) return selfieCfgCache.value;
   const { data } = await supabase.from('digital_human_config').select('key, value');
@@ -326,9 +385,14 @@ async function getSelfieConfig() {
   const value = {
     enabled: map['enable_digital_human_selfies'] !== 'false',
     threshold: num(map['selfie_intimacy_threshold'], 55),
+    teaseThreshold: num(map['selfie_tease_intimacy_threshold'], 45),
+    rewardThreshold: num(map['selfie_reward_intimacy_threshold'], 75),
     cooldownMinutes: num(map['selfie_cooldown_minutes'], 30),
     reciprocateGapMinutes: num(map['selfie_reciprocate_gap_minutes'], 2),
     reciprocateOnUserImage: map['enable_selfie_reciprocation'] !== 'false',
+    earlyCasualAfterMessages: num(map['selfie_early_casual_after_messages'], 2),
+    earlyCasualMaxIntimacy: num(map['selfie_early_casual_max_intimacy'], 45),
+    warmupRate: parseWarmupRate(map['intimacy_warmup_rate']),
   };
   selfieCfgCache = { value, exp: Date.now() + CONFIG_TTL_MS };
   (globalThis as any).__dhSelfieCfg = selfieCfgCache;
@@ -341,13 +405,42 @@ interface IntimacyResult {
   userRequestedPhoto: boolean; // did the user explicitly ask to see them / a pic?
 }
 
+type ImageTier = 'casual' | 'tease' | 'reward';
+
+const IMAGE_TIER_RANK: Record<ImageTier, number> = {
+  casual: 0,
+  tease: 1,
+  reward: 2,
+};
+
+function tierForIntimacy(
+  intimacy: number,
+  cfg: { teaseThreshold: number; rewardThreshold: number }
+): ImageTier {
+  if (intimacy >= cfg.rewardThreshold) return 'reward';
+  if (intimacy >= cfg.teaseThreshold) return 'tease';
+  return 'casual';
+}
+
 // A separate "referee" call, kept apart from reply generation so it can't game
 // its own score. Uses structured JSON output for a reliable parse.
-async function scoreIntimacy(systemText: string, transcript: string): Promise<IntimacyResult | null> {
+async function scoreIntimacy(
+  systemText: string,
+  transcript: string,
+  previousScore: number | null,
+  warmupRate: IntimacyWarmupRate
+): Promise<IntimacyResult | null> {
   try {
+    const previous = previousScore == null ? 'unknown' : String(normalizeIntimacyScore(previousScore));
     const judgePrompt = `${systemText}
 
 You are an objective relationship analyst observing the conversation below. Do NOT role-play or reply. Judge the CURRENT emotional/romantic closeness from the user's side, and whether the digital human sharing a personal selfie would feel natural and welcome right at this moment.
+
+Previous intimacy score: ${previous} on a 0-100 scale.
+Relationship warm-up rate: ${warmupRate}.
+Warm-up guidance: ${warmupGuidance(warmupRate)}
+
+Return the new CURRENT intimacy score on a 0-100 scale. Do not return a 0-1 fraction. Avoid both extremes: do not freeze the score when the user clearly warms up, and do not jump to a near-maximum score from one mildly positive message.
 
 Conversation:
 ${transcript}
@@ -372,7 +465,7 @@ Respond with JSON only.`;
     const txt =
       res.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? res.response?.text?.() ?? '';
     const parsed = JSON.parse(txt);
-    const intimacy = Math.max(0, Math.min(100, Number(parsed.intimacy) || 0));
+    const intimacy = normalizeIntimacyScore(parsed.intimacy);
     return {
       intimacy,
       selfieAppropriate: !!parsed.selfie_appropriate,
@@ -401,12 +494,14 @@ function adamStep(prevScore: number | null, m: number, v: number, score: number)
 // Lowest-ordinal selfie this DH hasn't already sent in this match (progressive release).
 async function pickUnsentSelfie(
   dhId: string,
-  matchId: string
-): Promise<{ id: string; public_url: string; ordinal: number } | null> {
+  matchId: string,
+  tier: ImageTier
+): Promise<{ id: string; public_url: string; ordinal: number; image_tier: ImageTier } | null> {
   const { data: imgs } = await supabase
     .from('dh_chat_images')
-    .select('id, public_url, ordinal')
+    .select('id, public_url, ordinal, image_tier')
     .eq('dh_user_id', dhId)
+    .eq('image_tier', tier)
     .eq('active', true)
     .order('ordinal', { ascending: true });
   if (!imgs || imgs.length === 0) return null;
@@ -416,10 +511,34 @@ async function pickUnsentSelfie(
     .eq('match_id', matchId);
   const sentIds = new Set((sent ?? []).map((s: { image_id: string }) => s.image_id));
   return (
-    (imgs as Array<{ id: string; public_url: string; ordinal: number }>).find(
+    (imgs as Array<{ id: string; public_url: string; ordinal: number; image_tier: ImageTier }>).find(
       (img) => !sentIds.has(img.id)
     ) ?? null
   );
+}
+
+async function getHighestSentSelfieTier(matchId: string): Promise<ImageTier | null> {
+  const { data: sent } = await supabase
+    .from('dh_sent_images')
+    .select('image_id')
+    .eq('match_id', matchId);
+  const imageIds = Array.from(
+    new Set((sent ?? []).map((s: { image_id?: string | null }) => s.image_id).filter(Boolean))
+  ) as string[];
+  if (imageIds.length === 0) return null;
+
+  const { data: imgs } = await supabase
+    .from('dh_chat_images')
+    .select('id, image_tier')
+    .in('id', imageIds);
+
+  let highest: ImageTier | null = null;
+  for (const img of imgs ?? []) {
+    const tier = (img as { image_tier?: string | null }).image_tier;
+    if (tier !== 'casual' && tier !== 'tease' && tier !== 'reward') continue;
+    if (!highest || IMAGE_TIER_RANK[tier] > IMAGE_TIER_RANK[highest]) highest = tier;
+  }
+  return highest;
 }
 
 // ── Webhook payload ───────────────────────────────────────────────────────────
@@ -592,9 +711,10 @@ Deno.serve(async (req) => {
       // 11. Generate the reply and score intimacy in parallel (independent calls).
       console.log('[dh-auto-reply] systemInstruction', systemInstruction);
       console.log('[dh-auto-reply] transcript', transcript);
+      const selfieCfg = await getSelfieConfig();
       const [result, critic] = await Promise.all([
         generateReply(replyPrompt),
-        scoreIntimacy(systemInstruction, transcript),
+        scoreIntimacy(systemInstruction, transcript, stateData.intimacy_score ?? null, selfieCfg.warmupRate),
       ]);
       const respData = await result.response;
       const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
@@ -626,7 +746,9 @@ Deno.serve(async (req) => {
       });
       if (sendError) throw sendError;
 
-      // 12b. Maybe send a preserved selfie. Two paths feed the gate:
+      // 12b. Maybe send a preserved selfie. Three paths feed the gate:
+      //   • Early casual — if the chat has not warmed up after a couple of user
+      //     messages, proactively send a low-intent casual image to add texture.
       //   • Strong cue — the user just sent a pic of their own (reciprocate in
       //     kind) or explicitly asked to see them. Bypasses the intimacy
       //     threshold and only needs a short anti-spam gap, so a photo gets
@@ -635,20 +757,26 @@ Deno.serve(async (req) => {
       //   • Passive — intimacy clears the threshold and the referee says a selfie
       //     would land well. Paced by the longer `cooldownMinutes` so spontaneous
       //     selfies trickle out as the chat continues instead of all at once.
-      // pickUnsentSelfie still guarantees we never repeat an image in a match and
-      // naturally stops once the DH's inventory is exhausted — so neither path
-      // can spam (a DH has at most a handful of selfies).
+      // Image tiers move upward with intimacy (casual -> tease -> reward). Once a
+      // match has received a higher tier, lower tiers are not sent later.
       let selfieSentAt: string | null = null;
       try {
-        const selfieCfg = await getSelfieConfig();
+        const highestSentTier = await getHighestSentSelfieTier(matchId);
 
         const userSentImage = !!latestUserMsg?.media_url;
         const reciprocate = userSentImage && selfieCfg.reciprocateOnUserImage;
         const userAskedToSee = !!critic && critic.userRequestedPhoto;
         const strongCue = reciprocate || userAskedToSee;
+        const observedIntimacy = critic?.intimacy ?? stateData.intimacy_score ?? null;
+        const realUserMessageCount = msgRows.filter((m) => m.sender_id !== dhId).length;
+        const earlyCasual =
+          !highestSentTier &&
+          observedIntimacy != null &&
+          realUserMessageCount >= selfieCfg.earlyCasualAfterMessages &&
+          observedIntimacy < selfieCfg.earlyCasualMaxIntimacy;
         const passiveOk = !!critic && critic.selfieAppropriate && critic.intimacy >= selfieCfg.threshold;
 
-        const wantsSelfie = selfieCfg.enabled && (strongCue || passiveOk);
+        const wantsSelfie = selfieCfg.enabled && (earlyCasual || strongCue || passiveOk);
 
         const lastSelfieMs = stateData.last_selfie_sent_at
           ? new Date(stateData.last_selfie_sent_at).getTime()
@@ -658,35 +786,54 @@ Deno.serve(async (req) => {
         const cooledDown = !lastSelfieMs || Date.now() - lastSelfieMs >= requiredGapMs;
 
         if (wantsSelfie && cooledDown) {
-          const selfie = await pickUnsentSelfie(dhId, matchId);
-          if (selfie) {
-            const { data: imgMsg, error: imgErr } = await supabase.rpc('rpc_send_message', {
-              match_id: matchId,
-              media_url: selfie.public_url,
-              sender_id: bot.userid,
-            });
-            if (!imgErr) {
-              // The image genuinely went out, so arm the cooldown regardless of
-              // what happens next.
-              selfieSentAt = new Date().toISOString();
-              // Record it in the per-match ledger so it's never resent. A silent
-              // failure here is the one thing that breaks the no-repeat guarantee
-              // (pickUnsentSelfie would pick it again), so log it loudly.
-              const { error: ledgerErr } = await supabase.from('dh_sent_images').insert({
+          const targetTier: ImageTier = earlyCasual || observedIntimacy == null
+            ? 'casual'
+            : tierForIntimacy(observedIntimacy, selfieCfg);
+          const tierProgresses =
+            !highestSentTier || IMAGE_TIER_RANK[targetTier] >= IMAGE_TIER_RANK[highestSentTier];
+
+          if (!tierProgresses) {
+            console.log(
+              '[dh-auto-reply] Skipping selfie tier downgrade',
+              targetTier, 'after', highestSentTier, 'for match', matchId
+            );
+          } else {
+            const selfie = await pickUnsentSelfie(dhId, matchId, targetTier);
+            if (selfie) {
+              const { data: imgMsg, error: imgErr } = await supabase.rpc('rpc_send_message', {
                 match_id: matchId,
-                image_id: selfie.id,
-                message_id: (imgMsg as { id?: string } | null)?.id ?? null,
+                media_url: selfie.public_url,
+                sender_id: bot.userid,
               });
-              if (ledgerErr) {
-                console.error(
-                  '[dh-auto-reply] Failed to record selfie in dh_sent_images (may resend)',
-                  selfie.id, 'match', matchId, ledgerErr
+              if (!imgErr) {
+                // The image genuinely went out, so arm the cooldown regardless of
+                // what happens next.
+                selfieSentAt = new Date().toISOString();
+                // Record it in the per-match ledger so it's never resent. A silent
+                // failure here is the one thing that breaks the no-repeat guarantee
+                // (pickUnsentSelfie would pick it again), so log it loudly.
+                const { error: ledgerErr } = await supabase.from('dh_sent_images').insert({
+                  match_id: matchId,
+                  image_id: selfie.id,
+                  message_id: (imgMsg as { id?: string } | null)?.id ?? null,
+                });
+                if (ledgerErr) {
+                  console.error(
+                    '[dh-auto-reply] Failed to record selfie in dh_sent_images (may resend)',
+                    selfie.id, 'match', matchId, ledgerErr
+                  );
+                }
+                const cue = earlyCasual ? 'early-casual' : reciprocate ? 'reciprocate' : userAskedToSee ? 'requested' : 'passive';
+                console.log(
+                  '[dh-auto-reply] Sent selfie', selfie.id, 'ordinal', selfie.ordinal,
+                  'tier', selfie.image_tier, 'to match', matchId,
+                  '(cue', cue, ', intimacy', observedIntimacy ?? 'n/a', ')'
                 );
               }
-              const cue = reciprocate ? 'reciprocate' : userAskedToSee ? 'requested' : 'passive';
+            } else {
               console.log(
-                '[dh-auto-reply] Sent selfie', selfie.id, 'ordinal', selfie.ordinal,
-                'to match', matchId, '(cue', cue, ', intimacy', critic?.intimacy ?? 'n/a', ')'
+                '[dh-auto-reply] No unsent selfie for tier',
+                targetTier, 'match', matchId, '(intimacy', observedIntimacy ?? 'n/a', ')'
               );
             }
           }
