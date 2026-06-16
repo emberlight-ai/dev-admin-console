@@ -718,6 +718,7 @@ Deno.serve(async (req) => {
       ]);
       const respData = await result.response;
       const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
+      const messageIntimacyScore = critic?.intimacy ?? stateData.intimacy_score ?? null;
 
       // 11b. Natural typing delay. The total time from receiving the user's message
       //      to replying should feel like a human read it and typed the answer
@@ -743,6 +744,7 @@ Deno.serve(async (req) => {
         match_id: matchId,
         content: responseText,
         sender_id: bot.userid,
+        message_intimacy_score: messageIntimacyScore,
       });
       if (sendError) throw sendError;
 
@@ -767,7 +769,7 @@ Deno.serve(async (req) => {
         const reciprocate = userSentImage && selfieCfg.reciprocateOnUserImage;
         const userAskedToSee = !!critic && critic.userRequestedPhoto;
         const strongCue = reciprocate || userAskedToSee;
-        const observedIntimacy = critic?.intimacy ?? stateData.intimacy_score ?? null;
+        const observedIntimacy = messageIntimacyScore;
         const realUserMessageCount = msgRows.filter((m) => m.sender_id !== dhId).length;
         const earlyCasual =
           !highestSentTier &&
@@ -804,6 +806,7 @@ Deno.serve(async (req) => {
                 match_id: matchId,
                 media_url: selfie.public_url,
                 sender_id: bot.userid,
+                message_intimacy_score: messageIntimacyScore,
               });
               if (!imgErr) {
                 // The image genuinely went out, so arm the cooldown regardless of

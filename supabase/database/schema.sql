@@ -518,6 +518,7 @@ create table if not exists public.messages (
   image_desc text default null,
   content text, 
   media_url text,
+  intimacy_score double precision,
   created_at timestamptz default now()
 );
 

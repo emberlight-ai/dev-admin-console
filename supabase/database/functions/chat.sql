@@ -62,7 +62,8 @@ create or replace function public.rpc_send_message(
   content text default null,
   media_url text default null,
   sender_id uuid default null,
-  receiver_id uuid default null
+  receiver_id uuid default null,
+  message_intimacy_score double precision default null
 )
 returns public.messages
 language plpgsql
@@ -124,8 +125,8 @@ begin
     raise exception 'cannot send message: blocked';
   end if;
 
-  insert into public.messages (match_id, sender_id, receiver_id, content, media_url)
-  values (match_id, final_sender, final_receiver, content, media_url)
+  insert into public.messages (match_id, sender_id, receiver_id, content, media_url, intimacy_score)
+  values (match_id, final_sender, final_receiver, content, media_url, message_intimacy_score)
   returning * into msg;
 
   return msg;
