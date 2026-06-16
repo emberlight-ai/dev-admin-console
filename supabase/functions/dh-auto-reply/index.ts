@@ -292,40 +292,29 @@ function composeSystemInstruction(template: string, bot: UserRow, human: UserRow
 }
 
 // ── Intimacy critic + Adam-style momentum + selfie picker ─────────────────────
-const globalSelfieCfg = (globalThis as any).__dhSelfieCfg as
-  | {
-      value: {
-        enabled: boolean;
-        threshold: number;
-        teaseThreshold: number;
-        rewardThreshold: number;
-        cooldownMinutes: number;
-        reciprocateGapMinutes: number;
-        reciprocateOnUserImage: boolean;
-        earlyCasualAfterMessages: number;
-        earlyCasualMaxIntimacy: number;
-        warmupRate: IntimacyWarmupRate;
-      };
-      exp: number;
-    }
-  | undefined;
-let selfieCfgCache = globalSelfieCfg ?? {
-  value: {
-    enabled: true,
-    threshold: 55,
-    teaseThreshold: 45,
-    rewardThreshold: 75,
-    cooldownMinutes: 30,
-    reciprocateGapMinutes: 2,
-    reciprocateOnUserImage: true,
-    earlyCasualAfterMessages: 2,
-    earlyCasualMaxIntimacy: 45,
-    warmupRate: 'normal',
-  },
-  exp: 0,
+type IntimacyWarmupRate = 'very_low' | 'low' | 'normal' | 'high' | 'very_high' | 'extreme';
+
+type SelfieConfig = {
+  enabled: boolean;
+  threshold: number;
+  teaseThreshold: number;
+  rewardThreshold: number;
+  cooldownMinutes: number;
+  reciprocateGapMinutes: number;
+  reciprocateOnUserImage: boolean;
+  earlyCasualAfterMessages: number;
+  earlyCasualMaxIntimacy: number;
+  warmupRate: IntimacyWarmupRate;
 };
 
-type IntimacyWarmupRate = 'very_low' | 'low' | 'normal' | 'high' | 'very_high' | 'extreme';
+type SelfieConfigCacheEntry = { value: SelfieConfig; exp: number };
+
+const globalSelfieCfg = (globalThis as any).__dhSelfieCfgByPersonality as
+  | Map<string, SelfieConfigCacheEntry>
+  | undefined;
+const selfieCfgCache =
+  globalSelfieCfg instanceof Map ? globalSelfieCfg : new Map<string, SelfieConfigCacheEntry>();
+(globalThis as any).__dhSelfieCfgByPersonality = selfieCfgCache;
 
 function parseWarmupRate(raw: string | undefined): IntimacyWarmupRate {
   if (
@@ -367,11 +356,31 @@ function normalizeIntimacyScore(raw: unknown) {
   return Math.max(0, Math.min(100, score));
 }
 
-async function getSelfieConfig() {
-  if (Date.now() < selfieCfgCache.exp) return selfieCfgCache.value;
+async function getSelfieConfig(personality?: string | null): Promise<SelfieConfig> {
+  const cacheKey = personality?.trim() || '__global__';
+  const cached = selfieCfgCache.get(cacheKey);
+  if (cached && Date.now() < cached.exp) return cached.value;
+
   const { data } = await supabase.from('digital_human_config').select('key, value');
   const map: Record<string, string> = {};
   for (const r of data ?? []) map[r.key] = r.value;
+
+  if (personality?.trim()) {
+    const { data: overrides, error } = await supabase
+      .from('digital_human_personality_config')
+      .select('key, value')
+      .eq('personality', personality.trim());
+
+    if (error) {
+      console.error('[dh-auto-reply] Failed to load personality config overrides', {
+        personality,
+        error: error.message,
+      });
+    } else {
+      for (const r of overrides ?? []) map[r.key] = r.value;
+    }
+  }
+
   // Parse a numeric knob, falling back ONLY when the value is missing or
   // non-numeric — so an intentional 0 (e.g. "no gap, reciprocate every time")
   // is honored instead of being clobbered by a truthiness `|| default`.
@@ -382,7 +391,7 @@ async function getSelfieConfig() {
   // Spontaneous (intimacy-driven) selfies are paced by `cooldownMinutes`. The
   // legacy `selfie_cooldown_hours` key (3h) is intentionally NOT read anymore —
   // it was the reason a DH only ever sent one selfie per conversation.
-  const value = {
+  const value: SelfieConfig = {
     enabled: map['enable_digital_human_selfies'] !== 'false',
     threshold: num(map['selfie_intimacy_threshold'], 55),
     teaseThreshold: num(map['selfie_tease_intimacy_threshold'], 45),
@@ -394,8 +403,7 @@ async function getSelfieConfig() {
     earlyCasualMaxIntimacy: num(map['selfie_early_casual_max_intimacy'], 45),
     warmupRate: parseWarmupRate(map['intimacy_warmup_rate']),
   };
-  selfieCfgCache = { value, exp: Date.now() + CONFIG_TTL_MS };
-  (globalThis as any).__dhSelfieCfg = selfieCfgCache;
+  selfieCfgCache.set(cacheKey, { value, exp: Date.now() + CONFIG_TTL_MS });
   return value;
 }
 
@@ -711,7 +719,7 @@ Deno.serve(async (req) => {
       // 11. Generate the reply and score intimacy in parallel (independent calls).
       console.log('[dh-auto-reply] systemInstruction', systemInstruction);
       console.log('[dh-auto-reply] transcript', transcript);
-      const selfieCfg = await getSelfieConfig();
+      const selfieCfg = await getSelfieConfig(bot.personality);
       const [result, critic] = await Promise.all([
         generateReply(replyPrompt),
         scoreIntimacy(systemInstruction, transcript, stateData.intimacy_score ?? null, selfieCfg.warmupRate),

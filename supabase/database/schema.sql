@@ -570,6 +570,22 @@ create table if not exists public.digital_human_config (
   description text
 );
 
+create table if not exists public.digital_human_personality_config (
+  personality text not null,
+  key text not null,
+  value text not null,
+  description text,
+  updated_at timestamptz not null default now(),
+  primary key (personality, key)
+);
+create index if not exists digital_human_personality_config_personality_idx
+  on public.digital_human_personality_config (personality);
+drop trigger if exists digital_human_personality_config_set_updated_at on public.digital_human_personality_config;
+create trigger digital_human_personality_config_set_updated_at
+before update on public.digital_human_personality_config
+for each row
+execute function public.set_updated_at();
+
 -- Insert default configuration values
 insert into public.digital_human_config (key, value, description)
 values

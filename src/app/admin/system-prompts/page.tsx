@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CheckCircle2 } from "lucide-react"
 import {
   Dialog,
@@ -41,6 +41,63 @@ type KeyRow = {
   active_greeting_enabled: boolean
 }
 
+type PersonalityOverrideRow = {
+  personality: string
+  key: string
+  value: string
+}
+
+type PersonalityOverrides = Record<string, Record<string, string>>
+
+const BOOLEAN_CONFIG_KEYS = new Set([
+  "enable_digital_human_matching",
+  "enable_digital_human_greeting",
+  "enable_digital_human_auto_response",
+  "enable_digital_human_follow_up",
+  "enable_find_nearby_people",
+  "enable_digital_human_selfies",
+  "enable_selfie_reciprocation",
+  "enable_proactive_double_text",
+])
+
+const WARMUP_RATE_OPTIONS = [
+  { value: "very_low", label: "Very low" },
+  { value: "low", label: "Low" },
+  { value: "normal", label: "Normal" },
+  { value: "high", label: "High" },
+  { value: "very_high", label: "Very high" },
+  { value: "extreme", label: "Extreme" },
+]
+
+const CONFIG_LABELS: Record<string, string> = {
+  max_invites_per_user: "Max invites per user",
+  invites_per_cron_run: "Invites per cron run",
+  accept_rate_percentage: "Accept rate percentage",
+  active_hour_start: "Active hour start",
+  active_hour_end: "Active hour end",
+  enable_digital_human_matching: "Enable matching",
+  enable_digital_human_greeting: "Enable greetings",
+  enable_digital_human_auto_response: "Enable auto-reply",
+  enable_digital_human_follow_up: "Enable follow-ups",
+  enable_find_nearby_people: "Enable find nearby people",
+  min_user_age_minutes_for_invites: "Minimum user age before invites",
+  enable_digital_human_selfies: "Enable selfies",
+  selfie_intimacy_threshold: "Selfie intimacy threshold",
+  selfie_cooldown_hours: "Legacy selfie cooldown hours",
+  selfie_cooldown_minutes: "Selfie cooldown minutes",
+  enable_selfie_reciprocation: "Enable photo reciprocation",
+  selfie_reciprocate_gap_minutes: "Photo reciprocation gap minutes",
+  selfie_tease_intimacy_threshold: "Tease threshold",
+  selfie_reward_intimacy_threshold: "Reward threshold",
+  selfie_early_casual_after_messages: "Early casual after user messages",
+  selfie_early_casual_max_intimacy: "Early casual max intimacy",
+  intimacy_warmup_rate: "Relationship warm-up rate",
+  enable_proactive_double_text: "Enable proactive double-texting",
+  proactive_intimacy_drive_threshold: "Proactive drive threshold",
+  proactive_delay_minutes: "Proactive delay minutes",
+  proactive_extra_followups: "Proactive extra follow-ups",
+}
+
 export default function SystemPromptsPage() {
   const [genderFilter, setGenderFilter] = React.useState<"all" | Gender>("all")
   const [loading, setLoading] = React.useState(true)
@@ -69,6 +126,10 @@ export default function SystemPromptsPage() {
   }, [fetchKeys])
 
   const empty = !loading && keys.length === 0
+  const personalities = React.useMemo(
+    () => Array.from(new Set(keys.map((k) => k.personality).filter(Boolean))).sort(),
+    [keys]
+  )
 
   return (
     <div className="space-y-6">
@@ -94,7 +155,10 @@ export default function SystemPromptsPage() {
         </Tabs>
 
         <div className="flex gap-2">
-          <ConfigurationDialog trigger={<Button variant="outline">Global Configuration</Button>} />
+          <ConfigurationDialog
+            personalities={personalities}
+            trigger={<Button variant="outline">Global Configuration</Button>}
+          />
           <Link href="/admin/system-prompts/manage">
             <Button>+ System Prompt</Button>
           </Link>
@@ -202,10 +266,18 @@ export default function SystemPromptsPage() {
   )
 }
 
-function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
+function ConfigurationDialog({
+  personalities,
+  trigger,
+}: {
+  personalities: string[]
+  trigger: React.ReactNode
+}) {
   const [open, setOpen] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
+  const [selectedPersonality, setSelectedPersonality] = React.useState("")
+  const [personalityOverrides, setPersonalityOverrides] = React.useState<PersonalityOverrides>({})
   const [config, setConfig] = React.useState({
     max_invites_per_user: "5",
     invites_per_cron_run: "1",
@@ -236,6 +308,12 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
   })
 
   React.useEffect(() => {
+    if (open && !selectedPersonality && personalities.length > 0) {
+      setSelectedPersonality(personalities[0])
+    }
+  }, [open, personalities, selectedPersonality])
+
+  React.useEffect(() => {
     if (open) {
       setLoading(true)
       fetch("/api/admin/digital-humans/config")
@@ -244,6 +322,15 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
           if (json.data) {
             setConfig((prev) => ({ ...prev, ...json.data }))
           }
+          const overrides: PersonalityOverrides = {}
+          for (const row of (json.personality_overrides ?? []) as PersonalityOverrideRow[]) {
+            if (!row.personality || !row.key) continue
+            overrides[row.personality] = {
+              ...(overrides[row.personality] ?? {}),
+              [row.key]: row.value,
+            }
+          }
+          setPersonalityOverrides(overrides)
         })
         .catch(() => toast.error("Failed to load config"))
         .finally(() => setLoading(false))
@@ -256,7 +343,7 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
       const res = await fetch("/api/admin/digital-humans/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
+        body: JSON.stringify({ ...config, personality_overrides: personalityOverrides }),
       })
       if (!res.ok) throw new Error("Failed to save")
       toast.success("Configuration saved")
@@ -268,20 +355,42 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
     }
   }
 
+  const setPersonalityOverride = (key: string, value: string) => {
+    if (!selectedPersonality) return
+    setPersonalityOverrides((prev) => ({
+      ...prev,
+      [selectedPersonality]: {
+        ...(prev[selectedPersonality] ?? {}),
+        [key]: value,
+      },
+    }))
+  }
+
+  const configKeys = Object.keys(config) as Array<keyof typeof config>
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-4xl">
         <DialogXCloseButton />
-        <DialogHeader>
-          <DialogTitle>Global Configuration</DialogTitle>
-          <DialogDescription>Configure automation settings for all digital humans.</DialogDescription>
+        <DialogHeader className="border-b">
+          <DialogTitle>Digital Human Configuration</DialogTitle>
+          <DialogDescription>Configure global defaults and personality-specific overrides.</DialogDescription>
         </DialogHeader>
 
         {loading ? (
-          <div className="p-10 text-center text-muted-foreground">Loading config...</div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-10 text-center text-muted-foreground">Loading config...</div>
         ) : (
-          <div className="grid gap-6 p-4">
+          <Tabs defaultValue="global" className="min-h-0 flex-1 overflow-hidden">
+            <div className="border-b px-4 pt-3">
+              <TabsList>
+                <TabsTrigger value="global">Global Defaults</TabsTrigger>
+                <TabsTrigger value="personality">Personality Overrides</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="global" className="min-h-0 overflow-y-auto">
+              <div className="grid gap-6 p-4">
             <div className="grid grid-cols-2 gap-4 border-b pb-4">
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
@@ -620,9 +729,104 @@ function ConfigurationDialog({ trigger }: { trigger: React.ReactNode }) {
               </div>
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="personality" className="min-h-0 overflow-y-auto">
+          <div className="grid gap-5 p-4">
+            {personalities.length === 0 ? (
+              <div className="rounded-md border p-6 text-sm text-muted-foreground">
+                Create a system prompt personality first, then configure overrides here.
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-2">
+                  <Label>Personality</Label>
+                  <Select value={selectedPersonality} onValueChange={setSelectedPersonality}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {personalities.map((personality) => (
+                        <SelectItem key={personality} value={personality}>
+                          {personality}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Empty fields inherit the global default. Setting a value here only affects this personality.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  {configKeys.map((key) => {
+                    const value = personalityOverrides[selectedPersonality]?.[key] ?? ""
+                    const label = CONFIG_LABELS[key] ?? String(key).replace(/_/g, " ")
+                    const globalValue = config[key]
+
+                    return (
+                      <div key={key} className="space-y-2 rounded-md border p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <Label className="leading-5">{label}</Label>
+                          {value !== "" ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => setPersonalityOverride(key, "")}
+                            >
+                              Inherit
+                            </Button>
+                          ) : null}
+                        </div>
+                        {key === "intimacy_warmup_rate" ? (
+                          <Select value={value || "__inherit__"} onValueChange={(next) => setPersonalityOverride(key, next === "__inherit__" ? "" : next)}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__inherit__">Inherit global ({globalValue})</SelectItem>
+                              {WARMUP_RATE_OPTIONS.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : BOOLEAN_CONFIG_KEYS.has(key) ? (
+                          <Select value={value || "__inherit__"} onValueChange={(next) => setPersonalityOverride(key, next === "__inherit__" ? "" : next)}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__inherit__">Inherit global ({globalValue})</SelectItem>
+                              <SelectItem value="true">True</SelectItem>
+                              <SelectItem value="false">False</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            value={value}
+                            placeholder={`Global: ${globalValue}`}
+                            onChange={(e) => setPersonalityOverride(key, e.target.value)}
+                          />
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          {value === "" ? `Inherited: ${globalValue}` : `Override: ${value}`}
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        </TabsContent>
+      </Tabs>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="border-t">
           <Button variant="outline" onClick={() => setOpen(false)} disabled={saving}>
             Cancel
           </Button>
