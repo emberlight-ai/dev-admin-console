@@ -430,6 +430,66 @@ function tierForIntimacy(
   return 'casual';
 }
 
+type SendMessageResult = {
+  data: { id?: string } | null;
+  error: unknown | null;
+};
+
+function canRetryWithoutIntimacyScore(error: unknown) {
+  const err = error as { code?: string; message?: string } | null;
+  const message = err?.message ?? String(error ?? '');
+  return (
+    err?.code === 'PGRST202' ||
+    message.includes('message_intimacy_score') ||
+    message.includes('intimacy_score') ||
+    (message.includes('rpc_send_message') && message.includes('schema cache'))
+  );
+}
+
+async function sendMessageWithOptionalIntimacy(args: {
+  matchId: string;
+  senderId: string;
+  content?: string | null;
+  mediaUrl?: string | null;
+  intimacyScore?: number | null;
+}): Promise<SendMessageResult> {
+  const baseArgs = {
+    match_id: args.matchId,
+    ...(args.content ? { content: args.content } : {}),
+    ...(args.mediaUrl ? { media_url: args.mediaUrl } : {}),
+    sender_id: args.senderId,
+  };
+
+  const withScore = await supabase.rpc('rpc_send_message', {
+    ...baseArgs,
+    message_intimacy_score: args.intimacyScore ?? null,
+  });
+
+  if (!withScore.error || !canRetryWithoutIntimacyScore(withScore.error)) {
+    return withScore as SendMessageResult;
+  }
+
+  console.error(
+    '[dh-auto-reply] rpc_send_message rejected message_intimacy_score; retrying legacy signature',
+    withScore.error
+  );
+  const legacy = await supabase.rpc('rpc_send_message', baseArgs);
+
+  const messageId = (legacy.data as { id?: string } | null)?.id;
+  if (!legacy.error && messageId && args.intimacyScore != null) {
+    const { error: updateErr } = await supabase
+      .from('messages')
+      .update({ intimacy_score: args.intimacyScore })
+      .eq('id', messageId);
+
+    if (updateErr) {
+      console.error('[dh-auto-reply] Failed to backfill message intimacy_score after legacy send', updateErr);
+    }
+  }
+
+  return legacy as SendMessageResult;
+}
+
 // A separate "referee" call, kept apart from reply generation so it can't game
 // its own score. Uses structured JSON output for a reliable parse.
 async function scoreIntimacy(
@@ -748,11 +808,11 @@ Deno.serve(async (req) => {
       }
 
       // 12. Insert reply
-      const { error: sendError } = await supabase.rpc('rpc_send_message', {
-        match_id: matchId,
+      const { error: sendError } = await sendMessageWithOptionalIntimacy({
+        matchId,
         content: responseText,
-        sender_id: bot.userid,
-        message_intimacy_score: messageIntimacyScore,
+        senderId: bot.userid,
+        intimacyScore: messageIntimacyScore,
       });
       if (sendError) throw sendError;
 
@@ -810,11 +870,11 @@ Deno.serve(async (req) => {
           } else {
             const selfie = await pickUnsentSelfie(dhId, matchId, targetTier);
             if (selfie) {
-              const { data: imgMsg, error: imgErr } = await supabase.rpc('rpc_send_message', {
-                match_id: matchId,
-                media_url: selfie.public_url,
-                sender_id: bot.userid,
-                message_intimacy_score: messageIntimacyScore,
+              const { data: imgMsg, error: imgErr } = await sendMessageWithOptionalIntimacy({
+                matchId,
+                mediaUrl: selfie.public_url,
+                senderId: bot.userid,
+                intimacyScore: messageIntimacyScore,
               });
               if (!imgErr) {
                 // The image genuinely went out, so arm the cooldown regardless of
