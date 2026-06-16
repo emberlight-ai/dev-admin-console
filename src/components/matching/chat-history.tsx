@@ -239,7 +239,7 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
   };
 
   return (
-    <div className="flex flex-col h-[600px] border rounded-md">
+    <div className="flex flex-col h-[760px] border rounded-md">
       <div className="p-3 border-b bg-muted/30 flex items-center justify-between">
         <span className="font-medium text-sm">
           Chatting with <span className="text-primary">{/* We might want to pass username here if needed */}Partner</span>
