@@ -98,6 +98,35 @@ const CONFIG_LABELS: Record<string, string> = {
   proactive_extra_followups: "Proactive extra follow-ups",
 }
 
+const CONFIG_DESCRIPTIONS: Record<string, string> = {
+  max_invites_per_user: "Maximum number of digital-human invites a real user can receive in total.",
+  invites_per_cron_run: "Maximum invites this automation can send each matching cron run.",
+  accept_rate_percentage: "Chance that a digital human accepts an incoming match request.",
+  active_hour_start: "Start hour, in PST, when automation is allowed to run.",
+  active_hour_end: "End hour, in PST, when automation is allowed to run.",
+  enable_digital_human_matching: "Allows this personality to send and process matching requests.",
+  enable_digital_human_greeting: "Allows greeting messages when a new match is created.",
+  enable_digital_human_auto_response: "Allows automatic replies after the real user sends a message.",
+  enable_digital_human_follow_up: "Allows scheduled re-engagement messages when the user has not replied.",
+  enable_find_nearby_people: "Controls whether iOS nearby people can include normal matching results.",
+  min_user_age_minutes_for_invites: "How long a new real user must exist before DH invites can target them.",
+  enable_digital_human_selfies: "Allows preserved DH images to be sent by the auto-reply logic.",
+  selfie_intimacy_threshold: "Minimum intimacy score before passive selfie sending can happen.",
+  selfie_cooldown_hours: "Legacy cooldown value kept for older config compatibility.",
+  selfie_cooldown_minutes: "Minimum minutes between spontaneous tiered image sends.",
+  enable_selfie_reciprocation: "Allows a DH to answer a user photo with an image of their own.",
+  selfie_reciprocate_gap_minutes: "Short anti-spam gap for user photo or photo-request reciprocation.",
+  selfie_tease_intimacy_threshold: "Score where image selection moves from casual to tease.",
+  selfie_reward_intimacy_threshold: "Score where image selection moves from tease to reward.",
+  selfie_early_casual_after_messages: "Cold chats can receive one casual image after this many real-user messages.",
+  selfie_early_casual_max_intimacy: "Maximum score where the early casual image path is still allowed.",
+  intimacy_warmup_rate: "Guides how quickly the judge should raise the relationship intimacy score.",
+  enable_proactive_double_text: "Allows hotter conversations to receive faster and extra follow-ups.",
+  proactive_intimacy_drive_threshold: "Momentum threshold where a conversation counts as hot for proactive outreach.",
+  proactive_delay_minutes: "Delay before a hot conversation can receive a proactive double-text.",
+  proactive_extra_followups: "Extra follow-up messages allowed beyond the personality's base max.",
+}
+
 export default function SystemPromptsPage() {
   const [genderFilter, setGenderFilter] = React.useState<"all" | Gender>("all")
   const [loading, setLoading] = React.useState(true)
@@ -739,7 +768,7 @@ function ConfigurationDialog({
               </div>
             ) : (
               <>
-                <div className="grid gap-2">
+                <div className="sticky top-0 z-10 -mx-4 -mt-4 grid gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur">
                   <Label>Personality</Label>
                   <Select value={selectedPersonality} onValueChange={setSelectedPersonality}>
                     <SelectTrigger>
@@ -762,6 +791,7 @@ function ConfigurationDialog({
                   {configKeys.map((key) => {
                     const value = personalityOverrides[selectedPersonality]?.[key] ?? ""
                     const label = CONFIG_LABELS[key] ?? String(key).replace(/_/g, " ")
+                    const description = CONFIG_DESCRIPTIONS[key]
                     const globalValue = config[key]
 
                     return (
@@ -780,6 +810,9 @@ function ConfigurationDialog({
                             </Button>
                           ) : null}
                         </div>
+                        {description ? (
+                          <p className="text-xs leading-5 text-muted-foreground">{description}</p>
+                        ) : null}
                         {key === "intimacy_warmup_rate" ? (
                           <Select value={value || "__inherit__"} onValueChange={(next) => setPersonalityOverride(key, next === "__inherit__" ? "" : next)}>
                             <SelectTrigger>
