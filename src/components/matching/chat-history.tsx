@@ -27,6 +27,7 @@ interface Message {
   receiver_id?: string | null;
   content: string;
   media_url?: string | null;
+  intimacy_score?: number | null;
   created_at: string;
 }
 
@@ -55,6 +56,11 @@ function initials(name: string) {
   if (parts.length === 0) return '?';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function formatIntimacyScore(score?: number | null) {
+  if (typeof score !== 'number' || !Number.isFinite(score)) return null;
+  return Math.abs(score) < 10 ? score.toFixed(2) : score.toFixed(0);
 }
 
 const downsampleImage = (file: File, maxWidth = 1200): Promise<File> => {
@@ -233,7 +239,7 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
   };
 
   return (
-    <div className="flex flex-col h-[600px] border rounded-md">
+    <div className="flex flex-col h-[760px] border rounded-md">
       <div className="p-3 border-b bg-muted/30 flex items-center justify-between">
         <span className="font-medium text-sm">
           Chatting with <span className="text-primary">{/* We might want to pass username here if needed */}Partner</span>
@@ -269,6 +275,7 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
           ) : (
             messages.map((msg) => {
               const isMe = msg.sender_id === currentUserId;
+              const intimacyScore = formatIntimacyScore(msg.intimacy_score);
               return (
                 <div
                   key={msg.id}
@@ -291,6 +298,19 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
                       </a>
                     )}
                     {msg.content && <div>{msg.content}</div>}
+                    {intimacyScore && (
+                      <div
+                        className={cn(
+                          'mt-1 w-max rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none',
+                          isMe
+                            ? 'border-primary-foreground/30 text-primary-foreground/80'
+                            : 'border-border bg-background/70 text-muted-foreground'
+                        )}
+                        title="Intimacy score captured when this message was sent"
+                      >
+                        Intimacy {intimacyScore}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -626,4 +646,3 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
     </div>
   );
 }
-
