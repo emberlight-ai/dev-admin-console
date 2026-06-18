@@ -139,6 +139,18 @@ returns table (
 language sql
 security invoker
 as $$
+  with green_mode_personalities as (
+    select lower(btrim(green_value.personality)) as personality
+    from public.digital_human_config cfg
+    cross join lateral jsonb_array_elements_text(
+      case
+        when jsonb_typeof(cfg.value::jsonb) = 'array' then cfg.value::jsonb
+        else '[]'::jsonb
+      end
+    ) as green_value(personality)
+    where cfg.key = 'green_mode_personalities'
+      and nullif(btrim(green_value.personality), '') is not null
+  )
   select
     mr.id as request_id,
     mr.from_user_id,
@@ -163,6 +175,14 @@ as $$
     from public.blocks b
     where (b.blocker_id = auth.uid() and b.blocked_id = u.userid)
        or (b.blocker_id = u.userid and b.blocked_id = auth.uid())
+  )
+  and (
+    direction <> 'inbound'
+    or not coalesce(u.is_digital_human, false)
+    or not exists (select 1 from green_mode_personalities)
+    or lower(btrim(coalesce(u.personality, ''))) in (
+      select personality from green_mode_personalities
+    )
   )
   order by mr.created_at desc
   offset greatest(start_index, 0)
@@ -419,10 +439,36 @@ begin
   for i in 1..invites_per_run loop
     -- Select a random digital human
     select userid, lower(trim(gender)) into digital_human_id, digital_human_gender
-    from public.users
-    where is_digital_human = true
-    and deleted_at is null
-    and lower(trim(coalesce(gender, ''))) in ('female', 'male')
+    from public.users u
+    where u.is_digital_human = true
+    and u.deleted_at is null
+    and lower(trim(coalesce(u.gender, ''))) in ('female', 'male')
+    and (
+      not exists (
+        select 1
+        from public.digital_human_config cfg
+        cross join lateral jsonb_array_elements_text(
+          case
+            when jsonb_typeof(cfg.value::jsonb) = 'array' then cfg.value::jsonb
+            else '[]'::jsonb
+          end
+        ) as green_value(personality)
+        where cfg.key = 'green_mode_personalities'
+          and nullif(btrim(green_value.personality), '') is not null
+      )
+      or lower(btrim(coalesce(u.personality, ''))) in (
+        select lower(btrim(green_value.personality))
+        from public.digital_human_config cfg
+        cross join lateral jsonb_array_elements_text(
+          case
+            when jsonb_typeof(cfg.value::jsonb) = 'array' then cfg.value::jsonb
+            else '[]'::jsonb
+          end
+        ) as green_value(personality)
+        where cfg.key = 'green_mode_personalities'
+          and nullif(btrim(green_value.personality), '') is not null
+      )
+    )
     order by random()
     limit 1;
     
