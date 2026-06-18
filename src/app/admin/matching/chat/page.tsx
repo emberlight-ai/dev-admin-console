@@ -36,6 +36,20 @@ interface ChatProps {
   onSwitchUser: () => void;
 }
 
+function formatMessageTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+const MESSAGE_PAGE_SIZE = 100;
+const MAX_MESSAGE_PAGES = 50;
+
 function ChatInterface({ matchId, currentUser, userA, userB, onSwitchUser }: ChatProps) {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -73,25 +87,37 @@ function ChatInterface({ matchId, currentUser, userA, userB, onSwitchUser }: Cha
     fetchOtherUserDetails();
   }, [currentUser, userA, userB]);
 
-  // Fetch initial 
+  // Fetch the full history. The RPC returns newest-first pages capped at 100,
+  // so page through all rows and flip once for chronological display.
   React.useEffect(() => {
     const fetchMessages = async () => {
       setLoading(true);
       const supabase = getSupabase();
-      const { data, error } = await supabase.rpc('rpc_get_messages', {
-        match_id: matchId,
-        start_index: 0,
-        limit_count: 50,
-      });
+      const allMessages: Message[] = [];
 
-      if (error) {
+      try {
+        for (let page = 0; page < MAX_MESSAGE_PAGES; page += 1) {
+          const { data, error } = await supabase.rpc('rpc_get_messages', {
+            match_id: matchId,
+            start_index: page * MESSAGE_PAGE_SIZE,
+            limit_count: MESSAGE_PAGE_SIZE,
+          });
+
+          if (error) throw error;
+
+          const pageMessages = (data ?? []) as Message[];
+          allMessages.push(...pageMessages);
+
+          if (pageMessages.length < MESSAGE_PAGE_SIZE) break;
+        }
+
+        setMessages(allMessages.reverse());
+      } catch (err: unknown) {
         toast.error('Failed to load messages');
-        console.error(error);
-      } else {
-        // Reverse so newest is at bottom
-        setMessages((data as Message[]).reverse());
+        console.error(err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     fetchMessages();
@@ -223,6 +249,7 @@ function ChatInterface({ matchId, currentUser, userA, userB, onSwitchUser }: Cha
           ) : (
             messages.map((msg) => {
               const isMe = msg.sender_id === currentUser.userid;
+              const timestamp = formatMessageTimestamp(msg.created_at);
               return (
                 <div
                   key={msg.id}
@@ -233,13 +260,23 @@ function ChatInterface({ matchId, currentUser, userA, userB, onSwitchUser }: Cha
                 >
                   <div
                     className={cn(
-                      'max-w-[80%] rounded-lg px-3 py-2 text-sm break-words',
+                      'max-w-[80%] rounded-lg px-3 py-2 text-sm break-words flex flex-col gap-2',
                       isMe
                         ? 'bg-primary text-primary-foreground'
                         : 'bg-muted text-foreground'
                     )}
                   >
-                    {msg.content}
+                    <div>{msg.content}</div>
+                    {timestamp && (
+                      <div
+                        className={cn(
+                          'text-[10px] leading-none',
+                          isMe ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                        )}
+                      >
+                        {timestamp}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -396,4 +433,3 @@ export default function AdminChatPage() {
     </div>
   );
 }
-

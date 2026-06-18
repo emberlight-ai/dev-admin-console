@@ -63,6 +63,20 @@ function formatIntimacyScore(score?: number | null) {
   return Math.abs(score) < 10 ? score.toFixed(2) : score.toFixed(0);
 }
 
+function formatMessageTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+const MESSAGE_PAGE_SIZE = 100;
+const MAX_MESSAGE_PAGES = 50;
+
 const downsampleImage = (file: File, maxWidth = 1200): Promise<File> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -120,25 +134,37 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
     e.target.value = '';
   };
 
-  // Fetch initial messages
+  // Fetch the full history. The RPC returns newest-first pages capped at 100,
+  // so page through all rows and flip once for chronological display.
   React.useEffect(() => {
     const fetchMessages = async () => {
       setLoading(true);
       const supabase = getSupabase();
-      const { data, error } = await supabase.rpc('rpc_get_messages', {
-        match_id: matchId,
-        start_index: 0,
-        limit_count: 50,
-      });
+      const allMessages: Message[] = [];
 
-      if (error) {
+      try {
+        for (let page = 0; page < MAX_MESSAGE_PAGES; page += 1) {
+          const { data, error } = await supabase.rpc('rpc_get_messages', {
+            match_id: matchId,
+            start_index: page * MESSAGE_PAGE_SIZE,
+            limit_count: MESSAGE_PAGE_SIZE,
+          });
+
+          if (error) throw error;
+
+          const pageMessages = (data ?? []) as Message[];
+          allMessages.push(...pageMessages);
+
+          if (pageMessages.length < MESSAGE_PAGE_SIZE) break;
+        }
+
+        setMessages(allMessages.reverse());
+      } catch (err: unknown) {
         toast.error('Failed to load messages');
-        console.error(error);
-      } else {
-        // Reverse so newest is at bottom
-        setMessages((data as Message[]).reverse());
+        console.error(err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     fetchMessages();
@@ -276,6 +302,7 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
             messages.map((msg) => {
               const isMe = msg.sender_id === currentUserId;
               const intimacyScore = formatIntimacyScore(msg.intimacy_score);
+              const timestamp = formatMessageTimestamp(msg.created_at);
               return (
                 <div
                   key={msg.id}
@@ -298,19 +325,31 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
                       </a>
                     )}
                     {msg.content && <div>{msg.content}</div>}
-                    {intimacyScore && (
-                      <div
-                        className={cn(
-                          'mt-1 w-max rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none',
-                          isMe
-                            ? 'border-primary-foreground/30 text-primary-foreground/80'
-                            : 'border-border bg-background/70 text-muted-foreground'
-                        )}
-                        title="Intimacy score captured when this message was sent"
-                      >
-                        Intimacy {intimacyScore}
-                      </div>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {timestamp && (
+                        <span
+                          className={cn(
+                            'text-[10px] leading-none',
+                            isMe ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                          )}
+                        >
+                          {timestamp}
+                        </span>
+                      )}
+                      {intimacyScore && (
+                        <span
+                          className={cn(
+                            'w-max rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none',
+                            isMe
+                              ? 'border-primary-foreground/30 text-primary-foreground/80'
+                              : 'border-border bg-background/70 text-muted-foreground'
+                          )}
+                          title="Intimacy score captured when this message was sent"
+                        >
+                          Intimacy {intimacyScore}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
