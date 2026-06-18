@@ -599,6 +599,7 @@ values
   ('enable_digital_human_auto_response', 'true', 'Global toggle for digital human auto-replies'),
   ('enable_digital_human_follow_up', 'true', 'Global toggle for digital human follow-up messages'),
   ('enable_find_nearby_people', 'false', 'Global toggle for find nearby people responses'),
+  ('green_mode_personalities', '[]', 'When non-empty, matching feed candidates are limited to these personalities.'),
   ('min_user_age_minutes_for_invites', '10', 'Minimum user account age before receiving digital human invites'),
   ('enable_digital_human_selfies', 'true', 'Allow DHs to send preserved selfies when intimacy is high enough'),
   ('selfie_intimacy_threshold', '55', 'Min intimacy score (0-100) before a DH may send a selfie'),

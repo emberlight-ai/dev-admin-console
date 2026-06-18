@@ -293,7 +293,19 @@ returns setof public.users
 language sql
 security invoker
 as $$
-  with whitelisted_users(userid) as (
+  with green_mode_personalities as (
+    select lower(btrim(value)) as personality
+    from public.digital_human_config cfg
+    cross join lateral jsonb_array_elements_text(
+      case
+        when jsonb_typeof(cfg.value::jsonb) = 'array' then cfg.value::jsonb
+        else '[]'::jsonb
+      end
+    ) value
+    where cfg.key = 'green_mode_personalities'
+      and nullif(btrim(value), '') is not null
+  ),
+  whitelisted_users(userid) as (
     -- Admin-curated featured digital humans (users.whitelisted, toggled from the DH
     -- detail page). Shown first in the match deck. users.whitelisted is readable by
     -- the invoker via the "Public read profiles" policy, so no definer needed.
@@ -318,6 +330,12 @@ as $$
       and u.userid <> viewer_user_id
       and (nullif(btrim(gender_filter), '') is null or u.gender = btrim(gender_filter))
       and (not digital_humans_only or coalesce(u.is_digital_human, false) = true)
+      and (
+        not exists (select 1 from green_mode_personalities)
+        or lower(btrim(coalesce(u.personality, ''))) in (
+          select personality from green_mode_personalities
+        )
+      )
       and not exists (
         select 1
         from public.blocks b
