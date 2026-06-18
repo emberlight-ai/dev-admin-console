@@ -17,16 +17,16 @@ language sql
 security invoker
 as $$
   with green_mode_personalities as (
-    select lower(btrim(value)) as personality
+    select lower(btrim(green_value.personality)) as personality
     from public.digital_human_config cfg
     cross join lateral jsonb_array_elements_text(
       case
         when jsonb_typeof(cfg.value::jsonb) = 'array' then cfg.value::jsonb
         else '[]'::jsonb
       end
-    ) value
+    ) as green_value(personality)
     where cfg.key = 'green_mode_personalities'
-      and nullif(btrim(value), '') is not null
+      and nullif(btrim(green_value.personality), '') is not null
   ),
   whitelisted_users(userid) as (
     -- Admin-curated featured digital humans (users.whitelisted, toggled from the DH
