@@ -11,6 +11,7 @@ import {
   Menu,
   LayoutDashboard,
   Flag,
+  Leaf,
   MessageSquare,
   Star,
 } from "lucide-react"
@@ -37,6 +38,7 @@ const navGroups = [
     title: "Matching",
     items: [
       { href: "/admin/matching/whitelist", label: "Whitelist", icon: Star },
+      { href: "/admin/matching/green-mode", label: "Green Mode", icon: Leaf },
       { href: "/admin/matching/traffic", label: "Chat Traffic", icon: MessageSquare },
       { href: "/admin/matching/reports", label: "Reports", icon: Flag },
     ],
