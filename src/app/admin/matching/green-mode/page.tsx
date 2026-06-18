@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Leaf, Loader2, Plus, X } from 'lucide-react';
+import { Leaf, Loader2, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -59,6 +59,34 @@ export default function MatchingGreenModePage() {
     void load();
   }, [load]);
 
+  React.useEffect(() => {
+    if (loading || !isDirty) return;
+
+    const nextPersonalities = personalities;
+    const t = setTimeout(async () => {
+      setSaving(true);
+      try {
+        const res = await fetch('/api/admin/matching/green-mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ personalities: nextPersonalities }),
+        });
+        const json = (await res.json()) as GreenModeResponse;
+        if (!res.ok) throw new Error(json.error || 'Failed to save green mode');
+        const saved = json.data?.personalities ?? nextPersonalities;
+        setPersonalities(saved);
+        setSavedPersonalities(saved);
+      } catch (err) {
+        console.error(err);
+        toast.error(err instanceof Error ? err.message : 'Failed to save green mode');
+      } finally {
+        setSaving(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(t);
+  }, [isDirty, loading, personalities]);
+
   const addPersonality = (raw: string) => {
     const personality = normalizePersonality(raw);
     if (!personality) return;
@@ -73,28 +101,6 @@ export default function MatchingGreenModePage() {
   const removePersonality = (personality: string) => {
     const key = personality.toLowerCase();
     setPersonalities((prev) => prev.filter((p) => p.toLowerCase() !== key));
-  };
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch('/api/admin/matching/green-mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personalities }),
-      });
-      const json = (await res.json()) as GreenModeResponse;
-      if (!res.ok) throw new Error(json.error || 'Failed to save green mode');
-      const nextPersonalities = json.data?.personalities ?? personalities;
-      setPersonalities(nextPersonalities);
-      setSavedPersonalities(nextPersonalities);
-      toast.success('Green mode saved');
-    } catch (err) {
-      console.error(err);
-      toast.error(err instanceof Error ? err.message : 'Failed to save green mode');
-    } finally {
-      setSaving(false);
-    }
   };
 
   const filteredSuggestions = React.useMemo(() => {
@@ -128,10 +134,18 @@ export default function MatchingGreenModePage() {
               Empty set means normal matching behavior.
             </div>
           </div>
-          <Button onClick={save} disabled={loading || saving || !isDirty} className="gap-2">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            Save
-          </Button>
+          <div className="flex min-w-20 items-center justify-end gap-2 text-xs text-muted-foreground">
+            {saving ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Saving...
+              </>
+            ) : isDirty ? (
+              'Pending...'
+            ) : (
+              'Saved'
+            )}
+          </div>
         </div>
 
         <div className="space-y-5 p-4">
