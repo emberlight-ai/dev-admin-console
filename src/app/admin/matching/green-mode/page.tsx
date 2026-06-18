@@ -193,12 +193,15 @@ export default function MatchingGreenModePage() {
             ) : (
               <div className="flex flex-wrap gap-2">
                 {personalities.map((personality) => (
-                  <Badge key={personality} variant="secondary" className="gap-1.5 py-1.5 pl-2.5">
+                  <Badge
+                    key={personality}
+                    className="gap-1.5 border-emerald-200 bg-emerald-50 py-1.5 pl-2.5 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-900"
+                  >
                     {personality}
                     <button
                       type="button"
                       onClick={() => removePersonality(personality)}
-                      className="rounded-sm p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                      className="rounded-sm p-0.5 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-800 dark:hover:text-emerald-50"
                       aria-label={`Remove ${personality}`}
                     >
                       <X className="h-3 w-3" />
