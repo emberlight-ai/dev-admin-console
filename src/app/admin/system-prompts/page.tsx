@@ -189,7 +189,7 @@ export default function SystemPromptsPage() {
             trigger={<Button variant="outline">Global Configuration</Button>}
           />
           <Link href="/admin/system-prompts/manage">
-            <Button>+ System Prompt</Button>
+            <Button>+ Personality</Button>
           </Link>
         </div>
       </div>

@@ -494,7 +494,7 @@ export function ChatPanel({
         <ScrollArea className="h-[420px] p-4">
           {chatHistory.length === 0 ? (
             <div className="py-16 text-center text-sm text-muted-foreground">
-              Start a conversation to test the persona...
+              Start a conversation to test the personality...
             </div>
           ) : (
             <div className="space-y-3">

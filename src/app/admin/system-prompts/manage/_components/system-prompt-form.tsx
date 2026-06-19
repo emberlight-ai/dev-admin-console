@@ -478,7 +478,7 @@ export function SystemPromptForm({
         position: { x: 40, y: 170 },
         data: {
           title: "1) Matching",
-          description: "Control whether this persona appears in the feed and whether matches are instant.",
+          description: "Control whether this personality appears in the feed and whether matches are instant.",
           onOpenSettings: () => openSettings("matching"),
           children: (
             <div className="space-y-3">
