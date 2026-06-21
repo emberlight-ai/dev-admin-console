@@ -2,12 +2,13 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { format, subDays } from "date-fns"
+import { endOfDay, format, startOfDay, subDays } from "date-fns"
 import { ChevronDown, Eye } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Table,
@@ -56,7 +57,16 @@ type DeletedUserRow = {
 
 import type { DateRange } from "react-day-picker"
 
-type Preset = "90" | "30" | "7"
+type Preset = "today" | "yesterday" | "7" | "30" | "90"
+type Environment = "Production" | "Sandbox"
+
+const DATE_PRESETS: { value: Preset; label: string }[] = [
+  { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
+  { value: "7", label: "Last 7 days" },
+  { value: "30", label: "Last 30 days" },
+  { value: "90", label: "Last 3 months" },
+]
 
 type ActiveSubscriberRow = {
   subscription_id: string
@@ -69,19 +79,36 @@ type ActiveSubscriberRow = {
   price_cents: number
   currency: string
   monthly_recurring_cents: number
+  created_at: string | null
   current_period_end: string | null
   environment: string | null
 }
 
-function formatMoneyFromCents(cents: number, currency = 'USD') {
-  try {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: currency.length === 3 ? currency : 'USD',
-    }).format(cents / 100)
-  } catch {
-    return `$${(cents / 100).toFixed(2)}`
-  }
+function TableSkeleton({ columns = 8, rows = 5 }: { columns?: number; rows?: number }) {
+  // Varied bar widths so the shimmer reads as content, not a uniform grid.
+  const widths = ["70%", "55%", "80%", "45%", "60%", "65%", "50%", "40%"]
+  return (
+    <Table>
+      <TableBody>
+        {Array.from({ length: rows }).map((_, r) => (
+          <TableRow key={r}>
+            {Array.from({ length: columns }).map((_, c) => (
+              <TableCell key={c} className={c === 0 ? "pl-4" : undefined}>
+                {c === 0 ? (
+                  <div className="h-9 w-9 animate-pulse rounded-full bg-muted" />
+                ) : (
+                  <div
+                    className="h-4 animate-pulse rounded bg-muted"
+                    style={{ width: widths[c % widths.length] }}
+                  />
+                )}
+              </TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
 }
 
 function StatCard({
@@ -120,6 +147,44 @@ function StatCard({
   )
 }
 
+function SubscriptionsCard({
+  monthly,
+  yearly,
+  environment,
+  loading,
+}: {
+  monthly: number
+  yearly: number
+  environment: string
+  loading: boolean
+}) {
+  return (
+    <Card className="p-6">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm text-muted-foreground">Subscriptions</div>
+        <div className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+          {environment}
+        </div>
+      </div>
+      <div className="mt-3 flex items-end gap-6">
+        <div>
+          <div className="text-3xl font-semibold tracking-tight tabular-nums">
+            {loading ? "—" : monthly.toLocaleString()}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">New monthly</div>
+        </div>
+        <div>
+          <div className="text-3xl font-semibold tracking-tight tabular-nums">
+            {loading ? "—" : yearly.toLocaleString()}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">New yearly</div>
+        </div>
+      </div>
+      <div className="mt-6 text-sm font-medium">New subscriptions in range</div>
+    </Card>
+  )
+}
+
 export default function ManageUsers() {
   const [users, setUsers] = React.useState<UserRow[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -135,19 +200,49 @@ export default function ManageUsers() {
     { created_at: string; is_digital_human: boolean }[]
   >([])
   const [preset, setPreset] = React.useState<Preset>("7")
-  const [subscriptionMrrCents, setSubscriptionMrrCents] = React.useState(0)
+  const [environment, setEnvironment] = React.useState<Environment>("Production")
+  const [newMonthly, setNewMonthly] = React.useState(0)
+  const [newYearly, setNewYearly] = React.useState(0)
   const [activeSubscribers, setActiveSubscribers] = React.useState<ActiveSubscriberRow[]>([])
+  const [premiumIds, setPremiumIds] = React.useState<string[]>([])
   const [subscriptionsLoading, setSubscriptionsLoading] = React.useState(true)
+  const [matchCounts, setMatchCounts] = React.useState<Record<string, number>>({})
 
   const range = React.useMemo<DateRange>(() => {
-    const days = Number(preset)
-    return { from: subDays(new Date(), days), to: new Date() }
+    const now = new Date()
+    switch (preset) {
+      case "today":
+        return { from: startOfDay(now), to: now }
+      case "yesterday": {
+        const y = subDays(now, 1)
+        return { from: startOfDay(y), to: endOfDay(y) }
+      }
+      case "30":
+        return { from: subDays(now, 30), to: now }
+      case "90":
+        return { from: subDays(now, 90), to: now }
+      case "7":
+      default:
+        return { from: subDays(now, 7), to: now }
+    }
   }, [preset])
 
+  // Users with an active subscription in the selected environment are "premium".
+  // Derived from premiumIds (not date-restricted), so the tag reflects current state
+  // even when the date filter narrows the Active subscribers table.
+  const premiumUserIds = React.useMemo(() => new Set(premiumIds), [premiumIds])
+
   const fetchUsers = React.useCallback(async () => {
+    if (!range?.from || !range?.to) return
     setLoading(true)
     try {
-      const res = await fetch("/api/admin/users?mode=list&is_digital_human=false")
+      const qs = new URLSearchParams({
+        mode: "list",
+        is_digital_human: "false",
+        created_from: new Date(range.from).toISOString(),
+        created_to: new Date(range.to).toISOString(),
+      })
+      const res = await fetch(`/api/admin/users?${qs.toString()}`)
       const json = (await res.json()) as { data?: UserRow[]; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to fetch users")
       setUsers((json.data ?? []) as UserRow[])
@@ -156,36 +251,64 @@ export default function ManageUsers() {
       setUsers([])
     }
     setLoading(false)
-  }, [])
+  }, [range])
 
   React.useEffect(() => {
     void fetchUsers()
   }, [fetchUsers])
 
   const fetchSubscriptions = React.useCallback(async () => {
+    if (!range?.from || !range?.to) return
     setSubscriptionsLoading(true)
     try {
-      const res = await fetch('/api/admin/subscriptions')
+      const qs = new URLSearchParams({
+        environment: environment.toLowerCase(),
+        created_from: new Date(range.from).toISOString(),
+        created_to: new Date(range.to).toISOString(),
+      })
+      const res = await fetch(`/api/admin/subscriptions?${qs.toString()}`)
       const json = (await res.json()) as {
-        monthly_recurring_cents?: number
+        new_monthly?: number
+        new_yearly?: number
         active_count?: number
         subscribers?: ActiveSubscriberRow[]
+        premium_user_ids?: string[]
         error?: string
       }
       if (!res.ok) throw new Error(json.error || 'Failed to fetch subscriptions')
-      setSubscriptionMrrCents(json.monthly_recurring_cents ?? 0)
+      setNewMonthly(json.new_monthly ?? 0)
+      setNewYearly(json.new_yearly ?? 0)
       setActiveSubscribers(json.subscribers ?? [])
+      setPremiumIds(json.premium_user_ids ?? [])
     } catch (err: unknown) {
       console.error(err)
-      setSubscriptionMrrCents(0)
+      setNewMonthly(0)
+      setNewYearly(0)
       setActiveSubscribers([])
+      setPremiumIds([])
     }
     setSubscriptionsLoading(false)
-  }, [])
+  }, [range, environment])
 
   React.useEffect(() => {
     void fetchSubscriptions()
   }, [fetchSubscriptions])
+
+  const fetchMatchCounts = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/users/match-counts')
+      const json = (await res.json()) as { data?: Record<string, number>; error?: string }
+      if (!res.ok) throw new Error(json.error || 'Failed to fetch match counts')
+      setMatchCounts(json.data ?? {})
+    } catch (err: unknown) {
+      console.error(err)
+      setMatchCounts({})
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void fetchMatchCounts()
+  }, [fetchMatchCounts])
 
   const fetchDeletedUsers = React.useCallback(async () => {
     setDeletedLoading(true)
@@ -209,14 +332,12 @@ export default function ManageUsers() {
     if (!range?.from || !range?.to) return
     const start = new Date(range.from)
     const end = new Date(range.to)
-    // include entire end day
-    const endInclusive = new Date(end.getTime() + 24 * 60 * 60 * 1000 - 1)
 
     try {
       const qs = new URLSearchParams({
         mode: "chart",
         created_from: start.toISOString(),
-        created_to: endInclusive.toISOString(),
+        created_to: end.toISOString(),
       })
       const res = await fetch(`/api/admin/users?${qs.toString()}`)
       const json = (await res.json()) as {
@@ -293,52 +414,60 @@ export default function ManageUsers() {
 
   const summary = React.useMemo(() => {
     const currentReal = chartRows.filter((r) => !r.is_digital_human).length
-    const currentDigital = chartRows.filter((r) => r.is_digital_human).length
     const prevReal = prevChartRows.filter((r) => !r.is_digital_human).length
-    const prevDigital = prevChartRows.filter((r) => r.is_digital_human).length
 
     const pct = (curr: number, prev: number) => {
       if (prev === 0) return curr === 0 ? 0 : 100
       return ((curr - prev) / prev) * 100
     }
 
-    const growthRate = pct(currentReal + currentDigital, prevReal + prevDigital)
-
+    // Growth is measured on real users only; digital humans are excluded from the dashboard.
     return {
       currentReal,
-      currentDigital,
       pctReal: pct(currentReal, prevReal),
-      pctDigital: pct(currentDigital, prevDigital),
-      growthRate,
+      growthRate: pct(currentReal, prevReal),
     }
   }, [chartRows, prevChartRows])
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Manage Users</h1>
-        <p className="text-sm text-muted-foreground">Track growth and view users (non-digital humans).</p>
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Manage Users</h1>
+          <p className="text-sm text-muted-foreground">Track growth and view users (non-digital humans).</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Tabs value={preset} onValueChange={(v) => setPreset(v as Preset)}>
+            <TabsList>
+              {DATE_PRESETS.map((p) => (
+                <TabsTrigger key={p.value} value={p.value}>
+                  {p.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          <Tabs value={environment} onValueChange={(v) => setEnvironment(v as Environment)}>
+            <TabsList>
+              <TabsTrigger value="Production">Production</TabsTrigger>
+              <TabsTrigger value="Sandbox">Sandbox</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          title="Subscription MRR (est.)"
-          value={formatMoneyFromCents(subscriptionMrrCents)}
-          deltaPct={0}
-          subtitle="Active subs: catalog price; yearly ÷ 12"
-          showDelta={false}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <SubscriptionsCard
+          monthly={newMonthly}
+          yearly={newYearly}
+          environment={environment}
+          loading={subscriptionsLoading}
         />
         <StatCard
           title="New Customers"
           value={summary.currentReal.toLocaleString()}
           deltaPct={summary.pctReal}
           subtitle="Real users created in range"
-        />
-        <StatCard
-          title="Digital Humans"
-          value={summary.currentDigital.toLocaleString()}
-          deltaPct={summary.pctDigital}
-          subtitle="Digital humans created in range"
         />
         <StatCard
           title="Growth Rate"
@@ -356,13 +485,6 @@ export default function ManageUsers() {
               Daily creations for the selected range
             </div>
           </div>
-          <Tabs value={preset} onValueChange={(v) => setPreset(v as Preset)}>
-            <TabsList>
-              <TabsTrigger value="90">Last 3 months</TabsTrigger>
-              <TabsTrigger value="30">Last 30 days</TabsTrigger>
-              <TabsTrigger value="7">Last 7 days</TabsTrigger>
-            </TabsList>
-          </Tabs>
         </div>
 
         <div className="h-[300px] w-full">
@@ -421,16 +543,19 @@ export default function ManageUsers() {
 
       <Card className="p-0">
         <div className="p-6">
-          <div className="text-sm font-medium">Active subscribers</div>
+          <div className="flex items-center gap-2 text-sm font-medium">
+            Active subscribers
+            <Badge variant="outline" className="font-normal">{environment}</Badge>
+          </div>
           <div className="text-xs text-muted-foreground">
             {subscriptionsLoading
               ? 'Loading...'
-              : `${activeSubscribers.length} active subscription${activeSubscribers.length === 1 ? '' : 's'} (status ACTIVE, period not ended)`}
+              : `${activeSubscribers.length} active ${environment.toLowerCase()} subscription${activeSubscribers.length === 1 ? '' : 's'} (status ACTIVE, period not ended)`}
           </div>
         </div>
         <div className="border-t">
           {subscriptionsLoading ? (
-            <div className="py-10 text-center text-muted-foreground">Loading...</div>
+            <TableSkeleton columns={8} />
           ) : activeSubscribers.length === 0 ? (
             <div className="py-10 text-center text-sm text-muted-foreground">No active subscriptions.</div>
           ) : (
@@ -441,7 +566,7 @@ export default function ManageUsers() {
                   <TableHead>User</TableHead>
                   <TableHead>Plan</TableHead>
                   <TableHead>Billing</TableHead>
-                  <TableHead>MRR (est.)</TableHead>
+                  <TableHead>Subscribed</TableHead>
                   <TableHead>Renews / ends</TableHead>
                   <TableHead>Env</TableHead>
                   <TableHead>Actions</TableHead>
@@ -463,7 +588,7 @@ export default function ManageUsers() {
                     </TableCell>
                     <TableCell className="text-muted-foreground capitalize">{s.billing_period}</TableCell>
                     <TableCell className="text-muted-foreground">
-                      {formatMoneyFromCents(s.monthly_recurring_cents, s.currency)}
+                      {s.created_at ? new Date(s.created_at).toLocaleDateString() : '—'}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {s.current_period_end
@@ -491,12 +616,12 @@ export default function ManageUsers() {
         <div className="p-6">
           <div className="text-sm font-medium">User List</div>
           <div className="text-xs text-muted-foreground">
-            {loading ? "Loading..." : `${users.length} users`}
+            {loading ? "Loading..." : `${users.length} users joined in range`}
           </div>
         </div>
         <div className="border-t">
           {loading ? (
-            <div className="py-10 text-center text-muted-foreground">Loading...</div>
+            <TableSkeleton columns={8} />
           ) : users.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -516,6 +641,7 @@ export default function ManageUsers() {
                   <TableHead>Gender</TableHead>
                   <TableHead>Age</TableHead>
                   <TableHead>Location</TableHead>
+                  <TableHead>Matches</TableHead>
                   <TableHead>Joined</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -529,10 +655,18 @@ export default function ManageUsers() {
                         <AvatarFallback>{u.username.slice(0, 2).toUpperCase()}</AvatarFallback>
                       </Avatar>
                     </TableCell>
-                    <TableCell className="font-medium">{u.username}</TableCell>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <span>{u.username}</span>
+                        {premiumUserIds.has(u.userid) ? (
+                          <Badge className="bg-amber-500 text-amber-950 hover:bg-amber-600">Premium</Badge>
+                        ) : null}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{u.gender ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground">{u.age ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground">{u.location_name || u.zipcode || "—"}</TableCell>
+                    <TableCell className="text-muted-foreground tabular-nums">{matchCounts[u.userid] ?? 0}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(u.created_at).toLocaleDateString()}
                     </TableCell>
@@ -577,7 +711,7 @@ export default function ManageUsers() {
         {deletedExpanded ? (
         <div className="border-t">
           {deletedLoading ? (
-            <div className="py-10 text-center text-muted-foreground">Loading...</div>
+            <TableSkeleton columns={8} />
           ) : deletedUsers.length === 0 ? (
             <div className="py-10 text-center text-muted-foreground">No deleted users.</div>
           ) : (

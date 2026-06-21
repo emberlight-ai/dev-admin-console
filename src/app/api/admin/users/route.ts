@@ -87,6 +87,12 @@ export async function GET(req: NextRequest) {
 
   if (isDigitalBool !== null) q = q.eq('is_digital_human', isDigitalBool);
 
+  // Optional account-creation window (used by the admin Users page date filter).
+  const listCreatedFrom = url.searchParams.get('created_from');
+  const listCreatedTo = url.searchParams.get('created_to');
+  if (listCreatedFrom) q = q.gte('created_at', listCreatedFrom);
+  if (listCreatedTo) q = q.lte('created_at', listCreatedTo);
+
   const { data, error } = await q;
   if (error) return jsonError(error.message, 500);
   return NextResponse.json({ data: data ?? [] });
