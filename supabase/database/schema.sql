@@ -85,6 +85,16 @@ create table public."SystemPrompts" (
   max_follow_ups integer default 3,
   active_greeting_enabled boolean not null default false,
   active_greeting_prompt text,
+  -- Reply pacing (dh-auto-reply): scale send delay by reply length.
+  reply_min_delay_seconds integer default 2,
+  reply_max_delay_seconds integer default 18,
+  reply_chars_per_second numeric default 15,
+  -- Human-like silence (dh-auto-reply): chance the DH does not reply at all.
+  skip_reply_enabled boolean not null default false,
+  skip_reply_base_chance numeric default 0.10,
+  skip_reply_intimacy_drop_chance numeric default 0.50,
+  skip_reply_intimacy_drop_delta numeric default 5,
+  skip_reply_max_consecutive integer default 1,
   created_at timestamptz default now()
 );
 

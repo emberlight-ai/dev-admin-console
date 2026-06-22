@@ -88,6 +88,16 @@ interface CachedPrompt {
   activeGreetingEnabled: boolean;
   activeGreetingPrompt?: string;
   immediateMatchEnabled: boolean;
+  // Reply pacing (per personality, configured in the admin Reply pane).
+  replyMinDelaySeconds: number;
+  replyMaxDelaySeconds: number;
+  replyCharsPerSecond: number;
+  // Human-like silence: chance the DH does not reply at all.
+  skipReplyEnabled: boolean;
+  skipReplyBaseChance: number;
+  skipReplyIntimacyDropChance: number;
+  skipReplyIntimacyDropDelta: number;
+  skipReplyMaxConsecutive: number;
 }
 
 interface UserRow {
@@ -137,11 +147,18 @@ async function getAutoReplyEnabled(): Promise<boolean> {
   return configCache.autoReplyEnabled;
 }
 
+// Coerce a possibly-string numeric column to a number, falling back when missing
+// or non-numeric (Postgres `numeric` arrives as a string over PostgREST).
+function numOr(raw: unknown, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 async function refreshPrompts() {
   const { data } = await supabase
     .from('SystemPrompts')
     .select(
-      'gender, personality, system_prompt, immediate_match_enabled, follow_up_message_enabled, follow_up_message_prompt, follow_up_delay, max_follow_ups, active_greeting_enabled, active_greeting_prompt, created_at'
+      'gender, personality, system_prompt, immediate_match_enabled, follow_up_message_enabled, follow_up_message_prompt, follow_up_delay, max_follow_ups, active_greeting_enabled, active_greeting_prompt, reply_min_delay_seconds, reply_max_delay_seconds, reply_chars_per_second, skip_reply_enabled, skip_reply_base_chance, skip_reply_intimacy_drop_chance, skip_reply_intimacy_drop_delta, skip_reply_max_consecutive, created_at'
     )
     .order('created_at', { ascending: false });
 
@@ -158,6 +175,14 @@ async function refreshPrompts() {
       maxFollowUps: row.max_follow_ups ?? 3,
       activeGreetingEnabled: row.active_greeting_enabled || false,
       activeGreetingPrompt: row.active_greeting_prompt || undefined,
+      replyMinDelaySeconds: numOr(row.reply_min_delay_seconds, 2),
+      replyMaxDelaySeconds: numOr(row.reply_max_delay_seconds, 18),
+      replyCharsPerSecond: Math.max(1, numOr(row.reply_chars_per_second, 15)),
+      skipReplyEnabled: row.skip_reply_enabled === true,
+      skipReplyBaseChance: numOr(row.skip_reply_base_chance, 0.1),
+      skipReplyIntimacyDropChance: numOr(row.skip_reply_intimacy_drop_chance, 0.5),
+      skipReplyIntimacyDropDelta: numOr(row.skip_reply_intimacy_drop_delta, 5),
+      skipReplyMaxConsecutive: numOr(row.skip_reply_max_consecutive, 1),
     });
   }
   systemPromptCache = newCache;
@@ -693,11 +718,12 @@ Deno.serve(async (req) => {
 
     const promptConfig = getPromptConfig(bot);
 
-    // (Fixed response-delay removed — replies now use a natural typing delay
-    //  applied AFTER generation; see step 11b.)
-
-    // 8. Acquire lock
-    const lockTime = new Date(Date.now() + LOCK_DURATION_SECONDS * 1000).toISOString();
+    // 8. Acquire lock. The window must outlast generation + the configured
+    //    human-like send delay (step 11b) so it can't expire mid-reply and let a
+    //    concurrent webhook double-reply. Size it to the personality's max delay.
+    const configuredMaxDelaySec = Math.min(60, Math.max(0, promptConfig?.replyMaxDelaySeconds ?? 18));
+    const lockSeconds = Math.min(120, Math.max(LOCK_DURATION_SECONDS, configuredMaxDelaySec + 25));
+    const lockTime = new Date(Date.now() + lockSeconds * 1000).toISOString();
     const { error: lockErr } = await supabase
       .from('user_match_ai_state')
       .update({ ai_locked_until: lockTime })
@@ -779,54 +805,109 @@ Deno.serve(async (req) => {
       const transcript = buildTranscript([...msgRows].reverse(), bot.userid, bot.username ?? 'Bot');
       const replyPrompt = `${systemInstruction}\n\nConversation so far:\n${transcript}\n\nWrite the next message as ${bot.username ?? 'the bot'}. Reply with only the message text.`;
 
-      // 11. Generate the reply and score intimacy in parallel (independent calls).
+      // 11. Score intimacy FIRST (cheap flash-lite call), so the human-like
+      //     silence gate can decide whether to stay quiet before we spend an
+      //     expensive Pro generation on a reply we might throw away.
       console.log('[dh-auto-reply] systemInstruction', systemInstruction);
       console.log('[dh-auto-reply] transcript', transcript);
       const selfieCfg = await getSelfieConfig(bot.personality);
-      const [result, critic] = await Promise.all([
-        generateReply(replyPrompt),
-        scoreIntimacy(systemInstruction, transcript, stateData.intimacy_score ?? null, selfieCfg.warmupRate),
-      ]);
-      const respData = await result.response;
-      const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
+      const critic = await scoreIntimacy(
+        systemInstruction, transcript, stateData.intimacy_score ?? null, selfieCfg.warmupRate
+      );
       const messageIntimacyScore = critic?.intimacy ?? stateData.intimacy_score ?? null;
 
-      // 11b. Human-like send delay — the ONLY thing that paces auto-replies.
+      // 11a. Human-like silence. Real people don't answer every text — and they go
+      //      quiet when you say something off-putting. So with some probability the
+      //      DH stays silent instead of replying, with a higher chance when the
+      //      user's message DROPPED the conversation's intimacy. Two guards keep a
+      //      chat from dying: we always answer the opener (the DH hasn't spoken
+      //      yet), and we always answer a user who is clearly waiting (they sent
+      //      more than `maxConsecutive` messages since the DH last spoke).
+      if (promptConfig?.skipReplyEnabled) {
+        let trailingUserMsgs = 0; // msgRows is newest-first
+        for (const m of msgRows) {
+          if (m.sender_id === dhId) break;
+          trailingUserMsgs += 1;
+        }
+        const dhHasSpoken = msgRows.some((m) => m.sender_id === dhId);
+        const maxConsecutive = Math.max(0, promptConfig.skipReplyMaxConsecutive);
+        const forceReply = !dhHasSpoken || trailingUserMsgs > maxConsecutive;
+
+        const prevIntimacy = stateData.intimacy_score ?? null;
+        const currIntimacy = critic?.intimacy ?? null;
+        const intimacyDropped =
+          prevIntimacy != null &&
+          currIntimacy != null &&
+          prevIntimacy - currIntimacy >= promptConfig.skipReplyIntimacyDropDelta;
+
+        let skipChance = Math.max(0, Math.min(1, promptConfig.skipReplyBaseChance));
+        if (intimacyDropped) {
+          skipChance = Math.max(skipChance, Math.max(0, Math.min(1, promptConfig.skipReplyIntimacyDropChance)));
+        }
+
+        if (!forceReply && Math.random() < skipChance) {
+          // Stay silent. Mark the message processed (so we don't re-evaluate it)
+          // and fold in the new intimacy, but DO NOT touch ai_state — silence is
+          // not a sent reply, and ai_state drives the follow-up job.
+          const adamSkip = critic
+            ? adamStep(stateData.intimacy_score ?? null, stateData.intimacy_m ?? 0, stateData.intimacy_v ?? 0, critic.intimacy)
+            : null;
+          await supabase
+            .from('user_match_ai_state')
+            .update({
+              ai_last_processed_message_id: checkpointId,
+              ai_locked_until: null,
+              ...(critic
+                ? {
+                    intimacy_score: critic.intimacy,
+                    intimacy_m: adamSkip!.m,
+                    intimacy_v: adamSkip!.v,
+                    intimacy_updated_at: new Date().toISOString(),
+                  }
+                : {}),
+            })
+            .eq('match_id', matchId);
+          console.log(
+            '[dh-auto-reply] Silent (no reply) for match', matchId,
+            '(chance', skipChance.toFixed(2), ', intimacyDropped', intimacyDropped,
+            ', prev', prevIntimacy ?? 'n/a', '-> curr', currIntimacy ?? 'n/a', ')'
+          );
+          return new Response(JSON.stringify({ ok: true, skipped: true }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      // 11b. Generate the reply.
+      const result = await generateReply(replyPrompt);
+      const respData = await result.response;
+      const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
+
+      // 11c. Human-like send delay — the ONLY thing that paces auto-replies.
       //      (follow_up_delay in SystemPrompts is unrelated: it paces the separate
       //      dh-followup re-engagement job, not reply speed.)
       //
-      //      Goal: a longer reply lands slower, and nothing ever sends instantly.
-      //      We derive a minimum reply time from the reply length (a read lead plus
-      //      a "typing" time), count the time already spent generating toward it,
-      //      then bound the wait:
-      //        • MIN_SEND_DELAY_MS — even a one-word reply pauses a beat, so a fast
-      //          generation can't fire instantly (the old floor was 0, which is why
-      //          replies came back immediately).
-      //        • MAX_SEND_DELAY_MS — keep the whole handler comfortably under the
-      //          ai_locked_until window so a concurrent invocation can't double-reply.
-      //
-      //      SEND_CHARS_PER_SEC is intentionally faster than literal typing: it folds
-      //      reading + composing + typing into one "felt" cadence. At 15 ch/s a ~40
-      //      char reply waits ~3s while a ~220 char reply approaches the cap, so length
-      //      now actually moves the needle (the old 3.3 ch/s pinned almost everything
-      //      to the cap, making short and long replies feel identical).
-      const SEND_CHARS_PER_SEC = 15;
-      const READ_LEAD_MS = 800;                   // "saw your message, starting to type"
-      const MIN_SEND_DELAY_MS = 1500;             // never instant
-      const MAX_SEND_DELAY_MS = 18000;            // stays under the 45s lock
+      //      A longer reply lands slower, and nothing ever sends instantly. We derive
+      //      a target reply time from the reply length (read lead + "typing" time at
+      //      the personality's configured chars/sec), count time already spent
+      //      generating toward it, then bound the wait by the personality's min
+      //      (never instant) and max (kept under the lock window) delays.
+      const charsPerSec = Math.max(1, promptConfig?.replyCharsPerSecond ?? 15);
+      const READ_LEAD_MS = 800;
+      const minSendDelayMs = Math.max(0, (promptConfig?.replyMinDelaySeconds ?? 2)) * 1000;
+      const maxSendDelayMs = Math.min(60, Math.max(0, (promptConfig?.replyMaxDelaySeconds ?? 18))) * 1000;
       const jitter = 0.85 + Math.random() * 0.3;  // ±15% so the cadence isn't metronomic
-      const typingTargetMs =
-        (READ_LEAD_MS + (responseText.length / SEND_CHARS_PER_SEC) * 1000) * jitter;
+      const typingTargetMs = (READ_LEAD_MS + (responseText.length / charsPerSec) * 1000) * jitter;
       const elapsedMs = Date.now() - startTime;
       const sendDelayMs = Math.min(
-        MAX_SEND_DELAY_MS,
-        Math.max(MIN_SEND_DELAY_MS, Math.round(typingTargetMs) - elapsedMs)
+        maxSendDelayMs,
+        Math.max(minSendDelayMs, Math.round(typingTargetMs) - elapsedMs)
       );
       console.log(
         '[dh-auto-reply] send delay', sendDelayMs, 'ms for', matchId,
-        '(', responseText.length, 'chars, gen', elapsedMs, 'ms )'
+        '(', responseText.length, 'chars, gen', elapsedMs, 'ms, cps', charsPerSec, ')'
       );
-      await new Promise((r) => setTimeout(r, sendDelayMs));
+      if (sendDelayMs > 0) await new Promise((r) => setTimeout(r, sendDelayMs));
 
       // 12. Insert reply
       const { error: sendError } = await sendMessageWithOptionalIntimacy({

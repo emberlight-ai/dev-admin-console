@@ -44,6 +44,14 @@ export type SystemPromptLatest = {
   max_follow_ups: number
   active_greeting_enabled: boolean
   active_greeting_prompt: string
+  reply_min_delay_seconds: number
+  reply_max_delay_seconds: number
+  reply_chars_per_second: number
+  skip_reply_enabled: boolean
+  skip_reply_base_chance: number
+  skip_reply_intimacy_drop_chance: number
+  skip_reply_intimacy_drop_delta: number
+  skip_reply_max_consecutive: number
 }
 
 type WorkflowNodeData = Record<string, unknown> & {
@@ -128,6 +136,16 @@ export function SystemPromptForm({
   const [activeGreetingEnabled, setActiveGreetingEnabled] = React.useState(false)
   const [activeGreetingPrompt, setActiveGreetingPrompt] = React.useState("")
 
+  // Reply pacing + human-like silence (read by the dh-auto-reply edge function).
+  const [replyMinDelay, setReplyMinDelay] = React.useState<number>(2)
+  const [replyMaxDelay, setReplyMaxDelay] = React.useState<number>(18)
+  const [replyCharsPerSecond, setReplyCharsPerSecond] = React.useState<number>(15)
+  const [skipReplyEnabled, setSkipReplyEnabled] = React.useState(false)
+  const [skipBaseChance, setSkipBaseChance] = React.useState<number>(0.1)
+  const [skipDropChance, setSkipDropChance] = React.useState<number>(0.5)
+  const [skipDropDelta, setSkipDropDelta] = React.useState<number>(5)
+  const [skipMaxConsecutive, setSkipMaxConsecutive] = React.useState<number>(1)
+
   type PromptSnapshot = {
     gender: string
     personality: string
@@ -140,6 +158,14 @@ export function SystemPromptForm({
     maxFollowUps: number
     activeGreetingEnabled: boolean
     activeGreetingPrompt: string
+    replyMinDelay: number
+    replyMaxDelay: number
+    replyCharsPerSecond: number
+    skipReplyEnabled: boolean
+    skipBaseChance: number
+    skipDropChance: number
+    skipDropDelta: number
+    skipMaxConsecutive: number
   }
 
   const [initialSnapshot, setInitialSnapshot] = React.useState<PromptSnapshot | null>(null)
@@ -164,6 +190,14 @@ export function SystemPromptForm({
       maxFollowUps,
       activeGreetingEnabled,
       activeGreetingPrompt,
+      replyMinDelay,
+      replyMaxDelay,
+      replyCharsPerSecond,
+      skipReplyEnabled,
+      skipBaseChance,
+      skipDropChance,
+      skipDropDelta,
+      skipMaxConsecutive,
     }),
     [
       activeGreetingEnabled,
@@ -177,6 +211,14 @@ export function SystemPromptForm({
       maxFollowUps,
       personality,
       systemPrompt,
+      replyMinDelay,
+      replyMaxDelay,
+      replyCharsPerSecond,
+      skipReplyEnabled,
+      skipBaseChance,
+      skipDropChance,
+      skipDropDelta,
+      skipMaxConsecutive,
     ]
   )
 
@@ -209,6 +251,14 @@ export function SystemPromptForm({
           setMaxFollowUps(d.max_follow_ups ?? 3)
           setActiveGreetingEnabled(d.active_greeting_enabled ?? false)
           setActiveGreetingPrompt(d.active_greeting_prompt ?? "")
+          setReplyMinDelay(d.reply_min_delay_seconds ?? 2)
+          setReplyMaxDelay(d.reply_max_delay_seconds ?? 18)
+          setReplyCharsPerSecond(d.reply_chars_per_second ?? 15)
+          setSkipReplyEnabled(d.skip_reply_enabled ?? false)
+          setSkipBaseChance(d.skip_reply_base_chance ?? 0.1)
+          setSkipDropChance(d.skip_reply_intimacy_drop_chance ?? 0.5)
+          setSkipDropDelta(d.skip_reply_intimacy_drop_delta ?? 5)
+          setSkipMaxConsecutive(d.skip_reply_max_consecutive ?? 1)
         }
       })
       .catch(() => toast.error("Failed to load prompt"))
@@ -392,6 +442,14 @@ export function SystemPromptForm({
           max_follow_ups: mfu,
           active_greeting_enabled: age,
           active_greeting_prompt: agp,
+          reply_min_delay_seconds: Number(replyMinDelay),
+          reply_max_delay_seconds: Number(replyMaxDelay),
+          reply_chars_per_second: Number(replyCharsPerSecond),
+          skip_reply_enabled: Boolean(skipReplyEnabled),
+          skip_reply_base_chance: Number(skipBaseChance),
+          skip_reply_intimacy_drop_chance: Number(skipDropChance),
+          skip_reply_intimacy_drop_delta: Number(skipDropDelta),
+          skip_reply_max_consecutive: Number(skipMaxConsecutive),
         }),
       })
       const json = (await res.json()) as { data?: unknown; error?: string }
@@ -529,11 +587,27 @@ export function SystemPromptForm({
         position: { x: 800, y: 170 },
         data: {
           title: "3) Reply",
-          description: "Core response behavior: system prompt template.",
+          description: "Core response behavior: prompt, send pacing, and silence.",
           onOpenSettings: () => openSettings("reply"),
           children: (
             <div className="space-y-3">
               <PromptPreview text={systemPromptPreview} />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-md border bg-muted/20 p-2">
+                  <div className="text-xs text-muted-foreground">Send delay</div>
+                  <div className="text-sm font-semibold tabular-nums">
+                    {replyMinDelay}–{replyMaxDelay}s
+                  </div>
+                </div>
+                <div className="rounded-md border bg-muted/20 p-2">
+                  <div className="text-xs text-muted-foreground">Silence</div>
+                  <div className="text-sm font-semibold tabular-nums">
+                    {skipReplyEnabled
+                      ? `${Math.round(skipBaseChance * 100)}% · ${Math.round(skipDropChance * 100)}% cold`
+                      : "Off"}
+                  </div>
+                </div>
+              </div>
             </div>
           ),
         },
@@ -584,6 +658,11 @@ export function SystemPromptForm({
     matchingEnabled,
     maxFollowUps,
     systemPrompt,
+    replyMinDelay,
+    replyMaxDelay,
+    skipReplyEnabled,
+    skipBaseChance,
+    skipDropChance,
   ])
 
   const edges = React.useMemo(() => {
@@ -845,6 +924,124 @@ export function SystemPromptForm({
                   />
                   <div className="text-xs text-muted-foreground">
                     Required placeholder: <code className="rounded bg-muted px-1 py-0.5">BOT_PROFILE_DETAILS</code>
+                  </div>
+                </div>
+
+                {/* Reply timing — how long a reply "takes" to send, scaled by length. */}
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div>
+                    <div className="text-sm font-medium">Reply timing</div>
+                    <div className="text-xs text-muted-foreground">
+                      Longer replies send slower. Time spent generating counts toward the delay; the floor keeps it from
+                      ever sending instantly.
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="space-y-2">
+                      <Label>Min delay (seconds)</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={60}
+                        value={replyMinDelay}
+                        onChange={(e) => setReplyMinDelay(Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Max delay (seconds)</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={60}
+                        value={replyMaxDelay}
+                        onChange={(e) => setReplyMaxDelay(Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Typing speed (chars/sec)</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={replyCharsPerSecond}
+                        onChange={(e) => setReplyCharsPerSecond(Number(e.target.value))}
+                      />
+                      <div className="text-xs text-muted-foreground">Lower = slower for long replies.</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Human-like silence — sometimes don't reply at all. */}
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">Human-like silence</div>
+                      <div className="text-xs text-muted-foreground">
+                        Real people don&apos;t answer every text, and go quiet when you say something off-putting. When
+                        on, the digital human sometimes stays silent — more often when the user&apos;s message dropped
+                        the intimacy score.
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 accent-primary"
+                      checked={skipReplyEnabled}
+                      onChange={(e) => setSkipReplyEnabled(e.target.checked)}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Base skip chance (%)</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={Math.round(skipBaseChance * 100)}
+                        onChange={(e) => setSkipBaseChance(Math.max(0, Math.min(100, Number(e.target.value))) / 100)}
+                        disabled={!skipReplyEnabled}
+                      />
+                      <div className="text-xs text-muted-foreground">Chance of staying silent on any message.</div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Skip chance on intimacy drop (%)</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={Math.round(skipDropChance * 100)}
+                        onChange={(e) => setSkipDropChance(Math.max(0, Math.min(100, Number(e.target.value))) / 100)}
+                        disabled={!skipReplyEnabled}
+                      />
+                      <div className="text-xs text-muted-foreground">Used when the user cooled things off.</div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Intimacy drop threshold (points)</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={skipDropDelta}
+                        onChange={(e) => setSkipDropDelta(Number(e.target.value))}
+                        disabled={!skipReplyEnabled}
+                      />
+                      <div className="text-xs text-muted-foreground">How big a drop counts as &quot;said something wrong&quot;.</div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Max skips in a row</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={10}
+                        value={skipMaxConsecutive}
+                        onChange={(e) => setSkipMaxConsecutive(Number(e.target.value))}
+                        disabled={!skipReplyEnabled}
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        Always replies once the user double-texts past this, so chats never die. The opener always gets a
+                        reply.
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

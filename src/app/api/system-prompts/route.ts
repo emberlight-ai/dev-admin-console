@@ -25,6 +25,25 @@ export async function POST(req: NextRequest) {
     const active_greeting_prompt =
       typeof body?.active_greeting_prompt === "string" ? body.active_greeting_prompt : ""
 
+    // Reply pacing + human-like silence (read by the dh-auto-reply edge function).
+    const numOr = (v: unknown, fallback: number) =>
+      typeof v === "number" && Number.isFinite(v) ? v : fallback
+    const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+
+    const reply_min_delay_seconds = clamp(Math.round(numOr(body?.reply_min_delay_seconds, 2)), 0, 60)
+    const reply_max_delay_seconds = clamp(
+      Math.round(numOr(body?.reply_max_delay_seconds, 18)),
+      reply_min_delay_seconds,
+      60
+    )
+    const reply_chars_per_second = clamp(numOr(body?.reply_chars_per_second, 15), 1, 100)
+    const skip_reply_enabled =
+      typeof body?.skip_reply_enabled === "boolean" ? body.skip_reply_enabled : false
+    const skip_reply_base_chance = clamp(numOr(body?.skip_reply_base_chance, 0.1), 0, 1)
+    const skip_reply_intimacy_drop_chance = clamp(numOr(body?.skip_reply_intimacy_drop_chance, 0.5), 0, 1)
+    const skip_reply_intimacy_drop_delta = clamp(numOr(body?.skip_reply_intimacy_drop_delta, 5), 0, 100)
+    const skip_reply_max_consecutive = clamp(Math.round(numOr(body?.skip_reply_max_consecutive, 1)), 0, 10)
+
     if (!gender) return jsonError("Missing required field: gender", 400)
     if (!personality) return jsonError("Missing required field: personality", 400)
     if (!system_prompt.trim()) return jsonError("Missing required field: system_prompt", 400)
@@ -48,7 +67,15 @@ export async function POST(req: NextRequest) {
         follow_up_delay,
         max_follow_ups,
         active_greeting_enabled,
-        active_greeting_prompt: active_greeting_prompt.trim() || null
+        active_greeting_prompt: active_greeting_prompt.trim() || null,
+        reply_min_delay_seconds,
+        reply_max_delay_seconds,
+        reply_chars_per_second,
+        skip_reply_enabled,
+        skip_reply_base_chance,
+        skip_reply_intimacy_drop_chance,
+        skip_reply_intimacy_drop_delta,
+        skip_reply_max_consecutive
       })
       .select("id,gender,personality,created_at,matching_enabled")
       .single()
