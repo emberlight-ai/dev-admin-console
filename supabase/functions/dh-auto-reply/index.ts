@@ -118,7 +118,10 @@ const globalConfigCache = (globalThis as any).__dhConfigCache as { autoReplyEnab
 let configCache: { autoReplyEnabled: boolean; exp: number } = globalConfigCache ?? { autoReplyEnabled: true, exp: 0 };
 const CONFIG_TTL_MS = 5 * 60 * 1000;
 
-const LOCK_DURATION_SECONDS = 30;
+// Covers generation + the human-like send delay (step 11b, up to ~18s) plus the
+// trailing send/selfie/state writes, so the lock never expires mid-reply and let
+// a concurrent invocation double-reply.
+const LOCK_DURATION_SECONDS = 45;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function getAutoReplyEnabled(): Promise<boolean> {
@@ -788,24 +791,42 @@ Deno.serve(async (req) => {
       const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
       const messageIntimacyScore = critic?.intimacy ?? stateData.intimacy_score ?? null;
 
-      // 11b. Natural typing delay. The total time from receiving the user's message
-      //      to replying should feel like a human read it and typed the answer
-      //      (~40 WPM). Time already spent generating counts toward that — so a short
-      //      reply the model lingered on goes out right away, while a long reply waits
-      //      out the remaining "typing" time. Capped so nobody waits more than ~12s.
-      const TYPING_CHARS_PER_SEC = (40 * 5) / 60; // ~40 WPM, 5 chars/word ≈ 3.3 chars/s
-      const READ_LEAD_MS = 1000;                  // "saw your message, starting to type"
-      const MAX_TYPING_MS = 12000;
+      // 11b. Human-like send delay — the ONLY thing that paces auto-replies.
+      //      (follow_up_delay in SystemPrompts is unrelated: it paces the separate
+      //      dh-followup re-engagement job, not reply speed.)
+      //
+      //      Goal: a longer reply lands slower, and nothing ever sends instantly.
+      //      We derive a minimum reply time from the reply length (a read lead plus
+      //      a "typing" time), count the time already spent generating toward it,
+      //      then bound the wait:
+      //        • MIN_SEND_DELAY_MS — even a one-word reply pauses a beat, so a fast
+      //          generation can't fire instantly (the old floor was 0, which is why
+      //          replies came back immediately).
+      //        • MAX_SEND_DELAY_MS — keep the whole handler comfortably under the
+      //          ai_locked_until window so a concurrent invocation can't double-reply.
+      //
+      //      SEND_CHARS_PER_SEC is intentionally faster than literal typing: it folds
+      //      reading + composing + typing into one "felt" cadence. At 15 ch/s a ~40
+      //      char reply waits ~3s while a ~220 char reply approaches the cap, so length
+      //      now actually moves the needle (the old 3.3 ch/s pinned almost everything
+      //      to the cap, making short and long replies feel identical).
+      const SEND_CHARS_PER_SEC = 15;
+      const READ_LEAD_MS = 800;                   // "saw your message, starting to type"
+      const MIN_SEND_DELAY_MS = 1500;             // never instant
+      const MAX_SEND_DELAY_MS = 18000;            // stays under the 45s lock
       const jitter = 0.85 + Math.random() * 0.3;  // ±15% so the cadence isn't metronomic
-      const typingTargetMs = Math.min(
-        MAX_TYPING_MS,
-        (READ_LEAD_MS + (responseText.length / TYPING_CHARS_PER_SEC) * 1000) * jitter
+      const typingTargetMs =
+        (READ_LEAD_MS + (responseText.length / SEND_CHARS_PER_SEC) * 1000) * jitter;
+      const elapsedMs = Date.now() - startTime;
+      const sendDelayMs = Math.min(
+        MAX_SEND_DELAY_MS,
+        Math.max(MIN_SEND_DELAY_MS, Math.round(typingTargetMs) - elapsedMs)
       );
-      const typingSleepMs = Math.max(0, Math.round(typingTargetMs) - (Date.now() - startTime));
-      if (typingSleepMs > 0) {
-        console.log('[dh-auto-reply] typing delay', typingSleepMs, 'ms for', matchId, '(', responseText.length, 'chars)');
-        await new Promise((r) => setTimeout(r, typingSleepMs));
-      }
+      console.log(
+        '[dh-auto-reply] send delay', sendDelayMs, 'ms for', matchId,
+        '(', responseText.length, 'chars, gen', elapsedMs, 'ms )'
+      );
+      await new Promise((r) => setTimeout(r, sendDelayMs));
 
       // 12. Insert reply
       const { error: sendError } = await sendMessageWithOptionalIntimacy({
