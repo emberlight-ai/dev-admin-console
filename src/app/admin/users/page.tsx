@@ -199,7 +199,7 @@ export default function ManageUsers() {
   const [prevChartRows, setPrevChartRows] = React.useState<
     { created_at: string; is_digital_human: boolean }[]
   >([])
-  const [preset, setPreset] = React.useState<Preset>("7")
+  const [preset, setPreset] = React.useState<Preset>("today")
   const [environment, setEnvironment] = React.useState<Environment>("Production")
   const [newMonthly, setNewMonthly] = React.useState(0)
   const [newYearly, setNewYearly] = React.useState(0)
@@ -207,6 +207,7 @@ export default function ManageUsers() {
   const [premiumIds, setPremiumIds] = React.useState<string[]>([])
   const [subscriptionsLoading, setSubscriptionsLoading] = React.useState(true)
   const [matchCounts, setMatchCounts] = React.useState<Record<string, number>>({})
+  const [messageCounts, setMessageCounts] = React.useState<Record<string, number>>({})
 
   const range = React.useMemo<DateRange>(() => {
     const now = new Date()
@@ -309,6 +310,22 @@ export default function ManageUsers() {
   React.useEffect(() => {
     void fetchMatchCounts()
   }, [fetchMatchCounts])
+
+  const fetchMessageCounts = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/users/message-counts')
+      const json = (await res.json()) as { data?: Record<string, number>; error?: string }
+      if (!res.ok) throw new Error(json.error || 'Failed to fetch message counts')
+      setMessageCounts(json.data ?? {})
+    } catch (err: unknown) {
+      console.error(err)
+      setMessageCounts({})
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void fetchMessageCounts()
+  }, [fetchMessageCounts])
 
   const fetchDeletedUsers = React.useCallback(async () => {
     setDeletedLoading(true)
@@ -621,7 +638,7 @@ export default function ManageUsers() {
         </div>
         <div className="border-t">
           {loading ? (
-            <TableSkeleton columns={8} />
+            <TableSkeleton columns={9} />
           ) : users.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -642,6 +659,7 @@ export default function ManageUsers() {
                   <TableHead>Age</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Matches</TableHead>
+                  <TableHead>Messages</TableHead>
                   <TableHead>Joined</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -667,6 +685,7 @@ export default function ManageUsers() {
                     <TableCell className="text-muted-foreground">{u.age ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground">{u.location_name || u.zipcode || "—"}</TableCell>
                     <TableCell className="text-muted-foreground tabular-nums">{matchCounts[u.userid] ?? 0}</TableCell>
+                    <TableCell className="text-muted-foreground tabular-nums">{messageCounts[u.userid] ?? 0}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(u.created_at).toLocaleDateString()}
                     </TableCell>
