@@ -419,3 +419,70 @@ create trigger on_user_match_created_init_ai_state
 after insert on public.user_matches
 for each row
 execute function public.handle_new_match_ai_state();
+
+-- Authoritative per-message "locked image" resolver. Returns the ids of messages
+-- IN p_match_id that are images the caller RECEIVED and that exceed the caller's
+-- daily received-image quota (subscription_catalog.image_per_day; free = 1,
+-- premium effectively unlimited). The lock decision is GLOBAL per UTC day across
+-- all of the viewer's conversations. Runs as the caller (security invoker) so
+-- auth.uid() is the viewer and RLS applies. Backs the blurred/locked image
+-- bubbles in the iOS client. (Supporting index: messages_receiver_media_day_idx
+-- in schema.sql.)
+create or replace function public.rpc_locked_received_image_ids(p_match_id uuid)
+returns table (message_id uuid)
+language plpgsql
+security invoker
+stable
+as $$
+declare
+  v_viewer uuid := auth.uid();
+  v_limit  int;
+  -- UTC day window, matching the entitlement API's utcDayBoundsIso().
+  v_day_start timestamptz := (date_trunc('day', (now() at time zone 'utc'))) at time zone 'utc';
+  v_day_end   timestamptz := v_day_start + interval '1 day';
+begin
+  if v_viewer is null then
+    return;  -- unauthenticated (e.g. service role): nothing is "locked"
+  end if;
+
+  -- Resolve the viewer's daily received-image limit: active plan's catalog,
+  -- else the free-tier catalog row, else a hard default of 1.
+  select c.image_per_day
+    into v_limit
+  from public.subscription s
+  join public.subscription_catalog c on c.id = s.subscription_catalog_id
+  where s.user_id = v_viewer
+    and s.status = 'ACTIVE'
+    and (s.current_period_end is null or s.current_period_end > now())
+  order by s.current_period_end desc nulls first
+  limit 1;
+
+  if v_limit is null then
+    select c.image_per_day
+      into v_limit
+    from public.subscription_catalog c
+    where c.apple_product_id = 'amber.subscription.free'
+    limit 1;
+  end if;
+
+  v_limit := coalesce(v_limit, 1);
+
+  return query
+  with day_imgs as (
+    select m.id,
+           m.match_id,
+           row_number() over (order by m.created_at asc, m.id asc) as rn
+    from public.messages m
+    where m.receiver_id = v_viewer
+      and m.media_url is not null
+      and m.created_at >= v_day_start
+      and m.created_at <  v_day_end
+  )
+  select di.id
+  from day_imgs di
+  where di.match_id = p_match_id
+    and di.rn > v_limit;
+end;
+$$;
+
+grant execute on function public.rpc_locked_received_image_ids(uuid) to authenticated;

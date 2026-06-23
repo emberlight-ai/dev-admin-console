@@ -498,6 +498,25 @@ using (
   and (storage.foldername(name))[1] = auth.uid()::text
 );
 
+-- Create Storage Bucket for chat media (message images). Public read; any
+-- authenticated user may upload. Images are treated as immutable (no update/delete).
+insert into storage.buckets (id, name, public)
+values ('chat_media', 'chat_media', true)
+on conflict (id) do nothing;
+
+drop policy if exists "chat_media_select_all" on storage.objects;
+create policy "chat_media_select_all"
+on storage.objects for select
+using ( bucket_id = 'chat_media' );
+
+drop policy if exists "chat_media_insert_auth" on storage.objects;
+create policy "chat_media_insert_auth"
+on storage.objects for insert
+with check (
+  bucket_id = 'chat_media'
+  and auth.uid() is not null
+);
+
 
 -- ==============================================================================
 -- CHAT & PUSH NOTIFICATIONS
@@ -531,6 +550,12 @@ create table if not exists public.messages (
   intimacy_score double precision,
   created_at timestamptz default now()
 );
+
+-- Supports the daily received-image scan in rpc_locked_received_image_ids()
+-- (see database/functions/chat.sql).
+create index if not exists messages_receiver_media_day_idx
+  on public.messages (receiver_id, created_at)
+  where media_url is not null;
 
 -- Note: set_message_receiver_id trigger moved to database/functions/chat.sql
 
