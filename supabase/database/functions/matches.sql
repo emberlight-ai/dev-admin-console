@@ -325,16 +325,6 @@ as $$
     where cfg.key = 'green_mode_personalities'
       and nullif(btrim(green_value.personality), '') is not null
   ),
-  whitelisted_users(userid) as (
-    -- Admin-curated featured digital humans (users.whitelisted, toggled from the DH
-    -- detail page). Shown first in the match deck. users.whitelisted is readable by
-    -- the invoker via the "Public read profiles" policy, so no definer needed.
-    select u.userid
-    from public.users u
-    where coalesce(u.whitelisted, false) = true
-      and coalesce(u.is_digital_human, false) = true
-      and u.deleted_at is null
-  ),
   eligible_candidates as (
     select u.*
     from public.users u
@@ -374,30 +364,57 @@ as $$
         coalesce(sp_config.matching_enabled, true) = true
       )
   ),
-  whitelisted_candidates as (
+  -- The deck is digital-humans-only (no real users), and DHs are split so the
+  -- deck doesn't feel like a wall of the same curated cards: ~2/3 whitelisted
+  -- (image-rich, can send selfies) and ~1/3 random non-whitelisted DHs. Each
+  -- bucket backfills from the other when short, so the deck still fills.
+  dh_candidates as (
     select ec.*
     from eligible_candidates ec
-    join whitelisted_users wu on wu.userid = ec.userid
+    where coalesce(ec.is_digital_human, false) = true
   ),
-  candidate_pool as (
-    -- Prefer image-rich digital humans (the whitelist above) so the cards users
-    -- see can actually send selfies. Gender, block, digital-human, and swipe
-    -- filters are applied before this, so only eligible image-rich cards appear.
-    select wc.*
-    from whitelisted_candidates wc
-
-    union all
-
-    -- Once every eligible image-rich card has been swiped/filtered out for this
-    -- viewer, fall back to the normal randomized match-card pool.
-    select ec.*
-    from eligible_candidates ec
-    where not exists (select 1 from whitelisted_candidates)
+  deck_size as (select greatest(coalesce(limit_count, 0), 0) as total),
+  picked_whitelisted as (
+    select dc.userid
+    from dh_candidates dc
+    where coalesce(dc.whitelisted, false) = true
+    order by random()
+    limit (select ceil(total * 2.0 / 3.0)::int from deck_size)
+  ),
+  picked_random as (
+    select dc.userid
+    from dh_candidates dc
+    where coalesce(dc.whitelisted, false) = false
+    order by random()
+    limit greatest(
+      (select total from deck_size) - (select count(*) from picked_whitelisted),
+      0
+    )
+  ),
+  chosen as (
+    select userid from picked_whitelisted
+    union
+    select userid from picked_random
+  ),
+  backfill as (
+    -- If both buckets came up short (e.g. few non-whitelisted DHs), top up from
+    -- any remaining eligible DH so the deck still reaches limit_count.
+    select dc.userid
+    from dh_candidates dc
+    where dc.userid not in (select userid from chosen)
+    order by random()
+    limit greatest((select total from deck_size) - (select count(*) from chosen), 0)
+  ),
+  final_ids as (
+    select userid from chosen
+    union
+    select userid from backfill
   )
-  select candidate_pool.*
-  from candidate_pool
+  select dc.*
+  from dh_candidates dc
+  join final_ids fi on fi.userid = dc.userid
   order by random()
-  limit limit_count;
+  limit (select total from deck_size);
 $$;
 
 -- Digital Humans RPCs
