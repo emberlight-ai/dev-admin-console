@@ -2,13 +2,15 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { endOfDay, format, startOfDay, subDays } from "date-fns"
-import { ChevronDown, Eye } from "lucide-react"
+import { endOfDay, format, isSameDay, startOfDay, subDays } from "date-fns"
+import { CalendarDays, ChevronDown, Eye } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Calendar } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Table,
@@ -57,16 +59,18 @@ type DeletedUserRow = {
 
 import type { DateRange } from "react-day-picker"
 
-type Preset = "today" | "yesterday" | "7" | "30" | "90"
 type Environment = "Production" | "Sandbox"
 
-const DATE_PRESETS: { value: Preset; label: string }[] = [
-  { value: "today", label: "Today" },
-  { value: "yesterday", label: "Yesterday" },
-  { value: "7", label: "Last 7 days" },
-  { value: "30", label: "Last 30 days" },
-  { value: "90", label: "Last 3 months" },
-]
+// The date filter is day-granular: Today, Yesterday, then the previous days as
+// individual buttons, plus a custom range. QUICK_DAY_COUNT controls how many
+// single-day buttons are shown (today + yesterday + the rest).
+const QUICK_DAY_COUNT = 7
+
+function dayLabel(d: Date, today: Date): string {
+  if (isSameDay(d, today)) return "Today"
+  if (isSameDay(d, subDays(today, 1))) return "Yesterday"
+  return format(d, "MMM d")
+}
 
 type ActiveSubscriberRow = {
   subscription_id: string
@@ -199,8 +203,17 @@ export default function ManageUsers() {
   const [prevChartRows, setPrevChartRows] = React.useState<
     { created_at: string; is_digital_human: boolean }[]
   >([])
-  const [preset, setPreset] = React.useState<Preset>("today")
+  const [dateMode, setDateMode] = React.useState<"day" | "range">("day")
+  const [selectedDay, setSelectedDay] = React.useState<Date>(() => startOfDay(new Date()))
+  const [customRange, setCustomRange] = React.useState<DateRange | undefined>(undefined)
+  const [calendarOpen, setCalendarOpen] = React.useState(false)
   const [environment, setEnvironment] = React.useState<Environment>("Production")
+
+  // Today, Yesterday, then the previous days as individual quick buttons.
+  const quickDays = React.useMemo(() => {
+    const today = startOfDay(new Date())
+    return Array.from({ length: QUICK_DAY_COUNT }, (_, i) => subDays(today, i))
+  }, [])
   const [newMonthly, setNewMonthly] = React.useState(0)
   const [newYearly, setNewYearly] = React.useState(0)
   const [activeSubscribers, setActiveSubscribers] = React.useState<ActiveSubscriberRow[]>([])
@@ -210,23 +223,14 @@ export default function ManageUsers() {
   const [messageCounts, setMessageCounts] = React.useState<Record<string, number>>({})
 
   const range = React.useMemo<DateRange>(() => {
-    const now = new Date()
-    switch (preset) {
-      case "today":
-        return { from: startOfDay(now), to: now }
-      case "yesterday": {
-        const y = subDays(now, 1)
-        return { from: startOfDay(y), to: endOfDay(y) }
+    if (dateMode === "range" && customRange?.from) {
+      return {
+        from: startOfDay(customRange.from),
+        to: endOfDay(customRange.to ?? customRange.from),
       }
-      case "30":
-        return { from: subDays(now, 30), to: now }
-      case "90":
-        return { from: subDays(now, 90), to: now }
-      case "7":
-      default:
-        return { from: subDays(now, 7), to: now }
     }
-  }, [preset])
+    return { from: startOfDay(selectedDay), to: endOfDay(selectedDay) }
+  }, [dateMode, selectedDay, customRange])
 
   // Users with an active subscription in the selected environment are "premium".
   // Derived from premiumIds (not date-restricted), so the tag reflects current state
@@ -455,15 +459,64 @@ export default function ManageUsers() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Tabs value={preset} onValueChange={(v) => setPreset(v as Preset)}>
-            <TabsList>
-              {DATE_PRESETS.map((p) => (
-                <TabsTrigger key={p.value} value={p.value}>
-                  {p.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+          <div className="flex flex-wrap items-center gap-1 rounded-md border p-1">
+            {quickDays.map((d) => {
+              const active = dateMode === "day" && isSameDay(d, selectedDay)
+              return (
+                <button
+                  key={d.toISOString()}
+                  type="button"
+                  onClick={() => {
+                    setDateMode("day")
+                    setSelectedDay(d)
+                  }}
+                  className={cn(
+                    "rounded px-2.5 py-1 text-sm font-medium transition-colors",
+                    active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                  )}
+                >
+                  {dayLabel(d, quickDays[0])}
+                </button>
+              )
+            })}
+            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-sm font-medium transition-colors",
+                    dateMode === "range"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted"
+                  )}
+                >
+                  <CalendarDays className="h-3.5 w-3.5" />
+                  {dateMode === "range" && customRange?.from
+                    ? `${format(customRange.from, "MMM d")}${
+                        customRange.to && !isSameDay(customRange.to, customRange.from)
+                          ? ` – ${format(customRange.to, "MMM d")}`
+                          : ""
+                      }`
+                    : "Custom range"}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <Calendar
+                  mode="range"
+                  numberOfMonths={2}
+                  defaultMonth={subDays(new Date(), 1)}
+                  selected={customRange}
+                  onSelect={(r) => {
+                    setCustomRange(r)
+                    setDateMode("range")
+                    if (r?.from && r?.to) setCalendarOpen(false)
+                  }}
+                  disabled={{ after: new Date() }}
+                  autoFocus
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
           <Tabs value={environment} onValueChange={(v) => setEnvironment(v as Environment)}>
             <TabsList>
               <TabsTrigger value="Production">Production</TabsTrigger>
