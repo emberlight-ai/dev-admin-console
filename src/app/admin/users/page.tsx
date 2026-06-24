@@ -22,17 +22,6 @@ import {
 } from "@/components/ui/table"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  Line,
-  XAxis,
-  YAxis,
-} from "recharts"
-
 type UserRow = {
   userid: string
   username: string
@@ -197,12 +186,6 @@ export default function ManageUsers() {
   const [deletedExpanded, setDeletedExpanded] = React.useState(false)
   const [deletedUsers, setDeletedUsers] = React.useState<DeletedUserRow[]>([])
   const [deletedLoading, setDeletedLoading] = React.useState(true)
-  const [chartRows, setChartRows] = React.useState<
-    { created_at: string; is_digital_human: boolean }[]
-  >([])
-  const [prevChartRows, setPrevChartRows] = React.useState<
-    { created_at: string; is_digital_human: boolean }[]
-  >([])
   const [dateMode, setDateMode] = React.useState<"day" | "range">("day")
   const [selectedDay, setSelectedDay] = React.useState<Date>(() => startOfDay(new Date()))
   const [customRange, setCustomRange] = React.useState<DateRange | undefined>(undefined)
@@ -218,6 +201,7 @@ export default function ManageUsers() {
   const [newYearly, setNewYearly] = React.useState(0)
   const [activeSubscribers, setActiveSubscribers] = React.useState<ActiveSubscriberRow[]>([])
   const [premiumIds, setPremiumIds] = React.useState<string[]>([])
+  const [paidIds, setPaidIds] = React.useState<string[]>([])
   const [subscriptionsLoading, setSubscriptionsLoading] = React.useState(true)
   const [matchCounts, setMatchCounts] = React.useState<Record<string, number>>({})
   const [messageCounts, setMessageCounts] = React.useState<Record<string, number>>({})
@@ -278,6 +262,7 @@ export default function ManageUsers() {
         active_count?: number
         subscribers?: ActiveSubscriberRow[]
         premium_user_ids?: string[]
+        paid_user_ids?: string[]
         error?: string
       }
       if (!res.ok) throw new Error(json.error || 'Failed to fetch subscriptions')
@@ -285,12 +270,14 @@ export default function ManageUsers() {
       setNewYearly(json.new_yearly ?? 0)
       setActiveSubscribers(json.subscribers ?? [])
       setPremiumIds(json.premium_user_ids ?? [])
+      setPaidIds(json.paid_user_ids ?? [])
     } catch (err: unknown) {
       console.error(err)
       setNewMonthly(0)
       setNewYearly(0)
       setActiveSubscribers([])
       setPremiumIds([])
+      setPaidIds([])
     }
     setSubscriptionsLoading(false)
   }, [range, environment])
@@ -349,106 +336,14 @@ export default function ManageUsers() {
     void fetchDeletedUsers()
   }, [fetchDeletedUsers])
 
-  const fetchChartRows = React.useCallback(async () => {
-    if (!range?.from || !range?.to) return
-    const start = new Date(range.from)
-    const end = new Date(range.to)
-
-    try {
-      const qs = new URLSearchParams({
-        mode: "chart",
-        created_from: start.toISOString(),
-        created_to: end.toISOString(),
-      })
-      const res = await fetch(`/api/admin/users?${qs.toString()}`)
-      const json = (await res.json()) as {
-        data?: { created_at: string; is_digital_human: boolean }[]
-        error?: string
-      }
-      if (!res.ok) throw new Error(json.error || "Failed to fetch chart rows")
-      setChartRows((json.data ?? []) as { created_at: string; is_digital_human: boolean }[])
-    } catch (err: unknown) {
-      console.error(err)
-      setChartRows([])
-    }
-  }, [range])
-
-  React.useEffect(() => {
-    void fetchChartRows()
-  }, [fetchChartRows])
-
-  const fetchPrevChartRows = React.useCallback(async () => {
-    if (!range?.from || !range?.to) return
-    const start = new Date(range.from)
-    const end = new Date(range.to)
-    const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)))
-    const prevEndInclusive = new Date(start.getTime() - 1)
-    const prevStart = new Date(start.getTime() - days * 24 * 60 * 60 * 1000)
-
-    try {
-      const qs = new URLSearchParams({
-        mode: "chart",
-        created_from: prevStart.toISOString(),
-        created_to: prevEndInclusive.toISOString(),
-      })
-      const res = await fetch(`/api/admin/users?${qs.toString()}`)
-      const json = (await res.json()) as {
-        data?: { created_at: string; is_digital_human: boolean }[]
-        error?: string
-      }
-      if (!res.ok) throw new Error(json.error || "Failed to fetch previous chart rows")
-      setPrevChartRows((json.data ?? []) as { created_at: string; is_digital_human: boolean }[])
-    } catch (err: unknown) {
-      console.error(err)
-      setPrevChartRows([])
-    }
-  }, [range])
-
-  React.useEffect(() => {
-    void fetchPrevChartRows()
-  }, [fetchPrevChartRows])
-
-  const chartData = (() => {
-    if (!range?.from || !range?.to) return []
-    const start = new Date(range.from)
-    const end = new Date(range.to)
-
-    const days: Record<string, { real: number; digital: number }> = {}
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      days[format(d, "yyyy-MM-dd")] = { real: 0, digital: 0 }
-    }
-
-    for (const r of chartRows) {
-      const dt = new Date(r.created_at)
-      const key = format(dt, "yyyy-MM-dd")
-      if (!(key in days)) continue
-      if (r.is_digital_human) days[key].digital += 1
-      else days[key].real += 1
-    }
-
-    return Object.keys(days)
-      .sort()
-      .map((date) => {
-        return { date, real: days[date].real, digital: days[date].digital }
-      })
-  })()
-
-  const summary = React.useMemo(() => {
-    const currentReal = chartRows.filter((r) => !r.is_digital_human).length
-    const prevReal = prevChartRows.filter((r) => !r.is_digital_human).length
-
-    const pct = (curr: number, prev: number) => {
-      if (prev === 0) return curr === 0 ? 0 : 100
-      return ((curr - prev) / prev) * 100
-    }
-
-    // Growth is measured on real users only; digital humans are excluded from the dashboard.
-    return {
-      currentReal,
-      pctReal: pct(currentReal, prevReal),
-      growthRate: pct(currentReal, prevReal),
-    }
-  }, [chartRows, prevChartRows])
+  // Cohort conversion for the selected range: of the new real users created in
+  // the window, the share who have ever paid (in the selected environment).
+  const paidUserIds = React.useMemo(() => new Set(paidIds), [paidIds])
+  const conversion = React.useMemo(() => {
+    const total = users.length
+    const paid = users.reduce((n, u) => n + (paidUserIds.has(u.userid) ? 1 : 0), 0)
+    return { total, paid, rate: total === 0 ? 0 : (paid / total) * 100 }
+  }, [users, paidUserIds])
 
   return (
     <div className="space-y-6">
@@ -535,81 +430,19 @@ export default function ManageUsers() {
         />
         <StatCard
           title="New Customers"
-          value={summary.currentReal.toLocaleString()}
-          deltaPct={summary.pctReal}
+          value={loading ? "—" : users.length.toLocaleString()}
+          deltaPct={0}
           subtitle="Real users created in range"
+          showDelta={false}
         />
         <StatCard
-          title="Growth Rate"
-          value={`${summary.growthRate.toFixed(1)}%`}
-          deltaPct={summary.growthRate}
-          subtitle="Versus previous period"
+          title="Conversion rate"
+          value={loading || subscriptionsLoading ? "—" : `${conversion.rate.toFixed(1)}%`}
+          deltaPct={0}
+          subtitle={`${conversion.paid} of ${conversion.total} new users paid (${environment})`}
+          showDelta={false}
         />
       </div>
-
-      <Card className="p-6">
-        <div className="mb-3 flex items-start justify-between gap-4">
-          <div>
-            <div className="text-lg font-semibold tracking-tight">Total Visitors</div>
-            <div className="text-sm text-muted-foreground">
-              Daily creations for the selected range
-            </div>
-          </div>
-        </div>
-
-        <div className="h-[300px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ left: 8, right: 16, top: 8, bottom: 0 }}>
-              <defs>
-                <linearGradient id="fillReal" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.35} />
-                  <stop offset="85%" stopColor="var(--primary)" stopOpacity={0.02} />
-                </linearGradient>
-                <linearGradient id="fillDigital" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--ring)" stopOpacity={0.25} />
-                  <stop offset="85%" stopColor="var(--ring)" stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.7} />
-              <XAxis
-                dataKey="date"
-                tickFormatter={(d) => format(new Date(d), "MMM dd")}
-                stroke="var(--muted-foreground)"
-              />
-              <YAxis stroke="var(--muted-foreground)" />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "var(--popover)",
-                  border: "1px solid var(--border)",
-                  color: "var(--popover-foreground)",
-                }}
-              />
-              <Area
-                type="monotone"
-                dataKey="digital"
-                name="Digital humans"
-                stroke="var(--ring)"
-                strokeWidth={2}
-                fill="url(#fillDigital)"
-                dot={false}
-                activeDot={{ r: 4 }}
-              />
-              <Area
-                type="monotone"
-                dataKey="real"
-                name="Real humans"
-                stroke="var(--primary)"
-                strokeWidth={2}
-                fill="url(#fillReal)"
-                dot={false}
-                activeDot={{ r: 4 }}
-              />
-              {/* keep Line import for future; Recharts legend not shown to match screenshot */}
-              <Line type="monotone" dataKey="real" hide />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
 
       <Card className="p-0">
         <div className="p-6">

@@ -101,6 +101,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Every user who has EVER subscribed in this environment — used for cohort
+  // conversion (signed up in range AND ever paid). Not date-restricted.
+  let paidQuery = supabaseAdmin.from('subscription').select('user_id');
+  if (env) paidQuery = paidQuery.eq('environment', env);
+  const { data: paidRows, error: paidErr } = await paidQuery;
+  if (paidErr) return jsonError(paidErr.message, 500);
+  const paidUserIds = Array.from(
+    new Set((paidRows ?? []).map((r) => (r as { user_id?: string | null }).user_id).filter(Boolean))
+  ) as string[];
+
   let activeQuery = supabaseAdmin
     .from('subscription')
     .select(
@@ -213,6 +223,7 @@ export async function GET(req: NextRequest) {
     new_total: newMonthly + newYearly,
     environment: env ?? 'all',
     premium_user_ids: Array.from(premiumUserIds),
+    paid_user_ids: paidUserIds,
     subscribers,
   });
 }
