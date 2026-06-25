@@ -134,7 +134,8 @@ returns table (
   created_at timestamptz,
   other_user_id uuid,
   other_username text,
-  other_avatar text
+  other_avatar text,
+  greeting text
 )
 language sql
 security invoker
@@ -158,7 +159,8 @@ as $$
     mr.created_at,
     u.userid as other_user_id,
     u.username as other_username,
-    u.avatar as other_avatar
+    u.avatar as other_avatar,
+    mr.greeting
   from public.match_requests mr
   join public.users u
     on u.userid = case
@@ -199,6 +201,7 @@ declare
   r public.match_requests%rowtype;
   a uuid;
   b uuid;
+  v_match_id uuid;
 begin
   -- Verify user is authenticated
   if auth.uid() is null then
@@ -225,7 +228,23 @@ begin
   b := greatest(r.from_user_id, r.to_user_id);
   insert into public.user_matches (user_a, user_b)
   values (a, b)
-  on conflict (user_a, user_b) do nothing;
+  on conflict (user_a, user_b) do update set created_at = public.user_matches.created_at
+  returning id into v_match_id;
+
+  -- If the invitation carried an opener (DH nearby invite), open the conversation
+  -- with it. Seeded in-txn so the async dh-greeting webhook sees a greeting already
+  -- sent and no-ops; dh-auto-reply takes over once the user replies.
+  if v_match_id is not null and r.greeting is not null and length(btrim(r.greeting)) > 0 then
+    insert into public.messages (match_id, sender_id, content)
+    values (v_match_id, r.from_user_id, r.greeting);
+
+    update public.user_match_ai_state
+       set ai_greeting_sent    = true,
+           ai_greeting_sent_at = now(),
+           ai_state            = 1,
+           ai_locked_until     = null
+     where match_id = v_match_id;
+  end if;
 end;
 $$;
 
@@ -267,7 +286,8 @@ returns table (
   connection_user_id uuid,
   connection_avatar text,
   created_at timestamptz,
-  is_new_connection boolean
+  is_new_connection boolean,
+  awaiting_user_reply boolean
 )
 language sql
 security invoker
@@ -283,7 +303,17 @@ as $$
       from public.messages m
       where m.match_id = um.id
       limit 1
-    ) as is_new_connection
+    ) as is_new_connection,
+    -- "Intro" awaiting my reply: the other side has messaged but I never have.
+    (
+      exists (select 1 from public.messages m where m.match_id = um.id)
+      and not exists (
+        select 1
+        from public.messages m
+        where m.match_id = um.id
+          and m.sender_id = auth.uid()
+      )
+    ) as awaiting_user_reply
   from public.user_matches um
   join public.users u
     on u.userid = case
@@ -541,10 +571,13 @@ begin
       continue;
     end if;
     
-    -- Insert match request
-    insert into public.match_requests (from_user_id, to_user_id)
-    values (digital_human_id, real_user_id)
-    on conflict (from_user_id, to_user_id) do nothing;
+    -- Create the match directly so the DH greets first (no pending "like" to accept).
+    -- This fires the same AFTER INSERT triggers as rpc_accept_match_request:
+    -- on_user_match_created_init_ai_state (seeds ai_state) and
+    -- on_user_match_created_notify_dh_greeting (sends the opener via dh-greeting).
+    insert into public.user_matches (user_a, user_b)
+    values (least(digital_human_id, real_user_id), greatest(digital_human_id, real_user_id))
+    on conflict (user_a, user_b) do nothing;
     
     -- Update or insert tracking
     insert into public.digital_human_invites_tracking (user_id, invite_count)

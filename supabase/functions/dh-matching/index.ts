@@ -82,23 +82,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Randomize batch size for natural-looking invite cadence
-    const batchSize = getRandomInt(1, Math.max(1, config.invitesPerRun));
-    console.log(`[dh-matching] Sending up to ${batchSize} invites...`);
-
+    // Nearby invites are now scheduled per find-nearby-people call and delivered by
+    // dh-nearby-dispatch. dh-matching only processes user→DH swipe requests.
     const results: Record<string, unknown> = {};
-
-    // Send invites
-    const { data: inviteData, error: inviteErr } = await supabase.rpc('send_digital_human_invites', {
-      p_limit: batchSize,
-    });
-    if (inviteErr) {
-      console.error('[dh-matching] Error sending invites:', inviteErr);
-      results.invites = { error: inviteErr.message };
-    } else {
-      console.log(`[dh-matching] Sent ${inviteData} invites.`);
-      results.invites = { sent: inviteData };
-    }
 
     // Process pending requests
     const { data: requestData, error: requestErr } = await supabase.rpc('process_digital_human_requests', {

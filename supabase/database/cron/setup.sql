@@ -17,6 +17,7 @@ create extension if not exists pg_cron;
 -- ---- Unschedule any existing jobs (idempotent re-run) ------
 select cron.unschedule('dh-followup')          where exists (select 1 from cron.job where jobname = 'dh-followup');
 select cron.unschedule('dh-matching')          where exists (select 1 from cron.job where jobname = 'dh-matching');
+select cron.unschedule('dh-nearby-dispatch')   where exists (select 1 from cron.job where jobname = 'dh-nearby-dispatch');
 select cron.unschedule('dh-scheduled-replies') where exists (select 1 from cron.job where jobname = 'dh-scheduled-replies');
 
 -- ---- 1. dh-followup: every 5 minutes -----------------------
@@ -51,7 +52,25 @@ select cron.schedule(
   $$
 );
 
--- ---- 3. dh-scheduled-replies: REMOVED ----------------------
+-- ---- 3. dh-nearby-dispatch: every minute, deliver due nearby invites -----
+-- Per-invite run_at (set when find-nearby-people schedules them) is what makes
+-- arrivals feel random across a 1–3 min window; this is just the poll loop.
+select cron.schedule(
+  'dh-nearby-dispatch',
+  '* * * * *',
+  $$
+  select net.http_post(
+    url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-nearby-dispatch',
+    headers := jsonb_build_object(
+      'Content-Type',  'application/json',
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2Y3d2amxtbmpudnlibHJ5Y3hqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTgzNjcyMCwiZXhwIjoyMDgxNDEyNzIwfQ.9oeRPz5_q3DrPy-T3LZm5Fsdt-o-ZbKiqI1bqGzhqiI'
+    ),
+    body    := '{}'::jsonb
+  );
+  $$
+);
+
+-- ---- 4. dh-scheduled-replies: REMOVED ----------------------
 -- The fixed response-delay mechanism is gone — dh-auto-reply now applies a
 -- natural typing delay inline (response length / ~40 WPM). The unschedule near
 -- the top of this file drops the old job when re-run. To remove the live job

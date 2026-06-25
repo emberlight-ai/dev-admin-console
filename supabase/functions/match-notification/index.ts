@@ -61,6 +61,15 @@ Deno.serve(async (req) => {
       return new Response('Users not found', { status: 400 });
     }
 
+    // When a digital human is involved, the DH sends an opener immediately
+    // (dh-greeting), and that message's own push (push-notification) is the
+    // single, more useful notification — e.g. "Mia: welcome to Austin 👋".
+    // Skip the redundant "New Match!" push so the user isn't double-notified.
+    if (userA.is_digital_human || userB.is_digital_human) {
+      console.log('Skipping match notification: a digital human is involved (greeting push covers it)');
+      return new Response('DH match — greeting push covers it', { status: 200 });
+    }
+
     // 2. Determine which users are real humans (not digital)
     const realHumanIds: string[] = [];
     const realHumanUsernames: string[] = [];

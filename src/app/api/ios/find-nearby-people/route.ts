@@ -507,6 +507,30 @@ async function handlePOST(req: NextRequest) {
       payloadCount: payload.length,
     });
 
+    // Schedule a few of the people just shown to "come say hi" over the next 1–3
+    // minutes — each becomes a pending invitation (match request + opener) delivered
+    // by dh-nearby-dispatch. Best-effort: never block or fail the nearby response.
+    try {
+      const dhUserIds = payload.map((person) => person.userId);
+      if (dhUserIds.length > 0) {
+        const { data: scheduled, error: scheduleError } = await supabaseAdmin.rpc(
+          'schedule_nearby_invites',
+          { p_user_id: authData.user.id, p_dh_user_ids: dhUserIds },
+        );
+        if (scheduleError) {
+          console.warn('[find-nearby-people] schedule_nearby_invites failed', {
+            error: scheduleError.message,
+          });
+        } else {
+          console.info('[find-nearby-people] scheduled nearby invites', { scheduled });
+        }
+      }
+    } catch (scheduleErr) {
+      console.warn('[find-nearby-people] scheduling threw', {
+        error: scheduleErr instanceof Error ? scheduleErr.message : String(scheduleErr),
+      });
+    }
+
     return NextResponse.json(payload);
   } catch (err: unknown) {
     const message =
