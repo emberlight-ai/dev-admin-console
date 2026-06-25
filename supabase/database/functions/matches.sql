@@ -723,6 +723,7 @@ declare
   v_idx             integer := 0;
   v_span            numeric;
   v_offset          numeric;
+  v_is_first_touch  boolean := false;
 begin
   if p_user_id is null or p_dh_user_ids is null or array_length(p_dh_user_ids, 1) is null then
     return 0;
@@ -749,7 +750,21 @@ begin
   select created_at into v_user_created
     from users where userid = p_user_id and is_digital_human = false and deleted_at is null;
   if v_user_created is null then return 0; end if;
-  if v_user_created > now() - make_interval(mins => v_min_age_minutes) then return 0; end if;
+
+  -- First touch = a brand-new user's very first nearby call: no prior scheduled
+  -- invites, no connections, and no inbound invitations yet. These users get a
+  -- fast, guaranteed hello (below) and bypass the new-user age gate + cooldown, so
+  -- time-to-first-touch stays short — the strongest early-retention lever.
+  select
+    not exists (select 1 from scheduled_dh_invites s where s.user_id = p_user_id)
+    and not exists (select 1 from user_matches um where um.user_a = p_user_id or um.user_b = p_user_id)
+    and not exists (select 1 from match_requests mr where mr.to_user_id = p_user_id)
+  into v_is_first_touch;
+
+  if not v_is_first_touch
+     and v_user_created > now() - make_interval(mins => v_min_age_minutes) then
+    return 0;
+  end if;
 
   -- Daily cap: no more than max_invites_per_day actual invitations in any rolling 24h.
   -- ('skipped' rows never became an invitation, so they don't count.)
@@ -762,8 +777,9 @@ begin
     return 0;
   end if;
 
-  -- cooldown: one batch per window (avoids map-refresh spam)
-  if exists (
+  -- cooldown: one batch per window (avoids map-refresh spam). A first touch has no
+  -- prior scheduled invites anyway, so it is never blocked here.
+  if not v_is_first_touch and exists (
     select 1 from scheduled_dh_invites
     where user_id = p_user_id and created_at > now() - make_interval(secs => v_cooldown_secs)
   ) then
@@ -798,6 +814,16 @@ begin
   v_n := greatest(0, least(v_n, v_max));
   v_n := least(v_n, array_length(v_eligible, 1));
   v_n := least(v_n, greatest(v_cap_per_day - v_used_today, 0));
+
+  if v_is_first_touch then
+    -- Fast first hello: 1-2 nearby DHs arriving in ~5-12s (the dh-nearby-dispatch
+    -- cron runs every ~15s, so the user is greeted within seconds of opening the map).
+    v_win_min := 5;
+    v_win_max := 12;
+    v_n := least(2, array_length(v_eligible, 1));
+    v_n := least(v_n, greatest(v_cap_per_day - v_used_today, 0));
+  end if;
+
   if v_n <= 0 then return 0; end if;
 
   -- spread n arrivals across [win_min, win_max] with jitter (organic, min-gapped)
