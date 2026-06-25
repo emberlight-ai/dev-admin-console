@@ -4,9 +4,16 @@ import { supabaseAdmin } from "@/lib/supabase"
 export const dynamic = 'force-dynamic'
 
 const allowedKeys = [
-  "max_invites_per_user",
-  "invites_per_cron_run",
+  // Nearby invitations (DHs the user saw on the map reach out)
+  "enable_nearby_invites",
+  "avg_invites_per_nearby_call",
+  "max_invites_per_nearby_call",
+  "max_invites_per_day",
+  "nearby_invite_cooldown_seconds",
+  "nearby_invite_window_min_seconds",
+  "nearby_invite_window_max_seconds",
   "accept_rate_percentage",
+  "whitelisted_deck_ratio",
   "active_hour_start",
   "active_hour_end",
   "enable_digital_human_matching",

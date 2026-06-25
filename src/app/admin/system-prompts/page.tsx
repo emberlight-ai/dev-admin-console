@@ -50,6 +50,7 @@ type PersonalityOverrideRow = {
 type PersonalityOverrides = Record<string, Record<string, string>>
 
 const BOOLEAN_CONFIG_KEYS = new Set([
+  "enable_nearby_invites",
   "enable_digital_human_matching",
   "enable_digital_human_greeting",
   "enable_digital_human_auto_response",
@@ -59,6 +60,10 @@ const BOOLEAN_CONFIG_KEYS = new Set([
   "enable_selfie_reciprocation",
   "enable_proactive_double_text",
 ])
+
+// Config keys that are app-wide only — they have no per-personality meaning, so we
+// hide them from the Personality Overrides tab (the matching deck split is global).
+const GLOBAL_ONLY_CONFIG_KEYS = new Set(["whitelisted_deck_ratio"])
 
 const WARMUP_RATE_OPTIONS = [
   { value: "very_low", label: "Very low" },
@@ -70,9 +75,15 @@ const WARMUP_RATE_OPTIONS = [
 ]
 
 const CONFIG_LABELS: Record<string, string> = {
-  max_invites_per_user: "Max invites per user",
-  invites_per_cron_run: "Invites per cron run",
+  enable_nearby_invites: "Enable nearby invitations",
+  avg_invites_per_nearby_call: "Avg invitations per map open",
+  max_invites_per_nearby_call: "Max invitations per map open",
+  max_invites_per_day: "Max invitations per day",
+  nearby_invite_cooldown_seconds: "Cooldown between batches (seconds)",
+  nearby_invite_window_min_seconds: "Earliest arrival (seconds)",
+  nearby_invite_window_max_seconds: "Latest arrival (seconds)",
   accept_rate_percentage: "Accept rate percentage",
+  whitelisted_deck_ratio: "Whitelisted DH deck ratio (%)",
   active_hour_start: "Active hour start",
   active_hour_end: "Active hour end",
   enable_digital_human_matching: "Enable matching",
@@ -99,9 +110,15 @@ const CONFIG_LABELS: Record<string, string> = {
 }
 
 const CONFIG_DESCRIPTIONS: Record<string, string> = {
-  max_invites_per_user: "Maximum number of digital-human invites a real user can receive in total.",
-  invites_per_cron_run: "Maximum invites this automation can send each matching cron run.",
+  enable_nearby_invites: "Master switch — when off, no digital human will send nearby invitations.",
+  avg_invites_per_nearby_call: "Average number of nearby people who reach out each time the user opens the map.",
+  max_invites_per_nearby_call: "Hard cap on how many can reach out per map open.",
+  max_invites_per_day: "Hard cap on total invitations a user can receive in any rolling 24 hours (keeps it believable).",
+  nearby_invite_cooldown_seconds: "Minimum gap before another batch can be scheduled (stops map-refresh spam).",
+  nearby_invite_window_min_seconds: "Soonest a scheduled hello can arrive after the map open.",
+  nearby_invite_window_max_seconds: "Latest a scheduled hello can arrive after the map open.",
   accept_rate_percentage: "Chance that a digital human accepts an incoming match request.",
+  whitelisted_deck_ratio: "Share of the swipe deck filled with whitelisted (curated, image-rich) digital humans; the rest are random DHs. 90 = ~9 in 10 cards whitelisted.",
   active_hour_start: "Start hour, in PST, when automation is allowed to run.",
   active_hour_end: "End hour, in PST, when automation is allowed to run.",
   enable_digital_human_matching: "Allows this personality to send and process matching requests.",
@@ -308,9 +325,15 @@ function ConfigurationDialog({
   const [selectedPersonality, setSelectedPersonality] = React.useState("")
   const [personalityOverrides, setPersonalityOverrides] = React.useState<PersonalityOverrides>({})
   const [config, setConfig] = React.useState({
-    max_invites_per_user: "5",
-    invites_per_cron_run: "1",
+    enable_nearby_invites: "true",
+    avg_invites_per_nearby_call: "2",
+    max_invites_per_nearby_call: "3",
+    max_invites_per_day: "3",
+    nearby_invite_cooldown_seconds: "1800",
+    nearby_invite_window_min_seconds: "60",
+    nearby_invite_window_max_seconds: "180",
     accept_rate_percentage: "30",
+    whitelisted_deck_ratio: "90",
     active_hour_start: "5",
     active_hour_end: "23",
     enable_digital_human_matching: "true",
@@ -425,6 +448,23 @@ function ConfigurationDialog({
                 <div className="flex items-center space-x-2">
                   <input
                     type="checkbox"
+                    id="g-nearby-invites"
+                    className="h-4 w-4 rounded border-gray-300 accent-primary"
+                    checked={config.enable_nearby_invites !== "false"}
+                    onChange={(e) =>
+                      setConfig({ ...config, enable_nearby_invites: e.target.checked ? "true" : "false" })
+                    }
+                  />
+                  <Label htmlFor="g-nearby-invites">Enable Nearby Invitations</Label>
+                </div>
+                <p className="text-xs text-muted-foreground ml-6">
+                  Master switch — when off, no digital human will reach out after a user opens the nearby map.
+                </p>
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
                     id="g-matching"
                     className="h-4 w-4 rounded border-gray-300 accent-primary"
                     checked={config.enable_digital_human_matching !== "false"}
@@ -435,7 +475,7 @@ function ConfigurationDialog({
                   <Label htmlFor="g-matching">Enable Matching</Label>
                 </div>
                 <p className="text-xs text-muted-foreground ml-6">
-                  Digital humans will send invites and process pending requests.
+                  Process incoming user→DH match requests (swipes). Does not control nearby invitations.
                 </p>
               </div>
               <div className="space-y-4">
@@ -506,34 +546,79 @@ function ConfigurationDialog({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Max invites per user</Label>
-                <Input
-                  type="number"
-                  value={config.max_invites_per_user}
-                  onChange={(e) => setConfig({ ...config, max_invites_per_user: e.target.value })}
-                />
-                <p className="text-xs text-muted-foreground">Max invites a real user can receive total.</p>
-              </div>
-              <div className="space-y-2">
-                <Label>Invites per cron run</Label>
-                <Input
-                  type="number"
-                  value={config.invites_per_cron_run}
-                  onChange={(e) => setConfig({ ...config, invites_per_cron_run: e.target.value })}
-                />
-                <p className="text-xs text-muted-foreground">Max invites sent per matching cron run.</p>
-              </div>
-              <div className="space-y-2">
-                <Label>Minimum user age before invites (minutes)</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  value={config.min_user_age_minutes_for_invites}
-                  onChange={(e) => setConfig({ ...config, min_user_age_minutes_for_invites: e.target.value })}
-                />
-                <p className="text-xs text-muted-foreground">New users must wait this long before digital humans invite them.</p>
+            <div className="grid gap-3">
+              <div className="text-sm font-medium">Nearby invitations cadence</div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Avg invitations per map open</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={config.avg_invites_per_nearby_call}
+                    onChange={(e) => setConfig({ ...config, avg_invites_per_nearby_call: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Average number of nearby people who reach out each map open (fluctuates).</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Max invitations per map open</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={config.max_invites_per_nearby_call}
+                    onChange={(e) => setConfig({ ...config, max_invites_per_nearby_call: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Hard cap on how many reach out per map open.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Max invitations per day</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={config.max_invites_per_day}
+                    onChange={(e) => setConfig({ ...config, max_invites_per_day: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Hard cap on total invitations in any rolling 24h (keeps it believable).</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Cooldown between batches (seconds)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={config.nearby_invite_cooldown_seconds}
+                    onChange={(e) => setConfig({ ...config, nearby_invite_cooldown_seconds: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Min gap before another batch is scheduled (stops map-refresh spam).</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Minimum user age before invites (minutes)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={config.min_user_age_minutes_for_invites}
+                    onChange={(e) => setConfig({ ...config, min_user_age_minutes_for_invites: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">New users must wait this long before digital humans reach out.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Earliest arrival (seconds)</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={config.nearby_invite_window_min_seconds}
+                    onChange={(e) => setConfig({ ...config, nearby_invite_window_min_seconds: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Soonest a scheduled hello arrives after a map open.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Latest arrival (seconds)</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={config.nearby_invite_window_max_seconds}
+                    onChange={(e) => setConfig({ ...config, nearby_invite_window_max_seconds: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Latest a scheduled hello arrives after a map open.</p>
+                </div>
               </div>
             </div>
 
@@ -547,6 +632,24 @@ function ConfigurationDialog({
                 onChange={(e) => setConfig({ ...config, accept_rate_percentage: e.target.value })}
               />
               <p className="text-xs text-muted-foreground">Likelihood a digital human accepts a user request.</p>
+            </div>
+
+            <div className="grid gap-3 border-t pt-4">
+              <div className="text-sm font-medium">Matching deck</div>
+              <div className="space-y-2">
+                <Label>Whitelisted DH deck ratio (0-100)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={config.whitelisted_deck_ratio}
+                  onChange={(e) => setConfig({ ...config, whitelisted_deck_ratio: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Percent of the swipe deck filled with whitelisted (curated, image-rich) digital humans; the rest are
+                  random DHs. E.g. 90 = ~9 in 10 cards whitelisted. Each bucket backfills the other when short.
+                </p>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -788,7 +891,7 @@ function ConfigurationDialog({
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
-                  {configKeys.map((key) => {
+                  {configKeys.filter((key) => !GLOBAL_ONLY_CONFIG_KEYS.has(key)).map((key) => {
                     const value = personalityOverrides[selectedPersonality]?.[key] ?? ""
                     const label = CONFIG_LABELS[key] ?? String(key).replace(/_/g, " ")
                     const description = CONFIG_DESCRIPTIONS[key]

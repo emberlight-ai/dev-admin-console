@@ -192,7 +192,7 @@ as $$
 $$;
 
 create or replace function public.rpc_accept_match_request(request_id uuid)
-returns void
+returns uuid
 language plpgsql
 security definer
 set search_path = public
@@ -245,6 +245,8 @@ begin
            ai_locked_until     = null
      where match_id = v_match_id;
   end if;
+
+  return v_match_id;
 end;
 $$;
 
@@ -395,8 +397,10 @@ as $$
       )
   ),
   -- The deck is digital-humans-only (no real users), and DHs are split so the
-  -- deck doesn't feel like a wall of the same curated cards: ~2/3 whitelisted
-  -- (image-rich, can send selfies) and ~1/3 random non-whitelisted DHs. Each
+  -- deck doesn't feel like a wall of the same curated cards: a configurable share
+  -- whitelisted (image-rich, can send selfies) and the rest random non-whitelisted
+  -- DHs. The split is driven by the `whitelisted_deck_ratio` config key (a 0-100
+  -- percentage, default 90) editable from the admin System Prompts page. Each
   -- bucket backfills from the other when short, so the deck still fills.
   dh_candidates as (
     select ec.*
@@ -404,12 +408,32 @@ as $$
     where coalesce(ec.is_digital_human, false) = true
   ),
   deck_size as (select greatest(coalesce(limit_count, 0), 0) as total),
+  -- Percentage of the deck reserved for whitelisted DHs. Defensive: only casts a
+  -- well-formed number (else falls back to 90) and clamps to [0,100], so a bad
+  -- config value can never break the matching path.
+  deck_config as (
+    select least(greatest(
+      coalesce(
+        (select case
+                  when btrim(value) ~ '^[0-9]+(\.[0-9]+)?$' then btrim(value)::numeric
+                  else null
+                end
+         from public.digital_human_config
+         where key = 'whitelisted_deck_ratio'
+         limit 1),
+        90
+      ),
+      0), 100) as whitelisted_pct
+  ),
   picked_whitelisted as (
     select dc.userid
     from dh_candidates dc
     where coalesce(dc.whitelisted, false) = true
     order by random()
-    limit (select ceil(total * 2.0 / 3.0)::int from deck_size)
+    limit (
+      select ceil(total * (select whitelisted_pct from deck_config) / 100.0)::int
+      from deck_size
+    )
   ),
   picked_random as (
     select dc.userid

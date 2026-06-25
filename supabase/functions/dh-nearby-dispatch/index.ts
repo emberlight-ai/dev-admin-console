@@ -188,17 +188,33 @@ async function sendInvitePush(toUserId: string, dh: UserRow, requestId: string, 
   if (!tokens || tokens.length === 0) return;
   const fcmTokens = tokens.map((t) => t.token);
   const dhName = dh.username || 'Someone';
+  const avatarUrl = dh.avatar && dh.avatar.trim().length > 0 ? dh.avatar.trim() : undefined;
   const message = {
     tokens: fcmTokens,
-    notification: { title: dhName, body: opener || 'sent you an invitation 👋' },
+    notification: {
+      title: dhName,
+      body: opener || 'sent you an invitation 👋',
+      // Shows the DH's photo on the notification (mirrors push-notification).
+      ...(avatarUrl ? { imageUrl: avatarUrl } : {}),
+    },
     data: {
       type: 'invitation',
       request_id: requestId,
       from_user_id: dh.userid,
       from_username: dhName,
       from_avatar: dh.avatar || '',
+      // Keys the iOS Notification Service Extension uses to render the avatar as a
+      // communication notification (same shape as push-notification).
+      sender_id: dh.userid,
+      sender_name: dhName,
+      ...(avatarUrl ? { sender_avatar_url: avatarUrl } : {}),
+      greeting: opener || '',
     },
-    apns: { payload: { aps: { sound: 'default', badge: 1 } } },
+    apns: {
+      // mutableContent lets the Notification Service Extension attach the avatar image.
+      ...(avatarUrl ? { fcmOptions: { imageUrl: avatarUrl } } : {}),
+      payload: { aps: { sound: 'default', badge: 1, mutableContent: Boolean(avatarUrl) } },
+    },
   };
   try {
     const res = await admin.messaging().sendEachForMulticast(message);
@@ -266,9 +282,12 @@ Deno.serve(async () => {
           continue;
         }
 
+        // Always let Gemini write the opener (the nearby invite IS the greeting) — do
+        // not gate on active_greeting_enabled, which is for the separate proactive-greeting
+        // feature and is off for many personalities (that was causing "hey 👋" fallbacks).
         const cfg = getPromptConfig(dh);
         let opener = '';
-        if (cfg && cfg.activeGreetingEnabled) {
+        if (cfg) {
           try {
             opener = await generateOpener(dh, human, cfg);
           } catch (genErr) {
