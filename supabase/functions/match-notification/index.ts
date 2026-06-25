@@ -62,12 +62,35 @@ Deno.serve(async (req) => {
     }
 
     // When a digital human is involved, the DH sends an opener immediately
-    // (dh-greeting), and that message's own push (push-notification) is the
-    // single, more useful notification — e.g. "Mia: welcome to Austin 👋".
-    // Skip the redundant "New Match!" push so the user isn't double-notified.
+    // (dh-greeting), and that greeting's own push is usually the single, more
+    // useful notification — e.g. "Mia: welcome to Austin 👋".
+    //
+    // EXCEPTION — immediate matches: when the REAL user just swiped an
+    // immediate-match DH, we DO want the celebratory "It's a Match" overlay (which
+    // the client shows off this new_match push) as the reinforcer. We detect that
+    // case by a fresh like-swipe from the user to the DH. DH-initiated matches
+    // (nearby invites, DH invites, delayed accept-rate accepts) have no such recent
+    // swipe, so we still skip them to avoid double-notifying alongside the greeting.
     if (userA.is_digital_human || userB.is_digital_human) {
-      console.log('Skipping match notification: a digital human is involved (greeting push covers it)');
-      return new Response('DH match — greeting push covers it', { status: 200 });
+      const realUser = userA.is_digital_human ? userB : userA;
+      const dhUser = userA.is_digital_human ? userA : userB;
+
+      const since = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+      const { data: recentSwipe } = await supabase
+        .from('swipe')
+        .select('id')
+        .eq('swiper_user_id', realUser.userid)
+        .eq('target_user_id', dhUser.userid)
+        .eq('reaction', 'like')
+        .gte('created_at', since)
+        .limit(1)
+        .maybeSingle();
+
+      if (!recentSwipe) {
+        console.log('Skipping match notification: DH-initiated match (greeting push covers it)');
+        return new Response('DH match — greeting push covers it', { status: 200 });
+      }
+      console.log('User-initiated immediate DH match — sending new_match push for the overlay');
     }
 
     // 2. Determine which users are real humans (not digital)
