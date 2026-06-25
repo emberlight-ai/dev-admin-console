@@ -324,6 +324,17 @@ alter table public.match_requests drop column if exists responded_at;
 create unique index if not exists match_requests_from_to_unique
 on public.match_requests (from_user_id, to_user_id);
 
+-- Nearby invitations carry the DH's opener; it is seeded into the conversation when
+-- the user accepts (rpc_accept_match_request). See database/functions/matches.sql.
+alter table public.match_requests
+  add column if not exists greeting text,
+  add column if not exists greeting_generated_at timestamptz;
+
+-- The legacy "New Like Insert" webhook (created in the dashboard) fired a duplicate
+-- like-notification on every match_requests insert; the nearby dispatcher now sends
+-- its own invitation push. Ensure that trigger does not exist.
+drop trigger if exists "New Like Insert" on public.match_requests;
+
 -- Migrate legacy table name `matches` -> `user_matches`
 do $$
 begin
@@ -598,6 +609,22 @@ before update on public.digital_human_invites_tracking
 for each row
 execute function public.set_updated_at();
 
+-- 1b. Staggered queue for nearby invitations. find-nearby-people enqueues rows
+-- (schedule_nearby_invites); the dh-nearby-dispatch edge function claims due rows
+-- (~1/min) and turns them into match_requests + pushes. Service-role only.
+-- Functions live in database/functions/matches.sql.
+create table if not exists public.scheduled_dh_invites (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references public.users(userid) on delete cascade,  -- real user (recipient)
+  dh_user_id uuid not null references public.users(userid) on delete cascade,  -- who reaches out
+  run_at     timestamptz not null,
+  status     text not null default 'pending',   -- pending | processing | done | skipped
+  created_at timestamptz not null default now()
+);
+create index if not exists scheduled_dh_invites_due_idx  on public.scheduled_dh_invites (status, run_at);
+create index if not exists scheduled_dh_invites_user_idx on public.scheduled_dh_invites (user_id, created_at);
+alter table public.scheduled_dh_invites enable row level security;  -- no policies: service-role only
+
 -- 2. Configuration table for digital human automation parameters
 create table if not exists public.digital_human_config (
   key text primary key,
@@ -634,6 +661,17 @@ values
   ('enable_digital_human_auto_response', 'true', 'Global toggle for digital human auto-replies'),
   ('enable_digital_human_follow_up', 'true', 'Global toggle for digital human follow-up messages'),
   ('enable_find_nearby_people', 'false', 'Global toggle for find nearby people responses'),
+  -- Nearby invitations (map-triggered DH outreach; see functions/matches.sql)
+  ('enable_nearby_invites', 'true', 'Master switch for map-triggered nearby invitations'),
+  ('avg_invites_per_nearby_call', '2', 'Average nearby invitations scheduled per map open (fluctuates)'),
+  ('max_invites_per_nearby_call', '3', 'Hard cap on nearby invitations scheduled per map open'),
+  ('max_invites_per_day', '3', 'Hard cap on nearby invitations a user receives per rolling 24h'),
+  ('nearby_invite_cooldown_seconds', '1800', 'Min seconds between nearby invitation batches (anti map-refresh spam)'),
+  ('nearby_invite_window_min_seconds', '60', 'Soonest a scheduled nearby hello arrives after a map open'),
+  ('nearby_invite_window_max_seconds', '180', 'Latest a scheduled nearby hello arrives after a map open'),
+  ('nearby_opener_styles', '["keep it to 2-6 words","react to noticing they''re nearby","ask one tiny question","match the time of day","playful and casual","warm and low-key"]', 'Opener style hints for nearby invitation greetings'),
+  -- Match deck composition
+  ('whitelisted_deck_ratio', '90', 'Percent of the swipe deck filled with whitelisted DHs (0-100); rest are random DHs'),
   ('green_mode_personalities', '[]', 'When non-empty, matching feed candidates are limited to these personalities.'),
   ('min_user_age_minutes_for_invites', '10', 'Minimum user account age before receiving digital human invites'),
   ('enable_digital_human_selfies', 'true', 'Allow DHs to send preserved selfies when intimacy is high enough'),
