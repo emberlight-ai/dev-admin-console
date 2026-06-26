@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Eye, Loader2, Star, ImageIcon, Plus } from 'lucide-react';
+import { Eye, Loader2, Star, ImageIcon, Plus, BarChart3, RefreshCw, ArrowUp, ArrowDown } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -168,10 +168,242 @@ function AddToWhitelistDialog({
   );
 }
 
+// ── Performance review ────────────────────────────────────────────────────────
+type Verdict = 'great' | 'ok' | 'poor' | 'low data';
+type PerfRow = {
+  userid: string;
+  username: string | null;
+  gender: string | null;
+  personality: string | null;
+  whitelisted: boolean;
+  likes: number;
+  dislikes: number;
+  total: number;
+  likeRate: number | null;
+  verdict: Verdict;
+};
+type CandidateRow = PerfRow & { tier: 'proven' | 'promising' };
+type PerfResponse = {
+  whitelisted: PerfRow[];
+  candidates: CandidateRow[];
+  suggestions: { demote: PerfRow[]; promote: PerfRow[] };
+};
+
+const pct = (r: number | null) => (r == null ? '—' : `${Math.round(r * 100)}%`);
+
+function VerdictBadge({ verdict }: { verdict: Verdict }) {
+  if (verdict === 'great')
+    return <Badge className="bg-emerald-600 hover:bg-emerald-600">great</Badge>;
+  if (verdict === 'poor')
+    return <Badge className="bg-red-600 hover:bg-red-600">poor</Badge>;
+  if (verdict === 'ok') return <Badge variant="secondary">ok</Badge>;
+  return <Badge variant="outline" className="text-muted-foreground">low data</Badge>;
+}
+
+async function runSync(): Promise<{ promoted: number; demoted: number }> {
+  const res = await fetch('/api/admin/matching/whitelist/sync', { method: 'POST' });
+  const json = (await res.json()) as {
+    promoted?: unknown[];
+    demoted?: unknown[];
+    error?: string;
+  };
+  if (!res.ok) throw new Error(json.error || 'Sync failed');
+  return { promoted: json.promoted?.length ?? 0, demoted: json.demoted?.length ?? 0 };
+}
+
+function PerformanceReviewDialog({ onApplied }: { onApplied: () => void }) {
+  const [open, setOpen] = React.useState(false);
+  const [data, setData] = React.useState<PerfResponse | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [applying, setApplying] = React.useState(false);
+
+  const fetchPerf = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/matching/whitelist/performance');
+      const json = (await res.json()) as PerfResponse & { error?: string };
+      if (!res.ok) throw new Error(json.error || 'Failed to load performance');
+      setData(json);
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : 'Failed to load performance');
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (open) void fetchPerf();
+  }, [open, fetchPerf]);
+
+  const suggestCount =
+    (data?.suggestions.promote.length ?? 0) + (data?.suggestions.demote.length ?? 0);
+
+  const apply = async () => {
+    setApplying(true);
+    try {
+      const { promoted, demoted } = await runSync();
+      toast.success(`Applied — promoted ${promoted}, demoted ${demoted}`);
+      onApplied();
+      await fetchPerf();
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" className="gap-2">
+          <BarChart3 className="h-4 w-4" />
+          Performance review
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-3xl">
+        <DialogXCloseButton />
+        <DialogHeader>
+          <DialogTitle>Swipe performance review</DialogTitle>
+        </DialogHeader>
+
+        {loading || !data ? (
+          <div className="flex min-h-40 items-center justify-center p-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4 pt-0">
+            {/* Suggested changes */}
+            <div className="rounded-md border bg-muted/20 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Suggested changes</div>
+                  <div className="text-xs text-muted-foreground">
+                    Promote {data.suggestions.promote.length} · Demote {data.suggestions.demote.length}
+                  </div>
+                </div>
+                <Button onClick={apply} disabled={applying || suggestCount === 0} className="gap-2">
+                  {applying ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  {suggestCount === 0 ? 'Nothing to apply' : `Apply ${suggestCount} change${suggestCount === 1 ? '' : 's'}`}
+                </Button>
+              </div>
+              {suggestCount > 0 ? (
+                <div className="mt-3 grid gap-1.5 text-sm">
+                  {data.suggestions.promote.map((r) => (
+                    <div key={`p-${r.userid}`} className="flex items-center gap-2 text-emerald-700">
+                      <ArrowUp className="h-3.5 w-3.5" /> Promote <span className="font-medium">{r.username}</span>
+                      <span className="text-muted-foreground">· {r.personality ?? '—'} · {pct(r.likeRate)} ({r.total})</span>
+                    </div>
+                  ))}
+                  {data.suggestions.demote.map((r) => (
+                    <div key={`d-${r.userid}`} className="flex items-center gap-2 text-red-700">
+                      <ArrowDown className="h-3.5 w-3.5" /> Demote <span className="font-medium">{r.username}</span>
+                      <span className="text-muted-foreground">· {r.personality ?? '—'} · {pct(r.likeRate)} ({r.total})</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 text-xs text-muted-foreground">
+                  Whitelist is healthy — no DH currently meets the promote/demote thresholds.
+                </div>
+              )}
+            </div>
+
+            {/* Whitelisted ranked */}
+            <div>
+              <div className="mb-2 text-sm font-medium">Whitelisted, by like-rate ({data.whitelisted.length})</div>
+              <div className="overflow-hidden rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="pl-3">DH</TableHead>
+                      <TableHead>Personality</TableHead>
+                      <TableHead className="text-right">Like rate</TableHead>
+                      <TableHead className="text-right">L / D</TableHead>
+                      <TableHead className="text-right pr-3">Verdict</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.whitelisted.map((r) => (
+                      <TableRow key={r.userid}>
+                        <TableCell className="pl-3 font-medium">{r.username}</TableCell>
+                        <TableCell className="text-muted-foreground">{r.personality ?? '—'}</TableCell>
+                        <TableCell className="text-right tabular-nums">{pct(r.likeRate)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {r.likes} / {r.dislikes}
+                        </TableCell>
+                        <TableCell className="pr-3 text-right">
+                          <VerdictBadge verdict={r.verdict} />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+
+            {/* Promotion candidates */}
+            <div>
+              <div className="mb-2 text-sm font-medium">
+                Promotion candidates ({data.candidates.length})
+              </div>
+              <div className="overflow-hidden rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="pl-3">DH</TableHead>
+                      <TableHead>Personality</TableHead>
+                      <TableHead className="text-right">Like rate</TableHead>
+                      <TableHead className="text-right">Swipes</TableHead>
+                      <TableHead className="text-right pr-3">Tier</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.candidates.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">
+                          No non-whitelisted DHs with enough swipes yet.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      data.candidates.map((r) => (
+                        <TableRow key={r.userid}>
+                          <TableCell className="pl-3 font-medium">{r.username}</TableCell>
+                          <TableCell className="text-muted-foreground">{r.personality ?? '—'}</TableCell>
+                          <TableCell className="text-right tabular-nums">{pct(r.likeRate)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-muted-foreground">{r.total}</TableCell>
+                          <TableCell className="pr-3 text-right">
+                            {r.tier === 'proven' ? (
+                              <Badge className="bg-emerald-600 hover:bg-emerald-600">proven</Badge>
+                            ) : (
+                              <Badge variant="outline">promising</Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function MatchingWhitelistPage() {
   const [rows, setRows] = React.useState<Row[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [removingId, setRemovingId] = React.useState<string | null>(null);
+  const [syncing, setSyncing] = React.useState(false);
   const existingIds = React.useMemo(() => new Set(rows.map((r) => r.userid)), [rows]);
 
   const load = React.useCallback(async () => {
@@ -211,6 +443,30 @@ export default function MatchingWhitelistPage() {
     }
   };
 
+  const syncSuggested = async () => {
+    if (
+      !window.confirm(
+        'Apply the suggested whitelist changes? This promotes proven candidates and demotes underperformers based on real-user swipe rates.'
+      )
+    )
+      return;
+    setSyncing(true);
+    try {
+      const { promoted, demoted } = await runSync();
+      if (promoted === 0 && demoted === 0) {
+        toast.info('No changes — the whitelist already matches the suggestions.');
+      } else {
+        toast.success(`Synced — promoted ${promoted}, demoted ${demoted}`);
+      }
+      await load();
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -229,7 +485,14 @@ export default function MatchingWhitelistPage() {
           <div className="text-sm font-medium text-muted-foreground">
             {loading ? 'Loading…' : `${rows.length} whitelisted`}
           </div>
-          <AddToWhitelistDialog existingIds={existingIds} onAdded={load} />
+          <div className="flex items-center gap-2">
+            <PerformanceReviewDialog onApplied={load} />
+            <Button variant="outline" className="gap-2" onClick={syncSuggested} disabled={syncing}>
+              {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Sync suggested
+            </Button>
+            <AddToWhitelistDialog existingIds={existingIds} onAdded={load} />
+          </div>
         </div>
         <Table>
           <TableHeader>

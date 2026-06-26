@@ -575,3 +575,40 @@ $$;
 
 revoke execute on function public.rpc_recent_dh_openers_for_user(uuid, integer) from public;
 grant execute on function public.rpc_recent_dh_openers_for_user(uuid, integer) to service_role;
+
+-- Admin-only: swipe performance per digital human, for the matching/whitelist
+-- "Performance review". Counts real-user swipes targeting each DH (right = like,
+-- left = dislike). Powers both the review display and the suggested promote/demote
+-- sync. security definer + service-role only (admin API).
+create or replace function public.rpc_admin_dh_swipe_performance()
+returns table (
+  userid uuid,
+  username text,
+  gender text,
+  personality text,
+  whitelisted boolean,
+  likes bigint,
+  dislikes bigint,
+  total bigint
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    u.userid, u.username, u.gender, u.personality, coalesce(u.whitelisted, false) as whitelisted,
+    count(s.id) filter (where s.reaction = 'like')    as likes,
+    count(s.id) filter (where s.reaction = 'dislike') as dislikes,
+    count(s.id)                                       as total
+  from public.users u
+  left join public.swipe s on s.target_user_id = u.userid
+  left join public.users sw on sw.userid = s.swiper_user_id
+  where coalesce(u.is_digital_human, false) = true
+    and u.deleted_at is null
+    and (s.id is null or coalesce(sw.is_digital_human, false) = false)
+  group by u.userid, u.username, u.gender, u.personality, u.whitelisted;
+$$;
+
+revoke execute on function public.rpc_admin_dh_swipe_performance() from public;
+grant execute on function public.rpc_admin_dh_swipe_performance() to service_role;
