@@ -315,23 +315,62 @@ Deno.serve(async (req) => {
     }
 
     try {
-      // 5. Build prompt and generate greeting
+      // 5. Build prompt and generate greeting.
+      //
+      // De-dup: two different DHs greeting the same user must not send the same
+      // opener (it reads as fake). Fetch the openers this user was recently sent by
+      // other DHs and tell the model to produce a clearly different one. This also
+      // supersedes any "copy a line verbatim" rule in active_greeting_prompt so the
+      // model has room to vary the wording.
+      let recentOpeners: string[] = [];
+      try {
+        const { data: openerRows } = await supabase.rpc('rpc_recent_dh_openers_for_user', {
+          p_user_id: realUser.userid,
+          p_limit: 15,
+        });
+        recentOpeners = (openerRows ?? [])
+          .map((r: { content?: string | null }) => (r.content ?? '').trim())
+          .filter((c: string) => c.length > 0);
+      } catch (e) {
+        console.error('[dh-greeting] failed to fetch recent openers', e);
+      }
+
       const systemText = composeSystemText(promptConfig.template, botUser, realUser);
-      const greetingPrompt =
+      const greetingBase =
         (promptConfig.activeGreetingPrompt || '').trim() ||
-        'Send a short friendly greeting to start the conversation. Keep it natural and concise.';
+        'Send a short friendly greeting to start the conversation.';
+      const blockList = recentOpeners.length ? recentOpeners.map((o) => `- ${o}`).join('\n') : '(none yet)';
+      const greetingPrompt = `${greetingBase}
 
-      const chat = model.startChat({
-        history: [],
-        systemInstruction: {
-          role: 'system',
-          parts: [{ text: systemText }],
-        },
-      });
+=== OUTPUT RULES (highest priority — these override anything above) ===
+Write ONE opener to start the chat: a single short line, at most 8 words. No second sentence, no answering about how you are doing, no emoji, no name, no quotation marks.
+Do NOT copy any example word-for-word — vary the wording so it feels fresh and human.
+This user was JUST sent the openers below by other people, so yours MUST be clearly different from every one of them:
+${blockList}
+Output only the opener text.`;
 
-      const result = await chat.sendMessage(`[System: ${greetingPrompt}]`);
-      const respData = await result.response;
-      const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
+      const norm = (s: string) =>
+        s.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+      const blocked = new Set(recentOpeners.map(norm));
+
+      const generateGreeting = async (): Promise<string> => {
+        const chat = model.startChat({
+          history: [],
+          systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+        });
+        const r = await chat.sendMessage(`[System: ${greetingPrompt}]`);
+        const rd = await r.response;
+        return (rd?.candidates?.[0]?.content?.parts?.[0]?.text || rd?.text?.() || '').trim();
+      };
+
+      let responseText = await generateGreeting();
+      // One retry if the model still echoed a recent opener (e.g. a near-simultaneous
+      // greeting the blocklist hadn't captured yet).
+      if (responseText && blocked.has(norm(responseText))) {
+        console.log('[dh-greeting] opener collided with a recent one; regenerating once for match', matchId);
+        const retry = await generateGreeting();
+        if (retry) responseText = retry;
+      }
 
       // 6. Send greeting message
       const { error: sendError } = await supabase.rpc('rpc_send_message', {

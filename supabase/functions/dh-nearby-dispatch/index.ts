@@ -162,12 +162,25 @@ function pickStyle(): string {
   return openerStyles[Math.floor(Math.random() * openerStyles.length)];
 }
 
-async function generateOpener(bot: UserRow, human: UserRow, cfg: CachedPrompt): Promise<string> {
+async function generateOpener(
+  bot: UserRow,
+  human: UserRow,
+  cfg: CachedPrompt,
+  recentOpeners: string[] = []
+): Promise<string> {
   const systemText = composeSystemText(cfg.template, bot, human);
   const base = (cfg.activeGreetingPrompt || '').trim() ||
     'Send a short, friendly opener to start the conversation. Keep it natural and concise.';
   const style = pickStyle();
-  const greetingPrompt = `${base}\nYou noticed this person is nearby. Open with a casual hello. Style for THIS message: ${style}. Do not repeat a generic template — make it feel spontaneous and human. Avoid quotation marks.`;
+  const blockList = recentOpeners.length ? recentOpeners.map((o) => `- ${o}`).join('\n') : '(none yet)';
+  const greetingPrompt = `${base}
+You noticed this person is nearby. Open with a casual hello. Style for THIS message: ${style}.
+
+=== OUTPUT RULES (highest priority — these override anything above) ===
+Write ONE opener: a single short line, at most 8 words. Make it feel spontaneous and human; do NOT copy any example word-for-word, vary the wording. No quotation marks.
+This user was JUST sent the openers below by other people, so yours MUST be clearly different from every one of them:
+${blockList}
+Output only the opener text.`;
 
   const chat = model.startChat({
     history: [],
@@ -289,7 +302,22 @@ Deno.serve(async () => {
         let opener = '';
         if (cfg) {
           try {
-            opener = await generateOpener(dh, human, cfg);
+            // De-dup: don't reuse an opener this user was just sent by another DH.
+            // Reads match_requests greetings too, so invites earlier in this same
+            // batch (already inserted below) are also avoided.
+            let recentOpeners: string[] = [];
+            try {
+              const { data: openerRows } = await supabase.rpc('rpc_recent_dh_openers_for_user', {
+                p_user_id: row.user_id,
+                p_limit: 15,
+              });
+              recentOpeners = (openerRows ?? [])
+                .map((r: { content?: string | null }) => (r.content ?? '').trim())
+                .filter((c: string) => c.length > 0);
+            } catch (e) {
+              console.error('[dh-nearby-dispatch] failed to fetch recent openers', row.id, e);
+            }
+            opener = await generateOpener(dh, human, cfg, recentOpeners);
           } catch (genErr) {
             console.error('[dh-nearby-dispatch] generation failed', row.id, genErr);
           }

@@ -533,3 +533,45 @@ $$;
 
 revoke execute on function public.rpc_admin_user_dh_image_counts() from public;
 grant execute on function public.rpc_admin_user_dh_image_counts() to service_role;
+
+-- Recent first-openers a user has received from digital humans: the first message
+-- in each of their DH conversations (sent greetings) plus any pending nearby-
+-- invitation greetings, newest first. dh-greeting and dh-nearby-dispatch pass these
+-- to the model as a "do not reuse" blocklist so two different DHs don't send the
+-- same opener to the same user. security definer + service-role only (edge fns).
+create or replace function public.rpc_recent_dh_openers_for_user(
+  p_user_id uuid,
+  p_limit integer default 20
+)
+returns table (content text)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  with sent_openers as (
+    select distinct on (m.match_id) m.content as content, m.created_at as created_at
+    from public.messages m
+    join public.user_matches um on um.id = m.match_id
+    join public.users dh on dh.userid = m.sender_id and coalesce(dh.is_digital_human, false) = true
+    where (um.user_a = p_user_id or um.user_b = p_user_id)
+      and m.created_at > now() - interval '30 days'
+    order by m.match_id, m.created_at asc
+  ),
+  pending_openers as (
+    select mr.greeting as content, mr.created_at as created_at
+    from public.match_requests mr
+    where mr.to_user_id = p_user_id
+      and mr.greeting is not null and btrim(mr.greeting) <> ''
+  )
+  select content from (
+    select content, created_at from sent_openers where content is not null and btrim(content) <> ''
+    union all
+    select content, created_at from pending_openers
+  ) t
+  order by created_at desc
+  limit greatest(coalesce(p_limit, 20), 0);
+$$;
+
+revoke execute on function public.rpc_recent_dh_openers_for_user(uuid, integer) from public;
+grant execute on function public.rpc_recent_dh_openers_for_user(uuid, integer) to service_role;
