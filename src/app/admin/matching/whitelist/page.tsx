@@ -439,7 +439,6 @@ export default function MatchingWhitelistPage() {
   const [rows, setRows] = React.useState<Row[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [removingId, setRemovingId] = React.useState<string | null>(null);
-  const [syncing, setSyncing] = React.useState(false);
   const [gender, setGender] = React.useState<Gender>('Female');
   // existingIds spans BOTH genders so the search can't re-offer an already-whitelisted DH.
   const existingIds = React.useMemo(() => new Set(rows.map((r) => r.userid)), [rows]);
@@ -485,30 +484,6 @@ export default function MatchingWhitelistPage() {
     }
   };
 
-  const syncSuggested = async () => {
-    if (
-      !window.confirm(
-        `Apply the suggested whitelist changes for ${gender} DHs? This promotes proven candidates and demotes underperformers based on real-user swipe rates.`
-      )
-    )
-      return;
-    setSyncing(true);
-    try {
-      const { promoted, demoted } = await runSync(gender);
-      if (promoted === 0 && demoted === 0) {
-        toast.info('No changes — the whitelist already matches the suggestions.');
-      } else {
-        toast.success(`Synced — promoted ${promoted}, demoted ${demoted}`);
-      }
-      await load();
-    } catch (err) {
-      console.error(err);
-      toast.error(err instanceof Error ? err.message : 'Sync failed');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
       <div>
@@ -542,10 +517,6 @@ export default function MatchingWhitelistPage() {
           </div>
           <div className="flex items-center gap-2">
             <PerformanceReviewDialog onApplied={load} pageGender={gender} />
-            <Button variant="outline" className="gap-2" onClick={syncSuggested} disabled={syncing}>
-              {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Sync suggested
-            </Button>
             <AddToWhitelistDialog existingIds={existingIds} onAdded={load} />
           </div>
         </div>
