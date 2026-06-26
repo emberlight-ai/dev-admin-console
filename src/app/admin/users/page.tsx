@@ -205,6 +205,7 @@ export default function ManageUsers() {
   const [subscriptionsLoading, setSubscriptionsLoading] = React.useState(true)
   const [matchCounts, setMatchCounts] = React.useState<Record<string, number>>({})
   const [messageCounts, setMessageCounts] = React.useState<Record<string, number>>({})
+  const [imageCounts, setImageCounts] = React.useState<Record<string, number>>({})
 
   const range = React.useMemo<DateRange>(() => {
     if (dateMode === "range" && customRange?.from) {
@@ -317,6 +318,22 @@ export default function ManageUsers() {
   React.useEffect(() => {
     void fetchMessageCounts()
   }, [fetchMessageCounts])
+
+  const fetchImageCounts = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/users/image-counts')
+      const json = (await res.json()) as { data?: Record<string, number>; error?: string }
+      if (!res.ok) throw new Error(json.error || 'Failed to fetch image counts')
+      setImageCounts(json.data ?? {})
+    } catch (err: unknown) {
+      console.error(err)
+      setImageCounts({})
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void fetchImageCounts()
+  }, [fetchImageCounts])
 
   const fetchDeletedUsers = React.useCallback(async () => {
     setDeletedLoading(true)
@@ -524,7 +541,7 @@ export default function ManageUsers() {
         </div>
         <div className="border-t">
           {loading ? (
-            <TableSkeleton columns={9} />
+            <TableSkeleton columns={10} />
           ) : users.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -546,6 +563,7 @@ export default function ManageUsers() {
                   <TableHead>Location</TableHead>
                   <TableHead>Matches</TableHead>
                   <TableHead>Messages</TableHead>
+                  <TableHead>Images</TableHead>
                   <TableHead>Joined</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -572,6 +590,7 @@ export default function ManageUsers() {
                     <TableCell className="text-muted-foreground">{u.location_name || u.zipcode || "—"}</TableCell>
                     <TableCell className="text-muted-foreground tabular-nums">{matchCounts[u.userid] ?? 0}</TableCell>
                     <TableCell className="text-muted-foreground tabular-nums">{messageCounts[u.userid] ?? 0}</TableCell>
+                    <TableCell className="text-muted-foreground tabular-nums">{imageCounts[u.userid] ?? 0}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(u.created_at).toLocaleDateString()}
                     </TableCell>

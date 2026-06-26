@@ -506,3 +506,30 @@ $$;
 
 revoke execute on function public.rpc_admin_user_message_counts() from public;
 grant execute on function public.rpc_admin_user_message_counts() to service_role;
+
+-- Admin-only: images exchanged between each real user and digital humans, for the
+-- /admin/users dashboard. Counts media messages (media_url not null) in matches
+-- where exactly one participant is a DH, grouped by the real (non-DH) user — i.e.
+-- both DH→user selfies and user→DH photos in their conversations. security definer
+-- + revoke-from-public so only the service role (admin API) can call it.
+create or replace function public.rpc_admin_user_dh_image_counts()
+returns table (user_id uuid, image_count bigint)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    case when coalesce(ua.is_digital_human, false) then um.user_b else um.user_a end as user_id,
+    count(*)::bigint as image_count
+  from public.messages m
+  join public.user_matches um on um.id = m.match_id
+  join public.users ua on ua.userid = um.user_a
+  join public.users ub on ub.userid = um.user_b
+  where m.media_url is not null
+    and (coalesce(ua.is_digital_human, false) <> coalesce(ub.is_digital_human, false))
+  group by 1;
+$$;
+
+revoke execute on function public.rpc_admin_user_dh_image_counts() from public;
+grant execute on function public.rpc_admin_user_dh_image_counts() to service_role;
