@@ -3,6 +3,7 @@
 import * as React from "react"
 import { toast } from "sonner"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -10,7 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CheckCircle2 } from "lucide-react"
+import { CheckCircle2, ChevronRight } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -145,6 +146,7 @@ const CONFIG_DESCRIPTIONS: Record<string, string> = {
 }
 
 export default function SystemPromptsPage() {
+  const router = useRouter()
   const [genderFilter, setGenderFilter] = React.useState<Gender>("Female")
   const [loading, setLoading] = React.useState(true)
   const [keys, setKeys] = React.useState<KeyRow[]>([])
@@ -230,7 +232,7 @@ export default function SystemPromptsPage() {
                 <TableHead>Immediate Match</TableHead>
                 <TableHead>Follow-up</TableHead>
                 <TableHead>Greeting</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="w-10" aria-label="Open" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -248,7 +250,15 @@ export default function SystemPromptsPage() {
                 </TableRow>
               ) : (
                 keys.map((k) => (
-                  <TableRow key={`${k.gender}::${k.personality}`} className="hover:bg-muted/20">
+                  <TableRow
+                    key={`${k.gender}::${k.personality}`}
+                    className="cursor-pointer hover:bg-muted/30"
+                    onClick={() =>
+                      router.push(
+                        `/admin/system-prompts/manage?gender=${encodeURIComponent(k.gender)}&personality=${encodeURIComponent(k.personality)}`
+                      )
+                    }
+                  >
                     <TableCell>{k.gender}</TableCell>
                     <TableCell className="font-medium">{k.personality}</TableCell>
                     <TableCell>
@@ -292,13 +302,7 @@ export default function SystemPromptsPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Link
-                        href={`/admin/system-prompts/manage?gender=${encodeURIComponent(k.gender)}&personality=${encodeURIComponent(k.personality)}`}
-                      >
-                        <Button variant="outline" size="sm">
-                          Edit
-                        </Button>
-                      </Link>
+                      <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground" />
                     </TableCell>
                   </TableRow>
                 ))

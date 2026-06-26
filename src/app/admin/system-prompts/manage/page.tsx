@@ -21,6 +21,7 @@ function ManagePromptPageContent() {
 
   return (
     <SystemPromptForm
+      key={`${editGender}::${editPersonality}`}
       initialGender={editGender ?? "Female"}
       initialPersonality={editPersonality ?? ""}
       disableKeyEdit

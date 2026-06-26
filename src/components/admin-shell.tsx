@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import {
   BookOpen,
   Bot,
+  ChevronLeft,
   LogOut,
   ScrollText,
   Menu,
@@ -24,6 +25,7 @@ import { ThemeColorPicker, useThemeColor } from "@/components/theme-color"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { logout } from "@/actions/auth"
 import GlareHover from "@/components/glare-hover"
+import { PersonalityNav } from "@/components/personality-nav"
 
 const navGroups = [
   {
@@ -117,6 +119,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const { changeNonce } = useThemeColor()
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false)
+  const showPersonalities = pathname.startsWith("/admin/system-prompts/manage")
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -141,20 +144,45 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </GlareHover>
         <Separator />
 
-        <nav className="flex-1 overflow-y-auto p-3 space-y-5">
-          {navGroups.map((group) => (
-            <div key={group.title}>
-              <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
-                {group.title}
-              </div>
-              <div className="mt-2 space-y-1">
-                {group.items.map((item) => (
-                  <NavItem key={item.href} item={item} pathname={pathname} />
-                ))}
+        {/* Drill-in: the main nav slides out and the personality list slides in. */}
+        <div className="relative flex-1 overflow-hidden">
+          <div
+            className="flex h-full w-[200%] transition-transform duration-300 ease-out"
+            style={{ transform: showPersonalities ? "translateX(-50%)" : "translateX(0)" }}
+          >
+            <nav className="w-1/2 shrink-0 space-y-5 overflow-y-auto p-3">
+              {navGroups.map((group) => (
+                <div key={group.title}>
+                  <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
+                    {group.title}
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    {group.items.map((item) => (
+                      <NavItem key={item.href} item={item} pathname={pathname} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </nav>
+
+            <div className="w-1/2 shrink-0 overflow-y-auto p-3">
+              <Link
+                href="/admin/system-prompts"
+                className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                System Prompts
+              </Link>
+              <div className="mt-3">
+                {showPersonalities ? (
+                  <React.Suspense fallback={null}>
+                    <PersonalityNav />
+                  </React.Suspense>
+                ) : null}
               </div>
             </div>
-          ))}
-        </nav>
+          </div>
+        </div>
 
         <div className="p-3 bg-sidebar space-y-4">
           <div>
@@ -196,23 +224,41 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                     <span className="font-semibold tracking-wide text-lg">Matrix OS</span>
                   </div>
                   <nav className="flex-1 overflow-y-auto p-3 space-y-5">
-                    {navGroups.map((group) => (
-                      <div key={group.title}>
-                        <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
-                          {group.title}
-                        </div>
-                        <div className="mt-2 space-y-1">
-                          {group.items.map((item) => (
-                            <NavItem
-                              key={item.href}
-                              item={item}
-                              pathname={pathname}
-                              onClick={() => setMobileNavOpen(false)}
-                            />
-                          ))}
+                    {showPersonalities ? (
+                      <div>
+                        <Link
+                          href="/admin/system-prompts"
+                          onClick={() => setMobileNavOpen(false)}
+                          className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          System Prompts
+                        </Link>
+                        <div className="mt-3">
+                          <React.Suspense fallback={null}>
+                            <PersonalityNav onNavigate={() => setMobileNavOpen(false)} />
+                          </React.Suspense>
                         </div>
                       </div>
-                    ))}
+                    ) : (
+                      navGroups.map((group) => (
+                        <div key={group.title}>
+                          <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
+                            {group.title}
+                          </div>
+                          <div className="mt-2 space-y-1">
+                            {group.items.map((item) => (
+                              <NavItem
+                                key={item.href}
+                                item={item}
+                                pathname={pathname}
+                                onClick={() => setMobileNavOpen(false)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </nav>
 
                   <div className="p-3 border-t space-y-4">

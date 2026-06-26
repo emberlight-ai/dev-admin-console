@@ -3,17 +3,16 @@
 import * as React from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { CheckCircle2, ChevronLeft, FileText, Settings, XCircle } from "lucide-react"
 import {
-  Background,
-  Controls,
-  Handle,
-  Position,
-  ReactFlow,
-  type Node,
-  type NodeTypes,
-  type NodeProps,
-} from "@xyflow/react"
+  ChevronLeft,
+  ChevronRight,
+  FlaskConical,
+  Hand,
+  MessageSquare,
+  Pencil,
+  Repeat,
+  Users,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -27,6 +26,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import { cn } from "@/lib/utils"
 
 import { composeSystemPromptFromTemplate } from "@/lib/botProfile"
 import { ChatPanel } from "./chat-panel"
@@ -54,53 +61,11 @@ export type SystemPromptLatest = {
   skip_reply_max_consecutive: number
 }
 
-type WorkflowNodeData = Record<string, unknown> & {
-  title: string
-  description?: string
-  children: React.ReactNode
-  onOpenSettings?: () => void
-}
-type WorkflowGraphNode = Node<WorkflowNodeData>
+type StageId = "matching" | "greeting" | "reply" | "followup"
 type PendingNavigation =
   | { type: "back" }
   | { type: "cancel" }
   | { type: "href"; href: string }
-
-function WorkflowNode({ data }: NodeProps<WorkflowGraphNode>) {
-  const onSettings = data.onOpenSettings
-  return (
-    <Card className="w-[320px] p-4 shadow-sm">
-      <Handle type="target" position={Position.Left} />
-      <div className="space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold">{data.title}</div>
-            {data.description ? (
-              <div className="text-xs text-muted-foreground">{data.description}</div>
-            ) : null}
-          </div>
-          {onSettings ? (
-            <button
-              type="button"
-              className="nodrag inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background p-0 leading-none hover:bg-muted"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation()
-                onSettings()
-              }}
-              aria-label="Open settings"
-              title="Edit"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-          ) : null}
-        </div>
-        <div>{data.children}</div>
-      </div>
-      <Handle type="source" position={Position.Right} />
-    </Card>
-  )
-}
 
 export function SystemPromptForm({
   initialGender,
@@ -170,12 +135,16 @@ export function SystemPromptForm({
 
   const [initialSnapshot, setInitialSnapshot] = React.useState<PromptSnapshot | null>(null)
 
-  const [settingsOpen, setSettingsOpen] = React.useState(false)
-  const [settingsNodeId, setSettingsNodeId] = React.useState<
-    "identity" | "matching" | "greeting" | "reply" | "followup" | null
-  >(null)
+  const [activeStage, setActiveStage] = React.useState<StageId>("reply")
+  const [testOpen, setTestOpen] = React.useState(false)
   const [pendingNavigation, setPendingNavigation] = React.useState<PendingNavigation | null>(null)
   const allowNavigationRef = React.useRef(false)
+
+  // Identity / rename dialog state.
+  const [identityOpen, setIdentityOpen] = React.useState(false)
+  const [renameValue, setRenameValue] = React.useState("")
+  const [renaming, setRenaming] = React.useState(false)
+  const [existingNames, setExistingNames] = React.useState<Set<string>>(new Set())
 
   const currentSnapshot = React.useCallback(
     (): PromptSnapshot => ({
@@ -220,14 +189,6 @@ export function SystemPromptForm({
       skipDropDelta,
       skipMaxConsecutive,
     ]
-  )
-
-  const openSettings = React.useCallback(
-    (id: "identity" | "matching" | "greeting" | "reply" | "followup") => {
-      setSettingsNodeId(id)
-      setSettingsOpen(true)
-    },
-    []
   )
 
   React.useEffect(() => {
@@ -400,27 +361,33 @@ export function SystemPromptForm({
     }
     if (!p) {
       toast.error("Personality is required")
+      setIdentityOpen(true)
       return false
     }
     if (!sp.trim()) {
       toast.error("System prompt is required")
+      setActiveStage("reply")
       return false
     }
     if (!PLACEHOLDER_RE.test(sp)) {
       toast.error("Prompt must include: <bot_profile> BOT_PROFILE_DETAILS </bot_profile>")
+      setActiveStage("reply")
       return false
     }
     if (age && !agp.trim()) {
       toast.error("Greeting prompt is required when active greeting is enabled")
+      setActiveStage("greeting")
       return false
     }
     if (fued) {
       if (!fup.trim()) {
         toast.error("Follow-up prompt is required when enabled")
+        setActiveStage("followup")
         return false
       }
       if (isNaN(fud) || fud <= 0) {
         toast.error("Follow-up delay must be positive")
+        setActiveStage("followup")
         return false
       }
     }
@@ -471,16 +438,6 @@ export function SystemPromptForm({
     }
   }
 
-  const closeSettingsAfterSave = async () => {
-    if (saving) return
-    if (isDirty) {
-      const saved = await save({ navigateAfterSave: false })
-      if (!saved) return
-    }
-    setSettingsOpen(false)
-    setSettingsNodeId(null)
-  }
-
   const saveAndContinueNavigation = async () => {
     if (!pendingNavigation) return
     const navigation = pendingNavigation
@@ -497,613 +454,573 @@ export function SystemPromptForm({
     performNavigation(navigation)
   }
 
-  const nodeTypes = React.useMemo<NodeTypes>(() => {
-    return { workflow: WorkflowNode }
-  }, [])
+  // Identity / rename. In edit mode this renames the personality everywhere it's
+  // used (prompt versions, live digital humans, config overrides). In create mode
+  // it simply edits the gender + personality keys locally before the first save.
+  const openIdentity = React.useCallback(() => {
+    setRenameValue(personality)
+    setIdentityOpen(true)
+    if (!isEdit) return
+    const g = gender.trim()
+    if (!g) return
+    fetch(`/api/system-prompts/personalities?gender=${encodeURIComponent(g)}`)
+      .then((r) => r.json())
+      .then((j) => {
+        const names = Array.isArray(j.data) ? (j.data as string[]) : []
+        setExistingNames(new Set(names.map((n) => n.trim().toLowerCase())))
+      })
+      .catch(() => setExistingNames(new Set()))
+  }, [gender, isEdit, personality])
 
-  const nodes = React.useMemo<WorkflowGraphNode[]>(() => {
-    const systemPromptPreview = systemPrompt.trim()
-      ? systemPrompt.trim().split(/\r?\n/).slice(0, 3).join("\n")
-      : "—"
-    const greetingPreview = activeGreetingPrompt.trim()
-      ? activeGreetingPrompt.trim().split(/\r?\n/).slice(0, 2).join("\n")
-      : "—"
-    const followUpPreview = followUpPrompt.trim()
-      ? followUpPrompt.trim().split(/\r?\n/).slice(0, 2).join("\n")
-      : "—"
+  const renameTrimmed = renameValue.trim()
+  const renameUnchanged = renameTrimmed.toLowerCase() === personality.trim().toLowerCase()
+  const renameTaken = !renameUnchanged && existingNames.has(renameTrimmed.toLowerCase())
+  const renameValid = renameTrimmed.length > 0 && !renameUnchanged && !renameTaken
 
-    const StatusIcon = ({ ok }: { ok: boolean }) =>
-      ok ? (
-        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-      ) : (
-        <XCircle className="h-4 w-4 text-muted-foreground" />
+  const submitRename = async () => {
+    if (!renameValid || renaming) return
+    setRenaming(true)
+    try {
+      const res = await fetch("/api/system-prompts/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gender,
+          old_personality: personality,
+          new_personality: renameTrimmed,
+        }),
+      })
+      const json = (await res.json()) as {
+        data?: { digital_humans_updated?: number; config_overrides_updated?: number; prompts_updated?: number }
+        error?: string
+      }
+      if (!res.ok) throw new Error(json.error || "Failed to rename")
+
+      const d = json.data ?? {}
+      const oldName = personality
+      setPersonality(renameTrimmed)
+      setInitialSnapshot((prev) => (prev ? { ...prev, personality: renameTrimmed } : prev))
+      // Update the URL in place (no router navigation) so the editor keeps its
+      // state and any unsaved edits, then tell the secondary sidebar to refresh.
+      window.history.replaceState(
+        null,
+        "",
+        `/admin/system-prompts/manage?gender=${encodeURIComponent(gender)}&personality=${encodeURIComponent(renameTrimmed)}`
       )
+      window.dispatchEvent(
+        new CustomEvent("personality-renamed", {
+          detail: { gender, oldName, newName: renameTrimmed },
+        })
+      )
+      setIdentityOpen(false)
 
-    const PromptPreview = ({ text }: { text: string }) => (
-      <div className="rounded-md border bg-muted/20 p-2 text-xs whitespace-pre-wrap">
-        <div className="mb-1 flex items-center gap-2 text-muted-foreground">
-          <FileText className="h-3.5 w-3.5" />
-          <span className="font-medium">Preview</span>
-        </div>
-        {text || "—"}
-      </div>
-    )
+      const extras: string[] = []
+      const dh = d.digital_humans_updated ?? 0
+      const cfg = d.config_overrides_updated ?? 0
+      if (dh) extras.push(`${dh} digital human${dh === 1 ? "" : "s"}`)
+      if (cfg) extras.push(`${cfg} override${cfg === 1 ? "" : "s"}`)
+      toast.success(
+        `Renamed to "${renameTrimmed}"${extras.length ? ` · also updated ${extras.join(" and ")}` : ""}`
+      )
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to rename")
+    } finally {
+      setRenaming(false)
+    }
+  }
 
-    return [
-      {
-        id: "matching",
-        type: "workflow",
-        position: { x: 40, y: 170 },
-        data: {
-          title: "1) Matching",
-          description: "Control whether this personality appears in the feed and whether matches are instant.",
-          onOpenSettings: () => openSettings("matching"),
-          children: (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">Matching Enabled</div>
-                  <div className="text-xs text-muted-foreground">Appears in swipe feed</div>
-                </div>
-                <StatusIcon ok={matchingEnabled} />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">Immediate Match</div>
-                  <div className="text-xs text-muted-foreground">No request, auto match</div>
-                </div>
-                <StatusIcon ok={immediateMatchEnabled} />
-              </div>
-            </div>
-          ),
-        },
-      },
-      {
-        id: "greeting",
-        type: "workflow",
-        position: { x: 420, y: 170 },
-        data: {
-          title: "2) Greeting",
-          description: "Optional first message sent automatically when enabled.",
-          onOpenSettings: () => openSettings("greeting"),
-          children: (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">Active Greeting</div>
-                  <div className="text-xs text-muted-foreground">Send first message on match</div>
-                </div>
-                <StatusIcon ok={activeGreetingEnabled} />
-              </div>
-
-              <PromptPreview text={greetingPreview} />
-            </div>
-          ),
-        },
-      },
-      {
-        id: "reply",
-        type: "workflow",
-        position: { x: 800, y: 170 },
-        data: {
-          title: "3) Reply",
-          description: "Core response behavior: prompt, send pacing, and silence.",
-          onOpenSettings: () => openSettings("reply"),
-          children: (
-            <div className="space-y-3">
-              <PromptPreview text={systemPromptPreview} />
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-md border bg-muted/20 p-2">
-                  <div className="text-xs text-muted-foreground">Send delay</div>
-                  <div className="text-sm font-semibold tabular-nums">
-                    {replyMinDelay}–{replyMaxDelay}s
-                  </div>
-                </div>
-                <div className="rounded-md border bg-muted/20 p-2">
-                  <div className="text-xs text-muted-foreground">Silence</div>
-                  <div className="text-sm font-semibold tabular-nums">
-                    {skipReplyEnabled
-                      ? `${Math.round(skipBaseChance * 100)}% · ${Math.round(skipDropChance * 100)}% cold`
-                      : "Off"}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ),
-        },
-      },
-      {
-        id: "followup",
-        type: "workflow",
-        position: { x: 1180, y: 170 },
-        data: {
-          title: "4) Follow Up Reply",
-          description: "Automated follow-ups when the user doesn’t respond.",
-          onOpenSettings: () => openSettings("followup"),
-          children: (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">Enable Follow-ups</div>
-                  <div className="text-xs text-muted-foreground">Schedule extra nudges</div>
-                </div>
-                <StatusIcon ok={followUpEnabled} />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-md border bg-muted/20 p-2">
-                  <div className="text-xs text-muted-foreground">Wait (sec)</div>
-                  <div className="text-sm font-semibold tabular-nums">{followUpDelay}</div>
-                </div>
-                <div className="rounded-md border bg-muted/20 p-2">
-                  <div className="text-xs text-muted-foreground">Max</div>
-                  <div className="text-sm font-semibold tabular-nums">{maxFollowUps}</div>
-                </div>
-              </div>
-
-              <PromptPreview text={followUpPreview} />
-            </div>
-          ),
-        },
-      },
-    ]
-  }, [
-    activeGreetingEnabled,
-    activeGreetingPrompt,
-    followUpDelay,
-    followUpEnabled,
-    followUpPrompt,
-    openSettings,
-    immediateMatchEnabled,
-    matchingEnabled,
-    maxFollowUps,
-    systemPrompt,
-    replyMinDelay,
-    replyMaxDelay,
-    skipReplyEnabled,
-    skipBaseChance,
-    skipDropChance,
-  ])
-
-  const edges = React.useMemo(() => {
-    return [
-      { id: "e1", source: "matching", target: "greeting", animated: true },
-      { id: "e2", source: "greeting", target: "reply", animated: true },
-      { id: "e3", source: "reply", target: "followup", animated: true },
-    ]
-  }, [])
+  const stages: { id: StageId; label: string; icon: React.ComponentType<{ className?: string }>; on: boolean; summary: string }[] = [
+    {
+      id: "matching",
+      label: "Matching",
+      icon: Users,
+      on: matchingEnabled,
+      summary: matchingEnabled
+        ? immediateMatchEnabled
+          ? "In feed · instant"
+          : "In feed · manual"
+        : "Hidden from feed",
+    },
+    {
+      id: "greeting",
+      label: "Greeting",
+      icon: Hand,
+      on: activeGreetingEnabled,
+      summary: activeGreetingEnabled ? "Sends first message" : "No auto greeting",
+    },
+    {
+      id: "reply",
+      label: "Reply",
+      icon: MessageSquare,
+      on: true,
+      summary: `${replyMinDelay}–${replyMaxDelay}s · ${Math.round(replyCharsPerSecond * 12)} wpm${skipReplyEnabled ? " · silence on" : ""}`,
+    },
+    {
+      id: "followup",
+      label: "Follow-up",
+      icon: Repeat,
+      on: followUpEnabled,
+      summary: followUpEnabled ? `Wait ${followUpDelay}s · max ${maxFollowUps}` : "Off",
+    },
+  ]
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
+
+  const actions = (
+    <>
+      <Button variant="outline" className="gap-2" onClick={() => setTestOpen(true)} disabled={saving}>
+        <FlaskConical className="h-4 w-4" />
+        Test &amp; tune
+      </Button>
+      <Button onClick={() => void save()} disabled={saving || loading || !isDirty}>
+        {saving ? "Saving..." : "Save changes"}
+      </Button>
+    </>
+  )
 
   return (
     <div className={variant === "page" ? "space-y-6 w-full pb-20" : "space-y-6"}>
       {variant === "page" ? (
         <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 min-w-0">
             <Button variant="ghost" size="icon" onClick={() => requestNavigation({ type: "back" })}>
               <ChevronLeft className="w-5 h-5" />
             </Button>
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight">
-                {isEdit ? `Edit Prompt: ${gender} - ${personality}` : "Create Prompt"}
-              </h1>
-              <p className="text-sm text-muted-foreground">Define how the digital human behaves and automated responses.</p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-semibold tracking-tight truncate">
+                  {personality || "New personality"}
+                </h1>
+                <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  {gender}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={openIdentity}
+                  disabled={saving}
+                  title={isEdit ? "Rename personality" : "Edit identity"}
+                  aria-label={isEdit ? "Rename personality" : "Edit identity"}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Define how this digital human behaves and responds.
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 pt-1">
+          <div className="flex items-center gap-3 pt-1 shrink-0">{actions}</div>
+        </div>
+      ) : null}
+
+      {/* Glanceable pipeline that doubles as the section tabs. */}
+      <div className="flex items-stretch gap-1">
+        {stages.map((s, i) => {
+          const Icon = s.icon
+          const active = activeStage === s.id
+          return (
+            <React.Fragment key={s.id}>
+              <button
+                type="button"
+                onClick={() => setActiveStage(s.id)}
+                aria-current={active}
+                className={cn(
+                  "flex-1 rounded-xl border p-3 text-left transition-colors",
+                  active
+                    ? "border-primary bg-primary/5 ring-1 ring-primary"
+                    : "hover:bg-muted/40"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <Icon className={cn("h-4 w-4", active ? "text-primary" : "text-muted-foreground")} />
+                  <span className={cn("text-sm font-medium", active && "text-primary")}>{s.label}</span>
+                </div>
+                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span
+                    className={cn(
+                      "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+                      s.on ? "bg-emerald-500" : "bg-muted-foreground/40"
+                    )}
+                  />
+                  <span className="truncate">{s.summary}</span>
+                </div>
+              </button>
+              {i < stages.length - 1 ? (
+                <div className="flex items-center px-0.5 text-muted-foreground/40">
+                  <ChevronRight className="h-4 w-4" />
+                </div>
+              ) : null}
+            </React.Fragment>
+          )
+        })}
+      </div>
+
+      {/* Inline editor for the selected stage. */}
+      <Card className="p-5 md:p-6">
+        {activeStage === "matching" ? (
+          <div className="space-y-4">
+            <StageHeading
+              title="Matching"
+              description="Whether this personality appears in the feed and whether matches are instant."
+            />
+            <ToggleRow
+              title="Matching enabled"
+              description="Appears in the swipe feed"
+              checked={matchingEnabled}
+              onChange={setMatchingEnabled}
+            />
+            <ToggleRow
+              title="Immediate match"
+              description="Skip the request — match instantly"
+              checked={immediateMatchEnabled}
+              onChange={setImmediateMatchEnabled}
+            />
+          </div>
+        ) : null}
+
+        {activeStage === "greeting" ? (
+          <div className="space-y-4">
+            <StageHeading
+              title="Greeting"
+              description="An optional first message sent automatically when a match is created."
+            />
+            <ToggleRow
+              title="Active greeting"
+              description="Send the first message on match"
+              checked={activeGreetingEnabled}
+              onChange={setActiveGreetingEnabled}
+            />
+            <div className="space-y-2">
+              <Label>Greeting prompt</Label>
+              <Textarea
+                rows={10}
+                value={activeGreetingPrompt}
+                onChange={(e) => setActiveGreetingPrompt(e.target.value)}
+                placeholder="e.g. When a match is created, send a warm, casual first message to break the ice."
+                disabled={!activeGreetingEnabled}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {activeStage === "reply" ? (
+          <div className="space-y-5">
+            <StageHeading
+              title="Reply"
+              description="Core response behavior: the prompt, send pacing, and human-like silence."
+            />
+            <div className="space-y-2">
+              <Label>System prompt template</Label>
+              <Textarea
+                rows={variant === "dialog" ? 12 : 16}
+                className="font-mono text-sm"
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                placeholder={`Include:\n<bot_profile>\nBOT_PROFILE_DETAILS\n</bot_profile>`}
+              />
+              <div className="text-xs text-muted-foreground">
+                Required placeholder: <code className="rounded bg-muted px-1 py-0.5">BOT_PROFILE_DETAILS</code>
+              </div>
+            </div>
+
+            {/* Reply timing — how long a reply "takes" to send, scaled by length. */}
+            <div className="space-y-3 rounded-lg border p-4">
+              <div>
+                <div className="text-sm font-medium">Reply timing</div>
+                <div className="text-xs text-muted-foreground">
+                  Longer replies send slower. Time spent generating counts toward the delay; the floor keeps it from
+                  ever sending instantly.
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Min delay (seconds)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={60}
+                    value={replyMinDelay}
+                    onChange={(e) => setReplyMinDelay(Number(e.target.value))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Max delay (seconds)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={60}
+                    value={replyMaxDelay}
+                    onChange={(e) => setReplyMaxDelay(Number(e.target.value))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Typing speed (chars/sec)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={replyCharsPerSecond}
+                    onChange={(e) => setReplyCharsPerSecond(Number(e.target.value))}
+                  />
+                  <div className="text-xs text-muted-foreground">
+                    Lower = slower for long replies. ≈ {Math.round(replyCharsPerSecond * 12)} wpm.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Human-like silence — sometimes don't reply at all. */}
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Human-like silence</div>
+                  <div className="text-xs text-muted-foreground">
+                    Real people don&apos;t answer every text, and go quiet when you say something off-putting. When
+                    on, the digital human sometimes stays silent — more often when the user&apos;s message dropped
+                    the intimacy score.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-gray-300 accent-primary"
+                  checked={skipReplyEnabled}
+                  onChange={(e) => setSkipReplyEnabled(e.target.checked)}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Base skip chance (%)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={Math.round(skipBaseChance * 100)}
+                    onChange={(e) => setSkipBaseChance(Math.max(0, Math.min(100, Number(e.target.value))) / 100)}
+                    disabled={!skipReplyEnabled}
+                  />
+                  <div className="text-xs text-muted-foreground">Chance of staying silent on any message.</div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Skip chance on intimacy drop (%)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={Math.round(skipDropChance * 100)}
+                    onChange={(e) => setSkipDropChance(Math.max(0, Math.min(100, Number(e.target.value))) / 100)}
+                    disabled={!skipReplyEnabled}
+                  />
+                  <div className="text-xs text-muted-foreground">Used when the user cooled things off.</div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Intimacy drop threshold (points)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={skipDropDelta}
+                    onChange={(e) => setSkipDropDelta(Number(e.target.value))}
+                    disabled={!skipReplyEnabled}
+                  />
+                  <div className="text-xs text-muted-foreground">How big a drop counts as &quot;said something wrong&quot;.</div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Max skips in a row</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={skipMaxConsecutive}
+                    onChange={(e) => setSkipMaxConsecutive(Number(e.target.value))}
+                    disabled={!skipReplyEnabled}
+                  />
+                  <div className="text-xs text-muted-foreground">
+                    Always replies once the user double-texts past this, so chats never die. The opener always gets a
+                    reply.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {activeStage === "followup" ? (
+          <div className="space-y-4">
+            <StageHeading
+              title="Follow-up"
+              description="Automated nudges when the user doesn’t respond."
+            />
+            <ToggleRow
+              title="Enable follow-ups"
+              description="Schedule extra nudges"
+              checked={followUpEnabled}
+              onChange={setFollowUpEnabled}
+            />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Wait time (seconds)</Label>
+                <Input
+                  type="number"
+                  min={60}
+                  value={followUpDelay}
+                  onChange={(e) => setFollowUpDelay(Number(e.target.value))}
+                  disabled={!followUpEnabled}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Max follow-ups</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={maxFollowUps}
+                  onChange={(e) => setMaxFollowUps(Number(e.target.value))}
+                  disabled={!followUpEnabled}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Follow-up instruction prompt</Label>
+              <Textarea
+                rows={10}
+                value={followUpPrompt}
+                onChange={(e) => setFollowUpPrompt(e.target.value)}
+                placeholder="e.g. The user hasn't replied. Send a playful message to get their attention."
+                disabled={!followUpEnabled}
+              />
+            </div>
+          </div>
+        ) : null}
+      </Card>
+
+      {variant !== "page" ? (
+        <div className="flex items-center justify-between gap-3 pt-2">
+          <Button variant="outline" className="gap-2" onClick={() => setTestOpen(true)} disabled={saving}>
+            <FlaskConical className="h-4 w-4" />
+            Test &amp; tune
+          </Button>
+          <div className="flex items-center gap-3">
             <Button
               variant="outline"
-              className="gap-2"
-              onClick={() => openSettings("identity")}
-              disabled={saving}
-            >
-              <Settings className="h-4 w-4" />
-              Identity
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                requestNavigation({ type: "cancel" })
-              }}
+              onClick={() => requestNavigation({ type: "cancel" })}
               disabled={saving}
             >
               Cancel
             </Button>
             <Button onClick={() => void save()} disabled={saving || loading || !isDirty}>
-              {saving ? "Saving..." : "Save Changes"}
+              {saving ? "Saving..." : "Save changes"}
             </Button>
           </div>
         </div>
       ) : null}
 
-      <div className="flex flex-col xl:flex-row gap-6">
-        <Card className="p-0 overflow-hidden flex-1">
-          <div className="p-4 border-b">
-            <div className="text-sm font-medium">Behavior Workflow</div>
-            <div className="text-xs text-muted-foreground">Matching → Greeting → Reply → Follow Up</div>
+      {/* Test & tune — slides in from the right, called from the button next to Save. */}
+      <Sheet open={testOpen} onOpenChange={setTestOpen}>
+        <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-xl">
+          <SheetHeader className="border-b">
+            <SheetTitle>Test &amp; tune</SheetTitle>
+            <SheetDescription>
+              Test the prompt with a random bot profile ({gender}
+              {personality ? ` · ${personality}` : ""}).
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-auto px-4 pb-6">
+            <ChatPanel
+              systemPrompt={testSystemPrompt}
+              activeGreetingEnabled={activeGreetingEnabled}
+              activeGreetingPrompt={activeGreetingPrompt}
+              followUpEnabled={followUpEnabled}
+              followUpPrompt={followUpPrompt}
+              followUpDelay={followUpDelay}
+              maxFollowUps={maxFollowUps}
+            />
           </div>
-          <div className="system-prompt-flow h-[520px] w-full">
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              fitView
-              nodesDraggable
-              nodesConnectable={false}
-              elementsSelectable
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background gap={18} size={1} />
-              <Controls />
-            </ReactFlow>
-          </div>
-        </Card>
+        </SheetContent>
+      </Sheet>
 
-        <Card className="p-4 w-full xl:w-[450px] shrink-0">
-          <div className="mb-4">
-            <div className="text-sm font-medium">Test & Tuning</div>
-            <div className="text-xs text-muted-foreground">
-              Test the prompt with a random bot profile (Gender: {gender}, Personality: {personality}).
-            </div>
-          </div>
-          <ChatPanel
-            systemPrompt={testSystemPrompt}
-            activeGreetingEnabled={activeGreetingEnabled}
-            activeGreetingPrompt={activeGreetingPrompt}
-            followUpEnabled={followUpEnabled}
-            followUpPrompt={followUpPrompt}
-            followUpDelay={followUpDelay}
-            maxFollowUps={maxFollowUps}
-          />
-        </Card>
-      </div>
-
-      {/* Make ReactFlow controls visible in dark mode (and consistent with shadcn theme). */}
-      <style jsx global>{`
-        .system-prompt-flow .react-flow__controls {
-          box-shadow: none;
-        }
-        .system-prompt-flow .react-flow__controls button {
-          background: hsl(var(--background));
-          border: 1px solid hsl(var(--border));
-          color: hsl(var(--foreground));
-        }
-        .system-prompt-flow .react-flow__controls button:hover {
-          background: hsl(var(--muted));
-        }
-        .system-prompt-flow .react-flow__controls button svg {
-          fill: currentColor;
-          stroke: currentColor;
-        }
-      `}</style>
-
-      {variant !== "page" ? (
-        <div className="flex items-center justify-end gap-3 pt-2">
-          <Button
-            variant="outline"
-            onClick={() => requestNavigation({ type: "cancel" })}
-            disabled={saving}
-          >
-            Cancel
-          </Button>
-          <Button onClick={() => void save()} disabled={saving || loading || !isDirty}>
-            {saving ? "Saving..." : "Save Changes"}
-          </Button>
-        </div>
-      ) : null}
-
-      <Dialog
-        open={settingsOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            setSettingsOpen(true)
-            return
-          }
-          void closeSettingsAfterSave()
-        }}
-      >
-        <DialogContent className="max-w-3xl p-0">
+      {/* Identity / rename personality. */}
+      <Dialog open={identityOpen} onOpenChange={(open) => !renaming && setIdentityOpen(open)}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <div className="p-6 pb-4">
-              <DialogTitle>
-                {settingsNodeId === "identity"
-                  ? "Core Identity"
-                  : settingsNodeId === "matching"
-                    ? "Matching Settings"
-                    : settingsNodeId === "greeting"
-                      ? "Greeting Settings"
-                      : settingsNodeId === "reply"
-                        ? "Reply Settings"
-                        : settingsNodeId === "followup"
-                          ? "Follow-up Settings"
-                          : "Settings"}
-              </DialogTitle>
-            </div>
+            <DialogTitle>{isEdit ? "Rename personality" : "Identity"}</DialogTitle>
           </DialogHeader>
 
-          <div className="max-h-[75vh] overflow-auto px-6 pb-6">
-            {settingsNodeId === "identity" ? (
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Gender</Label>
-                    <select
-                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                      value={gender}
-                      onChange={(e) => setGender(e.target.value)}
-                      disabled={disableKeyEdit}
-                    >
-                      <option value="Female">Female</option>
-                      <option value="Male">Male</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Personality</Label>
-                    <Input
-                      value={personality}
-                      onChange={(e) => setPersonality(e.target.value)}
-                      placeholder="e.g. calm_playboy"
-                      disabled={disableKeyEdit}
-                    />
-                  </div>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  These keys control which prompt template you are editing/creating.
-                </div>
-              </div>
-            ) : null}
-
-            {settingsNodeId === "matching" ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium">Matching Enabled</div>
-                    <div className="text-xs text-muted-foreground">Appears in the matching feed</div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-gray-300 accent-primary"
-                    checked={matchingEnabled}
-                    onChange={(e) => setMatchingEnabled(e.target.checked)}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium">Immediate Match</div>
-                    <div className="text-xs text-muted-foreground">Create match instantly</div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-gray-300 accent-primary"
-                    checked={immediateMatchEnabled}
-                    onChange={(e) => setImmediateMatchEnabled(e.target.checked)}
-                  />
+          {isEdit ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Renames every version of this prompt and reassigns the {gender.toLowerCase()} digital humans using
+                it. The name must be unique for {gender}.
+              </p>
+              <div className="space-y-2">
+                <Label>Personality name</Label>
+                <Input
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && renameValid) {
+                      e.preventDefault()
+                      void submitRename()
+                    }
+                  }}
+                  placeholder="e.g. calm_playboy"
+                  autoFocus
+                />
+                <div className="min-h-[1rem] text-xs">
+                  {renameTaken ? (
+                    <span className="text-destructive">Taken — another {gender} personality uses this name.</span>
+                  ) : renameTrimmed && !renameUnchanged ? (
+                    <span className="text-emerald-600">Available.</span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      Changing the join key — existing chats keep working under the new name.
+                    </span>
+                  )}
                 </div>
               </div>
-            ) : null}
-
-            {settingsNodeId === "greeting" ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium">Active Greeting</div>
-                    <div className="text-xs text-muted-foreground">Send first message on match</div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-gray-300 accent-primary"
-                    checked={activeGreetingEnabled}
-                    onChange={(e) => setActiveGreetingEnabled(e.target.checked)}
-                  />
+              <DialogFooter className="gap-2 sm:justify-end">
+                <Button variant="outline" onClick={() => setIdentityOpen(false)} disabled={renaming}>
+                  Cancel
+                </Button>
+                <Button onClick={() => void submitRename()} disabled={!renameValid || renaming}>
+                  {renaming ? "Renaming..." : "Rename"}
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Gender</Label>
+                  <select
+                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                    value={gender}
+                    onChange={(e) => setGender(e.target.value)}
+                  >
+                    <option value="Female">Female</option>
+                    <option value="Male">Male</option>
+                  </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Greeting Prompt</Label>
-                  <Textarea
-                    rows={10}
-                    className="max-h-[45vh] overflow-auto"
-                    value={activeGreetingPrompt}
-                    onChange={(e) => setActiveGreetingPrompt(e.target.value)}
-                    placeholder="e.g. When a match is created, send a warm, casual first message to break the ice."
-                    disabled={!activeGreetingEnabled}
+                  <Label>Personality</Label>
+                  <Input
+                    value={personality}
+                    onChange={(e) => setPersonality(e.target.value)}
+                    placeholder="e.g. calm_playboy"
                   />
                 </div>
               </div>
-            ) : null}
-
-            {settingsNodeId === "reply" ? (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>System Prompt Template</Label>
-                  <Textarea
-                    rows={variant === "dialog" ? 12 : 16}
-                    className="font-mono text-sm max-h-[45vh] overflow-auto"
-                    value={systemPrompt}
-                    onChange={(e) => setSystemPrompt(e.target.value)}
-                    placeholder={`Include:\n<bot_profile>\nBOT_PROFILE_DETAILS\n</bot_profile>`}
-                  />
-                  <div className="text-xs text-muted-foreground">
-                    Required placeholder: <code className="rounded bg-muted px-1 py-0.5">BOT_PROFILE_DETAILS</code>
-                  </div>
-                </div>
-
-                {/* Reply timing — how long a reply "takes" to send, scaled by length. */}
-                <div className="space-y-3 rounded-lg border p-4">
-                  <div>
-                    <div className="text-sm font-medium">Reply timing</div>
-                    <div className="text-xs text-muted-foreground">
-                      Longer replies send slower. Time spent generating counts toward the delay; the floor keeps it from
-                      ever sending instantly.
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                    <div className="space-y-2">
-                      <Label>Min delay (seconds)</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={60}
-                        value={replyMinDelay}
-                        onChange={(e) => setReplyMinDelay(Number(e.target.value))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Max delay (seconds)</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={60}
-                        value={replyMaxDelay}
-                        onChange={(e) => setReplyMaxDelay(Number(e.target.value))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Typing speed (chars/sec)</Label>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={100}
-                        value={replyCharsPerSecond}
-                        onChange={(e) => setReplyCharsPerSecond(Number(e.target.value))}
-                      />
-                      <div className="text-xs text-muted-foreground">Lower = slower for long replies.</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Human-like silence — sometimes don't reply at all. */}
-                <div className="space-y-3 rounded-lg border p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-medium">Human-like silence</div>
-                      <div className="text-xs text-muted-foreground">
-                        Real people don&apos;t answer every text, and go quiet when you say something off-putting. When
-                        on, the digital human sometimes stays silent — more often when the user&apos;s message dropped
-                        the intimacy score.
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-gray-300 accent-primary"
-                      checked={skipReplyEnabled}
-                      onChange={(e) => setSkipReplyEnabled(e.target.checked)}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Base skip chance (%)</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={Math.round(skipBaseChance * 100)}
-                        onChange={(e) => setSkipBaseChance(Math.max(0, Math.min(100, Number(e.target.value))) / 100)}
-                        disabled={!skipReplyEnabled}
-                      />
-                      <div className="text-xs text-muted-foreground">Chance of staying silent on any message.</div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Skip chance on intimacy drop (%)</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={Math.round(skipDropChance * 100)}
-                        onChange={(e) => setSkipDropChance(Math.max(0, Math.min(100, Number(e.target.value))) / 100)}
-                        disabled={!skipReplyEnabled}
-                      />
-                      <div className="text-xs text-muted-foreground">Used when the user cooled things off.</div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Intimacy drop threshold (points)</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={skipDropDelta}
-                        onChange={(e) => setSkipDropDelta(Number(e.target.value))}
-                        disabled={!skipReplyEnabled}
-                      />
-                      <div className="text-xs text-muted-foreground">How big a drop counts as &quot;said something wrong&quot;.</div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Max skips in a row</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={10}
-                        value={skipMaxConsecutive}
-                        onChange={(e) => setSkipMaxConsecutive(Number(e.target.value))}
-                        disabled={!skipReplyEnabled}
-                      />
-                      <div className="text-xs text-muted-foreground">
-                        Always replies once the user double-texts past this, so chats never die. The opener always gets a
-                        reply.
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {settingsNodeId === "followup" ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium">Enable Follow-ups</div>
-                    <div className="text-xs text-muted-foreground">Schedule extra nudges</div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-gray-300 accent-primary"
-                    checked={followUpEnabled}
-                    onChange={(e) => setFollowUpEnabled(e.target.checked)}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Wait Time (seconds)</Label>
-                    <Input
-                      type="number"
-                      min={60}
-                      value={followUpDelay}
-                      onChange={(e) => setFollowUpDelay(Number(e.target.value))}
-                      disabled={!followUpEnabled}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Max Follow-ups</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={maxFollowUps}
-                      onChange={(e) => setMaxFollowUps(Number(e.target.value))}
-                      disabled={!followUpEnabled}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Follow-up Instruction Prompt</Label>
-                  <Textarea
-                    rows={10}
-                    className="max-h-[45vh] overflow-auto"
-                    value={followUpPrompt}
-                    onChange={(e) => setFollowUpPrompt(e.target.value)}
-                    placeholder="e.g. The user hasn't replied. Send a playful message to get their attention."
-                    disabled={!followUpEnabled}
-                  />
-                </div>
-              </div>
-            ) : null}
-
-            <DialogFooter className="pt-6">
-              <Button onClick={() => void closeSettingsAfterSave()} disabled={saving}>
-                {saving ? "Saving..." : isDirty ? "Save & Done" : "Done"}
-              </Button>
-            </DialogFooter>
-          </div>
+              <p className="text-xs text-muted-foreground">
+                These keys control which prompt template you are creating.
+              </p>
+              <DialogFooter>
+                <Button onClick={() => setIdentityOpen(false)}>Done</Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1150,3 +1067,38 @@ export function SystemPromptForm({
   )
 }
 
+function StageHeading({ title, description }: { title: string; description: string }) {
+  return (
+    <div>
+      <div className="text-base font-semibold">{title}</div>
+      <div className="text-sm text-muted-foreground">{description}</div>
+    </div>
+  )
+}
+
+function ToggleRow({
+  title,
+  description,
+  checked,
+  onChange,
+}: {
+  title: string
+  description: string
+  checked: boolean
+  onChange: (next: boolean) => void
+}) {
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-4">
+      <div>
+        <div className="text-sm font-medium">{title}</div>
+        <div className="text-xs text-muted-foreground">{description}</div>
+      </div>
+      <input
+        type="checkbox"
+        className="h-4 w-4 rounded border-gray-300 accent-primary"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+    </label>
+  )
+}
