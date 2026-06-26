@@ -19,7 +19,11 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabaseAdmin.rpc('rpc_admin_dh_swipe_performance');
   if (error) return jsonError(error.message, 500);
 
-  const rows = ((data ?? []) as Array<Record<string, unknown>>).map(normalizePerfRow);
+  const g = req.nextUrl.searchParams.get('gender');
+  const gender = g === 'Female' || g === 'Male' ? g : null;
+
+  let rows = ((data ?? []) as Array<Record<string, unknown>>).map(normalizePerfRow);
+  if (gender) rows = rows.filter((r) => (r.gender ?? '').toLowerCase() === gender.toLowerCase());
   const analysis = analyzePerformance(rows);
 
   return NextResponse.json({ ...analysis, thresholds: PERF_THRESHOLDS });

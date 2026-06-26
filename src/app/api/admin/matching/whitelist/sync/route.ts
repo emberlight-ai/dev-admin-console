@@ -19,10 +19,21 @@ type Changed = { userid: string; username: string | null; personality: string | 
 export async function POST(req: NextRequest) {
   if (!isAdminRequest(req)) return jsonError('Unauthorized', 401);
 
+  // Optional gender scope so a Female/Male-filtered review only applies that
+  // gender's suggestions. No body / other value = apply across both genders.
+  let gender: 'Female' | 'Male' | null = null;
+  try {
+    const body = (await req.json()) as { gender?: unknown };
+    if (body?.gender === 'Female' || body?.gender === 'Male') gender = body.gender;
+  } catch {
+    /* no body */
+  }
+
   const { data, error } = await supabaseAdmin.rpc('rpc_admin_dh_swipe_performance');
   if (error) return jsonError(error.message, 500);
 
-  const rows = ((data ?? []) as Array<Record<string, unknown>>).map(normalizePerfRow);
+  let rows = ((data ?? []) as Array<Record<string, unknown>>).map(normalizePerfRow);
+  if (gender) rows = rows.filter((r) => (r.gender ?? '').toLowerCase() === gender.toLowerCase());
   const { suggestions } = analyzePerformance(rows);
 
   const pick = (r: (typeof suggestions.demote)[number]): Changed => ({

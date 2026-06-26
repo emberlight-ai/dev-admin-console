@@ -203,8 +203,12 @@ function VerdictBadge({ verdict }: { verdict: Verdict }) {
   return <Badge variant="outline" className="text-muted-foreground">low data</Badge>;
 }
 
-async function runSync(): Promise<{ promoted: number; demoted: number }> {
-  const res = await fetch('/api/admin/matching/whitelist/sync', { method: 'POST' });
+async function runSync(gender: Gender): Promise<{ promoted: number; demoted: number }> {
+  const res = await fetch('/api/admin/matching/whitelist/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gender }),
+  });
   const json = (await res.json()) as {
     promoted?: unknown[];
     demoted?: unknown[];
@@ -214,8 +218,15 @@ async function runSync(): Promise<{ promoted: number; demoted: number }> {
   return { promoted: json.promoted?.length ?? 0, demoted: json.demoted?.length ?? 0 };
 }
 
-function PerformanceReviewDialog({ onApplied }: { onApplied: () => void }) {
+function PerformanceReviewDialog({
+  onApplied,
+  pageGender,
+}: {
+  onApplied: () => void;
+  pageGender: Gender;
+}) {
   const [open, setOpen] = React.useState(false);
+  const [reviewGender, setReviewGender] = React.useState<Gender>(pageGender);
   const [data, setData] = React.useState<PerfResponse | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [applying, setApplying] = React.useState(false);
@@ -223,7 +234,9 @@ function PerformanceReviewDialog({ onApplied }: { onApplied: () => void }) {
   const fetchPerf = React.useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/matching/whitelist/performance');
+      const res = await fetch(
+        `/api/admin/matching/whitelist/performance?gender=${encodeURIComponent(reviewGender)}`
+      );
       const json = (await res.json()) as PerfResponse & { error?: string };
       if (!res.ok) throw new Error(json.error || 'Failed to load performance');
       setData(json);
@@ -234,7 +247,7 @@ function PerformanceReviewDialog({ onApplied }: { onApplied: () => void }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [reviewGender]);
 
   React.useEffect(() => {
     if (open) void fetchPerf();
@@ -246,7 +259,7 @@ function PerformanceReviewDialog({ onApplied }: { onApplied: () => void }) {
   const apply = async () => {
     setApplying(true);
     try {
-      const { promoted, demoted } = await runSync();
+      const { promoted, demoted } = await runSync(reviewGender);
       toast.success(`Applied — promoted ${promoted}, demoted ${demoted}`);
       onApplied();
       await fetchPerf();
@@ -259,7 +272,13 @@ function PerformanceReviewDialog({ onApplied }: { onApplied: () => void }) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) setReviewGender(pageGender);
+      }}
+    >
       <DialogTrigger asChild>
         <Button variant="outline" className="gap-2">
           <BarChart3 className="h-4 w-4" />
@@ -271,6 +290,20 @@ function PerformanceReviewDialog({ onApplied }: { onApplied: () => void }) {
         <DialogHeader>
           <DialogTitle>Swipe performance review</DialogTitle>
         </DialogHeader>
+
+        <div className="px-4">
+          <Tabs
+            value={reviewGender}
+            onValueChange={(v) => {
+              if (v === 'Female' || v === 'Male') setReviewGender(v);
+            }}
+          >
+            <TabsList>
+              <TabsTrigger value="Female">Female</TabsTrigger>
+              <TabsTrigger value="Male">Male</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
 
         {loading || !data ? (
           <div className="flex min-h-40 items-center justify-center p-8">
@@ -455,13 +488,13 @@ export default function MatchingWhitelistPage() {
   const syncSuggested = async () => {
     if (
       !window.confirm(
-        'Apply the suggested whitelist changes? This promotes proven candidates and demotes underperformers based on real-user swipe rates.'
+        `Apply the suggested whitelist changes for ${gender} DHs? This promotes proven candidates and demotes underperformers based on real-user swipe rates.`
       )
     )
       return;
     setSyncing(true);
     try {
-      const { promoted, demoted } = await runSync();
+      const { promoted, demoted } = await runSync(gender);
       if (promoted === 0 && demoted === 0) {
         toast.info('No changes — the whitelist already matches the suggestions.');
       } else {
@@ -508,7 +541,7 @@ export default function MatchingWhitelistPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <PerformanceReviewDialog onApplied={load} />
+            <PerformanceReviewDialog onApplied={load} pageGender={gender} />
             <Button variant="outline" className="gap-2" onClick={syncSuggested} disabled={syncing}>
               {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Sync suggested
