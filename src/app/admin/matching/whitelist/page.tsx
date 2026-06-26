@@ -17,6 +17,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -39,6 +40,8 @@ type Row = {
 };
 
 type SearchRow = { userid: string; username: string; avatar?: string | null };
+
+type Gender = 'Female' | 'Male';
 
 function AddToWhitelistDialog({
   existingIds,
@@ -404,7 +407,13 @@ export default function MatchingWhitelistPage() {
   const [loading, setLoading] = React.useState(true);
   const [removingId, setRemovingId] = React.useState<string | null>(null);
   const [syncing, setSyncing] = React.useState(false);
+  const [gender, setGender] = React.useState<Gender>('Female');
+  // existingIds spans BOTH genders so the search can't re-offer an already-whitelisted DH.
   const existingIds = React.useMemo(() => new Set(rows.map((r) => r.userid)), [rows]);
+  const visibleRows = React.useMemo(
+    () => rows.filter((r) => (r.gender ?? '').toLowerCase() === gender.toLowerCase()),
+    [rows, gender]
+  );
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -482,8 +491,21 @@ export default function MatchingWhitelistPage() {
 
       <div className="rounded-lg border bg-card">
         <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-3">
-          <div className="text-sm font-medium text-muted-foreground">
-            {loading ? 'Loading…' : `${rows.length} whitelisted`}
+          <div className="flex items-center gap-3">
+            <Tabs
+              value={gender}
+              onValueChange={(v) => {
+                if (v === 'Female' || v === 'Male') setGender(v);
+              }}
+            >
+              <TabsList>
+                <TabsTrigger value="Female">Female</TabsTrigger>
+                <TabsTrigger value="Male">Male</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <div className="text-sm font-medium text-muted-foreground">
+              {loading ? 'Loading…' : `${visibleRows.length} whitelisted`}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <PerformanceReviewDialog onApplied={load} />
@@ -512,14 +534,14 @@ export default function MatchingWhitelistPage() {
                   <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
                 </TableCell>
               </TableRow>
-            ) : rows.length === 0 ? (
+            ) : visibleRows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                  No whitelisted digital humans. Add some from a DH&apos;s detail page.
+                  No whitelisted {gender.toLowerCase()} digital humans.
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((r) => (
+              visibleRows.map((r) => (
                 <TableRow key={r.userid} className="hover:bg-muted/20">
                   <TableCell className="pl-4">
                     <div className="flex items-center gap-2">

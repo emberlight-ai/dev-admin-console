@@ -145,7 +145,7 @@ const CONFIG_DESCRIPTIONS: Record<string, string> = {
 }
 
 export default function SystemPromptsPage() {
-  const [genderFilter, setGenderFilter] = React.useState<"all" | Gender>("all")
+  const [genderFilter, setGenderFilter] = React.useState<Gender>("Female")
   const [loading, setLoading] = React.useState(true)
   const [keys, setKeys] = React.useState<KeyRow[]>([])
 
@@ -153,7 +153,7 @@ export default function SystemPromptsPage() {
     setLoading(true)
     try {
       const res = await fetch(
-        `/api/system-prompts/keys?gender=${encodeURIComponent(genderFilter === "all" ? "all" : genderFilter)}`
+        `/api/system-prompts/keys?gender=${encodeURIComponent(genderFilter)}`
       )
       const json = (await res.json()) as { data?: KeyRow[]; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to load prompts")
@@ -190,11 +190,10 @@ export default function SystemPromptsPage() {
         <Tabs
           value={genderFilter}
           onValueChange={(v) => {
-            if (v === "all" || v === "Female" || v === "Male") setGenderFilter(v)
+            if (v === "Female" || v === "Male") setGenderFilter(v)
           }}
         >
           <TabsList>
-            <TabsTrigger value="all">All</TabsTrigger>
             <TabsTrigger value="Female">Female</TabsTrigger>
             <TabsTrigger value="Male">Male</TabsTrigger>
           </TabsList>
