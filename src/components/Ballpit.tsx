@@ -601,7 +601,10 @@ function processPointerInteraction() {
 
 function onTouchStart(e: TouchEvent) {
   if (e.touches.length > 0) {
-    e.preventDefault();
+    // NOTE (getdevteam): do NOT preventDefault here. Ballpit is used as a
+    // full-screen background; blocking touchstart on document.body swallows the
+    // synthesized tap, so links/buttons (e.g. the navbar "Enter") stop working
+    // on mobile.
     pointerPosition.set(e.touches[0].clientX, e.touches[0].clientY);
     for (const [elem, data] of pointerMap) {
       const rect = elem.getBoundingClientRect();
@@ -620,7 +623,7 @@ function onTouchStart(e: TouchEvent) {
 
 function onTouchMove(e: TouchEvent) {
   if (e.touches.length > 0) {
-    e.preventDefault();
+    // NOTE (getdevteam): preventDefault removed — see onTouchStart above.
     pointerPosition.set(e.touches[0].clientX, e.touches[0].clientY);
     for (const [elem, data] of pointerMap) {
       const rect = elem.getBoundingClientRect();

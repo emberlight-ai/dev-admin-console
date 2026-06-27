@@ -8,7 +8,7 @@ export default function Home() {
     <main className="w-full h-screen relative bg-black text-white overflow-hidden">
       <Navbar />
 
-      <div className="absolute inset-0 z-0">
+      <div className="absolute inset-0 z-0 pointer-events-none">
         <Ballpit
           count={280}
           gravity={0.01}
