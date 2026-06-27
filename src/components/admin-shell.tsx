@@ -15,6 +15,7 @@ import {
   Leaf,
   MessageSquare,
   Settings,
+  SlidersHorizontal,
   Star,
 } from "lucide-react"
 
@@ -35,6 +36,7 @@ const navGroups = [
       { href: "/admin/users", label: "Dashboard", icon: LayoutDashboard },
       { href: "/admin/matching/whitelist", label: "Whitelist", icon: Star },
       { href: "/admin/system-prompts", label: "System Prompts", icon: ScrollText },
+      { href: "/admin/config", label: "Configuration", icon: SlidersHorizontal },
     ],
   },
   {
