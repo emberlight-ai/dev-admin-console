@@ -1,8 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
-import { Eye, Loader2, Star, ImageIcon, Plus, BarChart3, RefreshCw, ArrowUp, ArrowDown } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Loader2, Star, ImageIcon, MessageSquare, Plus, BarChart3, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -37,11 +37,48 @@ type Row = {
   updated_at?: string | null;
   chatImagesCount: number;
   matchCount: number;
+  totalMessages: number;
 };
 
 type SearchRow = { userid: string; username: string; avatar?: string | null };
 
 type Gender = 'Female' | 'Male';
+
+type SortKey = 'personality' | 'chatImagesCount' | 'matchCount' | 'totalMessages';
+const NUMERIC_SORT_KEYS: SortKey[] = ['chatImagesCount', 'matchCount', 'totalMessages'];
+
+function SortableHead({
+  label,
+  columnKey,
+  active,
+  dir,
+  onSort,
+  className,
+}: {
+  label: string;
+  columnKey: SortKey;
+  active: boolean;
+  dir: 'asc' | 'desc';
+  onSort: (key: SortKey) => void;
+  className?: string;
+}) {
+  return (
+    <TableHead className={className}>
+      <button
+        type="button"
+        onClick={() => onSort(columnKey)}
+        className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
+      >
+        {label}
+        {active ? (
+          dir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />
+        ) : (
+          <ArrowUpDown className="h-3.5 w-3.5 opacity-40" />
+        )}
+      </button>
+    </TableHead>
+  );
+}
 
 function AddToWhitelistDialog({
   existingIds,
@@ -436,16 +473,48 @@ function PerformanceReviewDialog({
 }
 
 export default function MatchingWhitelistPage() {
+  const router = useRouter();
   const [rows, setRows] = React.useState<Row[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [removingId, setRemovingId] = React.useState<string | null>(null);
   const [gender, setGender] = React.useState<Gender>('Female');
+  const [sortKey, setSortKey] = React.useState<SortKey | null>('matchCount');
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('desc');
+  const [query, setQuery] = React.useState('');
   // existingIds spans BOTH genders so the search can't re-offer an already-whitelisted DH.
   const existingIds = React.useMemo(() => new Set(rows.map((r) => r.userid)), [rows]);
   const visibleRows = React.useMemo(
     () => rows.filter((r) => (r.gender ?? '').toLowerCase() === gender.toLowerCase()),
     [rows, gender]
   );
+
+  const sortedRows = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let arr = q
+      ? visibleRows.filter((r) => (r.username ?? '').toLowerCase().includes(q))
+      : visibleRows;
+    if (sortKey) {
+      arr = [...arr].sort((a, b) => {
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        const cmp =
+          sortKey === 'personality'
+            ? String(av ?? '').localeCompare(String(bv ?? ''))
+            : (Number(av) || 0) - (Number(bv) || 0);
+        return sortDir === 'asc' ? cmp : -cmp;
+      });
+    }
+    return arr;
+  }, [visibleRows, sortKey, sortDir, query]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(key);
+    setSortDir(NUMERIC_SORT_KEYS.includes(key) ? 'desc' : 'asc');
+  };
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -512,7 +581,20 @@ export default function MatchingWhitelistPage() {
               </TabsList>
             </Tabs>
             <div className="text-sm font-medium text-muted-foreground">
-              {loading ? 'Loading…' : `${visibleRows.length} whitelisted`}
+              {loading
+                ? 'Loading…'
+                : query.trim()
+                  ? `${sortedRows.length} of ${visibleRows.length}`
+                  : `${visibleRows.length} whitelisted`}
+            </div>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by name…"
+                className="h-9 w-56 pl-8"
+              />
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -524,11 +606,11 @@ export default function MatchingWhitelistPage() {
           <TableHeader>
             <TableRow>
               <TableHead className="pl-4">Digital Human</TableHead>
-              <TableHead>Gender</TableHead>
-              <TableHead>Personality</TableHead>
-              <TableHead>Chat Images</TableHead>
-              <TableHead>Matches</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <SortableHead label="Personality" columnKey="personality" active={sortKey === 'personality'} dir={sortDir} onSort={toggleSort} />
+              <SortableHead label="Chat Images" columnKey="chatImagesCount" active={sortKey === 'chatImagesCount'} dir={sortDir} onSort={toggleSort} />
+              <SortableHead label="Matches" columnKey="matchCount" active={sortKey === 'matchCount'} dir={sortDir} onSort={toggleSort} />
+              <SortableHead label="Total Messages" columnKey="totalMessages" active={sortKey === 'totalMessages'} dir={sortDir} onSort={toggleSort} />
+              <TableHead className="text-right pr-4">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -538,15 +620,21 @@ export default function MatchingWhitelistPage() {
                   <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
                 </TableCell>
               </TableRow>
-            ) : visibleRows.length === 0 ? (
+            ) : sortedRows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                  No whitelisted {gender.toLowerCase()} digital humans.
+                  {query.trim()
+                    ? `No digital humans match “${query.trim()}”.`
+                    : `No whitelisted ${gender.toLowerCase()} digital humans.`}
                 </TableCell>
               </TableRow>
             ) : (
-              visibleRows.map((r) => (
-                <TableRow key={r.userid} className="hover:bg-muted/20">
+              sortedRows.map((r) => (
+                <TableRow
+                  key={r.userid}
+                  className="cursor-pointer hover:bg-muted/20"
+                  onClick={() => router.push(`/admin/digital-humans/${r.userid}`)}
+                >
                   <TableCell className="pl-4">
                     <div className="flex items-center gap-2">
                       <Avatar className="h-9 w-9">
@@ -556,41 +644,38 @@ export default function MatchingWhitelistPage() {
                         />
                         <AvatarFallback>{r.username?.slice(0, 2)?.toUpperCase()}</AvatarFallback>
                       </Avatar>
-                      <Link
-                        href={`/admin/digital-humans/${r.userid}`}
-                        className="font-medium hover:underline"
-                      >
-                        {r.username || 'Unknown'}
-                      </Link>
+                      <span className="font-medium">{r.username || 'Unknown'}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{r.gender ?? '—'}</TableCell>
                   <TableCell className="text-muted-foreground">{r.personality ?? '—'}</TableCell>
                   <TableCell>
-                    <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <span className="inline-flex items-center gap-1.5 text-muted-foreground tabular-nums">
                       <ImageIcon className="h-3.5 w-3.5" />
                       {r.chatImagesCount}
                     </span>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{r.matchCount}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="inline-flex items-center gap-2">
+                  <TableCell className="text-muted-foreground tabular-nums">{r.matchCount}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    <span className="inline-flex items-center gap-1.5 tabular-nums">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      {r.totalMessages}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right pr-4">
+                    <div className="inline-flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                       {r.chatImagesCount === 0 ? (
                         <Badge variant="outline" className="text-amber-600 border-amber-300">
                           no selfies
                         </Badge>
                       ) : null}
-                      <Button asChild variant="outline" size="sm">
-                        <Link href={`/admin/digital-humans/${r.userid}`} className="gap-2">
-                          <Eye className="h-4 w-4" />
-                          Details
-                        </Link>
-                      </Button>
                       <Button
                         variant="outline"
                         size="sm"
                         className="text-destructive border-destructive/30 hover:bg-destructive hover:text-white"
-                        onClick={() => remove(r.userid)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          remove(r.userid);
+                        }}
                         disabled={removingId === r.userid}
                       >
                         {removingId === r.userid ? 'Removing…' : 'Remove from whitelist'}

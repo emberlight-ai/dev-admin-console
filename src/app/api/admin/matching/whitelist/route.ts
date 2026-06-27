@@ -29,6 +29,7 @@ export async function GET(req: NextRequest) {
 
   const imgCounts: Record<string, number> = {};
   const matchCounts: Record<string, number> = {};
+  const msgCounts: Record<string, number> = {};
 
   if (ids.length) {
     const { data: imgs } = await supabaseAdmin
@@ -51,6 +52,13 @@ export async function GET(req: NextRequest) {
       if (idSet.has(a)) matchCounts[a] = (matchCounts[a] ?? 0) + 1;
       if (idSet.has(b)) matchCounts[b] = (matchCounts[b] ?? 0) + 1;
     }
+
+    // Total messages sent by each DH (grouped aggregate over messages.sender_id).
+    const { data: msgRows } = await supabaseAdmin.rpc('rpc_admin_user_message_counts');
+    for (const r of (msgRows ?? []) as Array<{ user_id?: string | null; message_count?: number | string | null }>) {
+      const id = r.user_id;
+      if (id && idSet.has(id)) msgCounts[id] = Number(r.message_count ?? 0);
+    }
   }
 
   return NextResponse.json({
@@ -58,6 +66,7 @@ export async function GET(req: NextRequest) {
       ...r,
       chatImagesCount: imgCounts[r.userid] ?? 0,
       matchCount: matchCounts[r.userid] ?? 0,
+      totalMessages: msgCounts[r.userid] ?? 0,
     })),
   });
 }

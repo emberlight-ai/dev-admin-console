@@ -33,20 +33,26 @@ const navGroups = [
     title: "Users and Bots",
     items: [
       { href: "/admin/users", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/admin/digital-humans", label: "Digital Humans", icon: Bot },
+      { href: "/admin/matching/whitelist", label: "Whitelist", icon: Star },
       { href: "/admin/system-prompts", label: "System Prompts", icon: ScrollText },
     ],
   },
   {
     title: "Matching",
     items: [
-      { href: "/admin/matching/whitelist", label: "Whitelist", icon: Star },
       { href: "/admin/matching/green-mode", label: "Green Mode", icon: Leaf },
       { href: "/admin/matching/traffic", label: "Chat Traffic", icon: MessageSquare },
       { href: "/admin/matching/reports", label: "Reports", icon: Flag },
     ],
   },
 ]
+
+const dbManagementGroup = {
+  title: "DB management",
+  items: [
+    { href: "/admin/digital-humans", label: "Digital Humans", icon: Bot },
+  ],
+}
 
 const backendGroup = {
   title: "Backend",
@@ -189,6 +195,17 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         <div className="p-3 bg-sidebar space-y-4">
           <div>
             <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
+              {dbManagementGroup.title}
+            </div>
+            <div className="mt-2 space-y-1">
+              {dbManagementGroup.items.map((item) => (
+                <NavItem key={item.href} item={item} pathname={pathname} />
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
               {backendGroup.title}
             </div>
             <div className="mt-2 space-y-1">
@@ -272,6 +289,22 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   </nav>
 
                   <div className="p-3 border-t space-y-4">
+                    <div>
+                      <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
+                        {dbManagementGroup.title}
+                      </div>
+                      <div className="mt-2 space-y-1">
+                        {dbManagementGroup.items.map((item) => (
+                          <NavItem
+                            key={item.href}
+                            item={item}
+                            pathname={pathname}
+                            onClick={() => setMobileNavOpen(false)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
                     <div>
                       <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
                         {backendGroup.title}

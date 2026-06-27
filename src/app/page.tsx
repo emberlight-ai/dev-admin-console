@@ -1,22 +1,20 @@
 'use client';
 
-import FaultyTerminal from '@/components/FaultyTerminal';
+import Ballpit from '@/components/Ballpit';
 import Navbar from '@/components/Navbar';
 
 export default function Home() {
   return (
     <main className="w-full h-screen relative bg-black text-white overflow-hidden">
       <Navbar />
-      
+
       <div className="absolute inset-0 z-0">
-        <FaultyTerminal 
-          tint="#00ff00"
-          gridMul={[2, 1]}
-          digitSize={1.5}
-          timeScale={0.3}
-          flickerAmount={0.5}
-          mouseStrength={0.5}
-          scanlineIntensity={0.5}
+        <Ballpit
+          count={280}
+          gravity={0.01}
+          friction={0.9975}
+          wallBounce={0.8}
+          followCursor={false}
         />
       </div>
 

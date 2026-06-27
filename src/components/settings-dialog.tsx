@@ -35,12 +35,12 @@ export function SettingsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
-        <DialogHeader>
+        <DialogHeader className="px-6 pt-6">
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>Personalize how the console looks.</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6 pt-2">
+        <div className="space-y-6 px-6 pb-6 pt-2">
           <div className="space-y-2">
             <div className="text-sm font-medium">Appearance</div>
             <div className="grid grid-cols-3 gap-2">
