@@ -12,7 +12,6 @@ import { composeSystemPromptFromTemplate } from "@/lib/botProfile"
 
 import { ImageZoomDialog } from "./_components/image-zoom-dialog"
 import { ProfileCard } from "./_components/profile-card"
-import { ProfileEditSheet } from "./_components/profile-edit-sheet"
 import { ChatHistory } from "@/components/matching/chat-history"
 import { PostsPanel } from "./_components/posts-panel"
 import { ChatImagesPanel } from "./_components/chat-images-panel"
@@ -47,7 +46,6 @@ export default function DigitalHumanDetail() {
     personality: string
   } | null>(null)
   const [zoomSrc, setZoomSrc] = React.useState<string | null>(null)
-  const [profileOpen, setProfileOpen] = React.useState(false)
   const [whitelistBusy, setWhitelistBusy] = React.useState(false)
 
   const toggleWhitelist = async () => {
@@ -186,12 +184,12 @@ export default function DigitalHumanDetail() {
           <ProfileCard
             user={user}
             avatarSrc={avatarSrc}
-            onEdit={() => setProfileOpen(true)}
             onZoomAvatar={() => setZoomSrc(avatarSrc)}
             systemPromptMeta={systemPromptMeta}
             onPromptSaved={() => void refreshSystemPromptInfo()}
             onToggleWhitelist={toggleWhitelist}
             whitelistBusy={whitelistBusy}
+            onSaved={(updates) => setUser((prev) => (prev ? { ...prev, ...updates } : prev))}
           />
         </div>
 
@@ -221,14 +219,6 @@ export default function DigitalHumanDetail() {
           </Card>
         </div>
       </div>
-
-      <ProfileEditSheet
-        open={profileOpen}
-        onOpenChange={setProfileOpen}
-        user={user}
-        avatarSrc={avatarSrc}
-        onSaved={(updates) => setUser((prev) => (prev ? { ...prev, ...updates } : prev))}
-      />
 
       <ImageZoomDialog src={zoomSrc} onClose={() => setZoomSrc(null)} />
     </div>

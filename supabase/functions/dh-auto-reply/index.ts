@@ -112,6 +112,7 @@ interface UserRow {
   zipcode: string | null;
   location_name: string | null;
   timezone: string | null;
+  storyline: string | null;
 }
 
 const globalPromptCache = (globalThis as any).__dhPromptCache as Map<string, CachedPrompt> | undefined;
@@ -201,7 +202,7 @@ async function getUserRow(userid: string): Promise<UserRow | null> {
 
   const { data, error } = await supabase
     .from('users')
-    .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode, location_name, timezone')
+    .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode, location_name, timezone, storyline')
     .eq('userid', userid)
     .single();
   if (error || !data) return null;
@@ -297,6 +298,19 @@ function generateUserProfileBlock(input: {
 </user_profile>`;
 }
 
+// The system prompt may carry a <bot_storyline> data-input block. When the DH has
+// a storyline, fill the BOT_STORYLINE_DETAILS placeholder; when it doesn't, strip
+// the whole block (and an optional "### DATA INPUTS" header) so the model never
+// sees the bare marker.
+const STORYLINE_PLACEHOLDER_RE = /<bot_storyline>[\s\r\n]*BOT_STORYLINE_DETAILS[\s\r\n]*<\/bot_storyline>/i;
+const STORYLINE_BLOCK_RE = /\n*(?:#{1,6}\s*DATA INPUTS[^\n]*\n+)?<bot_storyline>[\s\S]*?<\/bot_storyline>\n*/i;
+
+function applyStoryline(prompt: string, storyline?: string | null): string {
+  const s = (storyline ?? '').trim();
+  if (s) return prompt.replace(STORYLINE_PLACEHOLDER_RE, `<bot_storyline>\n${s}\n</bot_storyline>`);
+  return prompt.replace(STORYLINE_BLOCK_RE, '\n');
+}
+
 function composeSystemInstruction(template: string, bot: UserRow, human: UserRow): string {
   const botBlock = generateBotProfileBlock({
     name: bot.username ?? 'Digital Human',
@@ -316,6 +330,7 @@ function composeSystemInstruction(template: string, bot: UserRow, human: UserRow
   let prompt = template;
   prompt = prompt.replace(/<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot_profile>/i, botBlock);
   prompt = prompt.replace(/<user_profile>[\s\r\n]*USER_PROFILE_DETAILS[\s\r\n]*<\/user_profile>/i, userBlock);
+  prompt = applyStoryline(prompt, bot.storyline);
   return prompt;
 }
 

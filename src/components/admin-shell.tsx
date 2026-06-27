@@ -14,14 +14,15 @@ import {
   Flag,
   Leaf,
   MessageSquare,
+  Settings,
   Star,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { ThemeColorPicker, useThemeColor } from "@/components/theme-color"
+import { useThemeColor } from "@/components/theme-color"
+import { SettingsDialog } from "@/components/settings-dialog"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { logout } from "@/actions/auth"
 import GlareHover from "@/components/glare-hover"
@@ -119,6 +120,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const { changeNonce } = useThemeColor()
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false)
+  const [settingsOpen, setSettingsOpen] = React.useState(false)
   const showPersonalities = pathname.startsWith("/admin/system-prompts/manage")
 
   return (
@@ -193,6 +195,14 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               {backendGroup.items.map((item) => (
                 <NavItem key={item.href} item={item} pathname={pathname} />
               ))}
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <Settings className="h-4 w-4" />
+                Settings
+              </button>
             </div>
           </div>
 
@@ -275,6 +285,17 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                             onClick={() => setMobileNavOpen(false)}
                           />
                         ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMobileNavOpen(false)
+                            setSettingsOpen(true)
+                          }}
+                          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                        >
+                          <Settings className="h-4 w-4" />
+                          Settings
+                        </button>
                       </div>
                     </div>
 
@@ -294,15 +315,12 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               </Sheet>
             </div>
 
-            {/* Desktop: keep right-aligned controls; Mobile: controls still accessible */}
-            <div className="flex items-center gap-2">
-              <ThemeColorPicker />
-              <ThemeToggle />
-            </div>
           </div>
         </header>
         <main className="p-4 md:p-6">{children}</main>
       </div>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
 }

@@ -18,6 +18,7 @@ export type DbUser = {
   notification_enabled?: boolean | null
   location_enabled?: boolean | null
   bio?: string | null
+  storyline?: string | null
   created_at?: string | null
   updated_at?: string | null
   is_digital_human?: boolean | null

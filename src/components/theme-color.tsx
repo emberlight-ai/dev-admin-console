@@ -22,7 +22,8 @@ export type ThemeColor =
   | "dark"
   | "quality"
 
-const THEME_COLORS: { value: ThemeColor; label: string }[] = [
+export const THEME_COLORS: { value: ThemeColor; label: string }[] = [
+  { value: "quality", label: "Sekura" },
   { value: "magic", label: "Magic" },
   { value: "cold", label: "Cold" },
   { value: "fire", label: "Fire" },
@@ -30,10 +31,9 @@ const THEME_COLORS: { value: ThemeColor; label: string }[] = [
   { value: "poison", label: "Poison" },
   { value: "blood", label: "Blood" },
   { value: "dark", label: "Dark" },
-  { value: "quality", label: "Sekura" },
 ]
 
-const COLOR_SWATCH: Record<ThemeColor, string> = {
+export const COLOR_SWATCH: Record<ThemeColor, string> = {
   // Elden Ring / Dark Souls-inspired affinities (still readable for SaaS UI)
   magic: "hsl(221 92% 56%)",   // vibrant glintstone blue
   cold: "hsl(196 92% 55%)",    // brighter icy cyan
@@ -72,7 +72,7 @@ function getInitialThemeColor(): ThemeColor {
 
   const stored = migrated as ThemeColor | null
   if (stored && THEME_COLORS.some((c) => c.value === stored)) return stored
-  return "magic"
+  return "quality"
 }
 
 type ThemeColorContextValue = {
@@ -84,7 +84,7 @@ type ThemeColorContextValue = {
 const ThemeColorContext = React.createContext<ThemeColorContextValue | null>(null)
 
 export function ThemeColorProvider({ children }: { children: React.ReactNode }) {
-  const [color, setColorState] = React.useState<ThemeColor>("magic")
+  const [color, setColorState] = React.useState<ThemeColor>("quality")
   const [changeNonce, setChangeNonce] = React.useState(0)
 
   React.useEffect(() => {

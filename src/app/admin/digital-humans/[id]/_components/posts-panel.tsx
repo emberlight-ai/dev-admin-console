@@ -23,7 +23,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 
 import type { DbPost } from "./types"
 
@@ -55,10 +54,9 @@ export function PostsPanel({
   const [posts, setPosts] = React.useState<DbPost[]>([])
   const [loading, setLoading] = React.useState(true)
 
-  // Post edit sheet
-  const [postOpen, setPostOpen] = React.useState(false)
-  const [postSaving, setPostSaving] = React.useState(false)
+  // Inline edit (per post)
   const [editPost, setEditPost] = React.useState<DbPost | null>(null)
+  const [postSaving, setPostSaving] = React.useState(false)
   const [editPostDescription, setEditPostDescription] = React.useState("")
   const [editPostDatetimeLocal, setEditPostDatetimeLocal] = React.useState("")
   const [editPostLocationName, setEditPostLocationName] = React.useState("")
@@ -67,8 +65,8 @@ export function PostsPanel({
   const [editPostFiles, setEditPostFiles] = React.useState<File[]>([])
   const [editPostPhotos, setEditPostPhotos] = React.useState<string[]>([])
 
-  // Add post sheet
-  const [addPostOpen, setAddPostOpen] = React.useState(false)
+  // Inline add (at top of list)
+  const [addOpen, setAddOpen] = React.useState(false)
   const [addPostSaving, setAddPostSaving] = React.useState(false)
   const [newPostDescription, setNewPostDescription] = React.useState("")
   const [newPostDatetimeLocal, setNewPostDatetimeLocal] = React.useState(() => toDatetimeLocal(new Date().toISOString()))
@@ -98,7 +96,6 @@ export function PostsPanel({
     () => editPostFiles.map((f) => ({ file: f, url: URL.createObjectURL(f) })),
     [editPostFiles]
   )
-
   React.useEffect(() => {
     return () => {
       editPostPreviewUrls.forEach((p) => URL.revokeObjectURL(p.url))
@@ -109,7 +106,6 @@ export function PostsPanel({
     () => newPostFiles.map((f) => ({ file: f, url: URL.createObjectURL(f) })),
     [newPostFiles]
   )
-
   React.useEffect(() => {
     return () => {
       newPostPreviewUrls.forEach((p) => URL.revokeObjectURL(p.url))
@@ -136,6 +132,7 @@ export function PostsPanel({
   }, [fetchPosts])
 
   const openPostEditor = (p: DbPost) => {
+    setAddOpen(false)
     setEditPost(p)
     setEditPostDescription(p.description ?? "")
     setEditPostDatetimeLocal(toDatetimeLocal(p.occurred_at ?? p.created_at))
@@ -144,7 +141,12 @@ export function PostsPanel({
     setEditPostLatitude(p.latitude ?? null)
     setEditPostFiles([])
     setEditPostPhotos(p.photos ?? [])
-    setPostOpen(true)
+  }
+
+  const cancelEdit = () => {
+    setEditPost(null)
+    setEditPostFiles([])
+    setEditPostPhotos([])
   }
 
   const savePost = async () => {
@@ -159,7 +161,6 @@ export function PostsPanel({
           toast.error("Max 9 images per post")
           return
         }
-
         if (editPostFiles.length > remainingSlots) toast.error("Max 9 images per post")
         const { valid, errors } = validateFiles(editPostFiles.slice(0, remainingSlots))
         if (errors.length) {
@@ -170,10 +171,7 @@ export function PostsPanel({
         const fd = new FormData()
         fd.set("userid", userid)
         for (const f of valid) fd.append("files", f)
-        const upRes = await fetch(`/api/admin/posts/${encodeURIComponent(editPost.id)}/photos`, {
-          method: "POST",
-          body: fd,
-        })
+        const upRes = await fetch(`/api/admin/posts/${encodeURIComponent(editPost.id)}/photos`, { method: "POST", body: fd })
         const upJson = (await upRes.json()) as { photos?: string[]; error?: string }
         if (!upRes.ok) throw new Error(upJson.error || "Failed to upload photos")
         photos = (upJson.photos ?? photos) as string[]
@@ -195,9 +193,7 @@ export function PostsPanel({
       if (!res.ok) throw new Error(json.error || "Failed to update post")
 
       toast.success("Post updated")
-      setPostOpen(false)
-      setEditPost(null)
-      setEditPostPhotos([])
+      cancelEdit()
       void fetchPosts()
     } catch (err: unknown) {
       console.error(err)
@@ -215,11 +211,8 @@ export function PostsPanel({
       const json = (await res.json()) as { ok?: boolean; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to delete post")
       toast.success("Post deleted")
-      setPostOpen(false)
-      setEditPost(null)
+      cancelEdit()
       setEditPostDescription("")
-      setEditPostFiles([])
-      setEditPostPhotos([])
       void fetchPosts()
     } catch (err: unknown) {
       console.error(err)
@@ -227,6 +220,15 @@ export function PostsPanel({
     } finally {
       setPostSaving(false)
     }
+  }
+
+  const resetAddForm = () => {
+    setNewPostDescription("")
+    setNewPostDatetimeLocal(toDatetimeLocal(new Date().toISOString()))
+    setNewPostLocationName("")
+    setNewPostLongitude(null)
+    setNewPostLatitude(null)
+    setNewPostFiles([])
   }
 
   const createPost = async () => {
@@ -258,22 +260,14 @@ export function PostsPanel({
         const fd = new FormData()
         fd.set("userid", userid)
         for (const f of valid) fd.append("files", f)
-        const upRes = await fetch(`/api/admin/posts/${encodeURIComponent(created.id)}/photos`, {
-          method: "POST",
-          body: fd,
-        })
+        const upRes = await fetch(`/api/admin/posts/${encodeURIComponent(created.id)}/photos`, { method: "POST", body: fd })
         const upJson = (await upRes.json()) as { photos?: string[]; error?: string }
         if (!upRes.ok) throw new Error(upJson.error || "Failed to upload photos")
       }
 
       toast.success("Post created")
-      setAddPostOpen(false)
-      setNewPostDescription("")
-      setNewPostDatetimeLocal(toDatetimeLocal(new Date().toISOString()))
-      setNewPostLocationName("")
-      setNewPostLongitude(null)
-      setNewPostLatitude(null)
-      setNewPostFiles([])
+      setAddOpen(false)
+      resetAddForm()
       void fetchPosts()
     } catch (err: unknown) {
       console.error(err)
@@ -284,336 +278,220 @@ export function PostsPanel({
   }
 
   return (
-    <>
-      <div className="rounded-lg border">
-        <div className="flex items-center justify-between gap-3 p-4">
-          <div className="text-sm text-muted-foreground">
-            {loading ? "Loading..." : posts.length === 0 ? "No posts yet." : `${posts.length} posts`}
-          </div>
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => setAddPostOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Add post
-          </Button>
+    <div className="rounded-lg border">
+      <div className="flex items-center justify-between gap-3 p-4">
+        <div className="text-sm text-muted-foreground">
+          {loading ? "Loading..." : posts.length === 0 ? "No posts yet." : `${posts.length} posts`}
         </div>
-        <Separator />
-        <div className="divide-y">
-          {!loading
-            ? posts.map((p) => (
-              <div key={p.id} className="p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <div className="text-xs text-muted-foreground">
-                      {new Date(p.occurred_at ?? p.created_at).toLocaleDateString("en-US", {
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
-                      })}
-                    </div>
-                    {p.deleted_at ? (
-                      <Badge variant="secondary" className="text-[10px] h-5">
-                        Deleted
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <Button variant="outline" size="sm" className="gap-2" onClick={() => openPostEditor(p)}>
-                    <Pencil className="h-4 w-4" />
-                    Edit
-                  </Button>
-                </div>
-                {p.location_name || (p.longitude != null && p.latitude != null) ? (
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {p.location_name
-                      ? p.location_name
-                      : `lon ${Number(p.longitude).toFixed(4)} · lat ${Number(p.latitude).toFixed(4)}`}
-                  </div>
-                ) : null}
-                <div className="mt-2 text-sm">{p.description ?? "—"}</div>
-                {p.photos?.length ? (
-                  <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
-                    {p.photos.slice(0, 6).map((url) => (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        key={url}
-                        src={url}
-                        alt="post"
-                        className="h-28 w-full cursor-zoom-in rounded-md object-cover transition-transform duration-200 hover:scale-[1.03]"
-                        onClick={() => onZoom(url)}
-                      />
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2"
+          onClick={() => {
+            cancelEdit()
+            setAddOpen((v) => !v)
+          }}
+        >
+          <Plus className="h-4 w-4" />
+          Add post
+        </Button>
+      </div>
+      <Separator />
+
+      {addOpen ? (
+        <div className="border-b bg-muted/20 p-4">
+          <div className="mb-3 text-sm font-medium">New post</div>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Post time</Label>
+              <Input type="datetime-local" value={newPostDatetimeLocal} onChange={(e) => setNewPostDatetimeLocal(e.target.value)} />
+            </div>
+            <LocationAutocomplete
+              value={newPostLocationName}
+              onValueChange={(v) => { setNewPostLocationName(v); setNewPostLongitude(null); setNewPostLatitude(null) }}
+              onSelect={(sel) => { setNewPostLocationName(sel.name); setNewPostLongitude(sel.longitude); setNewPostLatitude(sel.latitude) }}
+              onClear={() => { setNewPostLocationName(""); setNewPostLongitude(null); setNewPostLatitude(null) }}
+              placeholder="Search location (e.g. Prague, Czech Republic)"
+            />
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea rows={4} value={newPostDescription} onChange={(e) => setNewPostDescription(e.target.value)} placeholder="Write something..." />
+            </div>
+            <FileDropzone
+              label="Photos"
+              helper="JPG/PNG only, max 5MB each, up to 9 images."
+              accept={ACCEPT_ATTR}
+              multiple
+              filesCount={newPostFiles.length}
+              onPickFiles={(files) => {
+                if (files.length > 9) toast.error("Max 9 images per post")
+                const { valid, errors } = validateFiles(files.slice(0, 9))
+                if (errors.length) toast.error(errors[0])
+                setNewPostFiles(valid)
+              }}
+              onClear={newPostFiles.length ? () => setNewPostFiles([]) : undefined}
+              preview={
+                newPostFiles.length ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {newPostPreviewUrls.slice(0, 9).map((p) => (
+                      <div key={p.url} className="aspect-square overflow-hidden rounded-md border bg-muted">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={p.url} alt={p.file.name} className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]" onClick={() => onZoom(p.url)} />
+                      </div>
                     ))}
                   </div>
-                ) : null}
-              </div>
-            ))
-            : null}
+                ) : null
+              }
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => { setAddOpen(false); resetAddForm() }} disabled={addPostSaving}>Cancel</Button>
+              <Button onClick={createPost} disabled={addPostSaving}>{addPostSaving ? "Creating..." : "Create post"}</Button>
+            </div>
+          </div>
         </div>
-      </div>
+      ) : null}
 
-      {/* Post Edit Sheet */}
-      <Sheet open={postOpen} onOpenChange={setPostOpen}>
-        <SheetContent className="sm:max-w-lg flex flex-col h-full">
-          <SheetHeader className="flex-none">
-            <SheetTitle>Edit post</SheetTitle>
-            <SheetDescription>Edit time, location, description and photos.</SheetDescription>
-          </SheetHeader>
-
-          <div className="flex-1 overflow-y-auto py-4 px-1">
-            <div className="space-y-4 px-3">
-              <div className="space-y-2">
-                <Label>Post time</Label>
-                <Input
-                  type="datetime-local"
-                  value={editPostDatetimeLocal}
-                  onChange={(e) => setEditPostDatetimeLocal(e.target.value)}
-                />
-              </div>
-
-              <LocationAutocomplete
-                value={editPostLocationName}
-                onValueChange={(v) => {
-                  setEditPostLocationName(v)
-                  setEditPostLongitude(null)
-                  setEditPostLatitude(null)
-                }}
-                onSelect={(sel) => {
-                  setEditPostLocationName(sel.name)
-                  setEditPostLongitude(sel.longitude)
-                  setEditPostLatitude(sel.latitude)
-                }}
-                onClear={() => {
-                  setEditPostLocationName("")
-                  setEditPostLongitude(null)
-                  setEditPostLatitude(null)
-                }}
-                placeholder="Search location (e.g. Prague, Czech Republic)"
-              />
-
-              {editPostLongitude != null && editPostLatitude != null ? (
-                <div className="text-xs text-muted-foreground">
-                  Selected: lon {editPostLongitude.toFixed(4)} · lat {editPostLatitude.toFixed(4)}
-                </div>
-              ) : null}
-
-              <div className="space-y-2">
-                <Label>Description</Label>
-                <Textarea rows={4} value={editPostDescription} onChange={(e) => setEditPostDescription(e.target.value)} />
-              </div>
-
-              <FileDropzone
-                label="Add photos"
-                helper="JPG/PNG only, max 5MB each, up to 9 images total. Adds to this post (does not replace existing)."
-                accept={ACCEPT_ATTR}
-                multiple
-                filesCount={editPostFiles.length}
-                onPickFiles={(files) => {
-                  const remaining = Math.max(0, 9 - editPostPhotos.length - editPostFiles.length)
-                  if (remaining === 0) {
-                    toast.error("Max 9 images per post")
-                    return
-                  }
-                  if (files.length > remaining) toast.error("Max 9 images per post")
-                  const { valid, errors } = validateFiles(files.slice(0, remaining))
-                  if (errors.length) toast.error(errors[0])
-                  setEditPostFiles((prev) => [...prev, ...valid])
-                }}
-                onClear={editPostFiles.length ? () => setEditPostFiles([]) : undefined}
-                preview={
-                  editPostPhotos.length || editPostFiles.length ? (
-                    <div className="grid grid-cols-3 gap-2">
-                      {editPostPhotos.slice(0, 9).map((url) => (
-                        <div key={url} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={url}
-                            alt="existing"
-                            className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
-                            onClick={() => onZoom(url)}
-                          />
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="secondary"
-                            className="absolute right-1 top-1 h-7 w-7"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setEditPostPhotos((prev) => prev.filter((u) => u !== url))
-                            }}
-                            title="Remove image"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
-
-                      {editPostPreviewUrls
-                        .slice(0, Math.max(0, 9 - editPostPhotos.length))
-                        .map((p) => (
-                          <div key={p.url} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={p.url}
-                              alt={p.file.name}
-                              className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
-                              onClick={() => onZoom(p.url)}
-                            />
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="secondary"
-                              className="absolute right-1 top-1 h-7 w-7"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setEditPostFiles((prev) => prev.filter((f) => f !== p.file))
-                              }}
-                              title="Remove pending upload"
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
+      <div className="divide-y">
+        {!loading
+          ? posts.map((p) =>
+              editPost?.id === p.id ? (
+                /* ── Inline edit form ─────────────────────────────────── */
+                <div key={p.id} className="bg-muted/20 p-4">
+                  <div className="mb-3 text-sm font-medium">Edit post</div>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Post time</Label>
+                      <Input type="datetime-local" value={editPostDatetimeLocal} onChange={(e) => setEditPostDatetimeLocal(e.target.value)} />
+                    </div>
+                    <LocationAutocomplete
+                      value={editPostLocationName}
+                      onValueChange={(v) => { setEditPostLocationName(v); setEditPostLongitude(null); setEditPostLatitude(null) }}
+                      onSelect={(sel) => { setEditPostLocationName(sel.name); setEditPostLongitude(sel.longitude); setEditPostLatitude(sel.latitude) }}
+                      onClear={() => { setEditPostLocationName(""); setEditPostLongitude(null); setEditPostLatitude(null) }}
+                      placeholder="Search location (e.g. Prague, Czech Republic)"
+                    />
+                    {editPostLongitude != null && editPostLatitude != null ? (
+                      <div className="text-xs text-muted-foreground">
+                        Selected: lon {editPostLongitude.toFixed(4)} · lat {editPostLatitude.toFixed(4)}
+                      </div>
+                    ) : null}
+                    <div className="space-y-2">
+                      <Label>Description</Label>
+                      <Textarea rows={4} value={editPostDescription} onChange={(e) => setEditPostDescription(e.target.value)} />
+                    </div>
+                    <FileDropzone
+                      label="Add photos"
+                      helper="JPG/PNG only, max 5MB each, up to 9 images total. Adds to this post (does not replace existing)."
+                      accept={ACCEPT_ATTR}
+                      multiple
+                      filesCount={editPostFiles.length}
+                      onPickFiles={(files) => {
+                        const remaining = Math.max(0, 9 - editPostPhotos.length - editPostFiles.length)
+                        if (remaining === 0) {
+                          toast.error("Max 9 images per post")
+                          return
+                        }
+                        if (files.length > remaining) toast.error("Max 9 images per post")
+                        const { valid, errors } = validateFiles(files.slice(0, remaining))
+                        if (errors.length) toast.error(errors[0])
+                        setEditPostFiles((prev) => [...prev, ...valid])
+                      }}
+                      onClear={editPostFiles.length ? () => setEditPostFiles([]) : undefined}
+                      preview={
+                        editPostPhotos.length || editPostFiles.length ? (
+                          <div className="grid grid-cols-3 gap-2">
+                            {editPostPhotos.slice(0, 9).map((url) => (
+                              <div key={url} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={url} alt="existing" className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]" onClick={() => onZoom(url)} />
+                                <Button type="button" size="icon" variant="secondary" className="absolute right-1 top-1 h-7 w-7" onClick={(e) => { e.stopPropagation(); setEditPostPhotos((prev) => prev.filter((u) => u !== url)) }} title="Remove image">
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ))}
+                            {editPostPreviewUrls.slice(0, Math.max(0, 9 - editPostPhotos.length)).map((pv) => (
+                              <div key={pv.url} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={pv.url} alt={pv.file.name} className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]" onClick={() => onZoom(pv.url)} />
+                                <Button type="button" size="icon" variant="secondary" className="absolute right-1 top-1 h-7 w-7" onClick={(e) => { e.stopPropagation(); setEditPostFiles((prev) => prev.filter((f) => f !== pv.file)) }} title="Remove pending upload">
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        ) : null
+                      }
+                    />
+                    <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="destructive" disabled={postSaving} className="gap-2">
+                            <Trash2 className="h-4 w-4" />
+                            Delete post
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete this post?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This will permanently delete the post row. (Images in storage are not removed automatically.)
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => void deletePost()}>Delete</AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={cancelEdit} disabled={postSaving}>Cancel</Button>
+                        <Button onClick={savePost} disabled={postSaving}>{postSaving ? "Saving..." : "Save post"}</Button>
+                      </div>
                     </div>
-                  ) : null
-                }
-              />
-            </div>
-          </div>
-
-          <SheetFooter className="flex-none pt-2">
-            <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="destructive" disabled={postSaving || !editPost} className="gap-2">
-                    <Trash2 className="h-4 w-4" />
-                    Delete post
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete this post?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This will permanently delete the post row. (Images in storage are not removed automatically.)
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void deletePost()}>Delete</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-
-              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <Button variant="outline" onClick={() => setPostOpen(false)} disabled={postSaving}>
-                  Cancel
-                </Button>
-                <Button onClick={savePost} disabled={postSaving || !editPost}>
-                  {postSaving ? "Saving..." : "Save post"}
-                </Button>
-              </div>
-            </div>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
-
-      {/* Add Post Sheet */}
-      <Sheet open={addPostOpen} onOpenChange={setAddPostOpen}>
-        <SheetContent className="sm:max-w-lg flex flex-col h-full">
-          <SheetHeader className="flex-none">
-            <SheetTitle>Add post</SheetTitle>
-            <SheetDescription>Create a new post with time, location, and photos.</SheetDescription>
-          </SheetHeader>
-
-          <div className="flex-1 overflow-y-auto py-4 px-1">
-            <div className="space-y-4 px-3">
-              <div className="space-y-2">
-                <Label>Post time</Label>
-                <Input
-                  type="datetime-local"
-                  value={newPostDatetimeLocal}
-                  onChange={(e) => setNewPostDatetimeLocal(e.target.value)}
-                />
-              </div>
-
-              <LocationAutocomplete
-                value={newPostLocationName}
-                onValueChange={(v) => {
-                  setNewPostLocationName(v)
-                  setNewPostLongitude(null)
-                  setNewPostLatitude(null)
-                }}
-                onSelect={(sel) => {
-                  setNewPostLocationName(sel.name)
-                  setNewPostLongitude(sel.longitude)
-                  setNewPostLatitude(sel.latitude)
-                }}
-                onClear={() => {
-                  setNewPostLocationName("")
-                  setNewPostLongitude(null)
-                  setNewPostLatitude(null)
-                }}
-                placeholder="Search location (e.g. Prague, Czech Republic)"
-              />
-
-              {newPostLongitude != null && newPostLatitude != null ? (
-                <div className="text-xs text-muted-foreground">
-                  Selected: lon {newPostLongitude.toFixed(4)} · lat {newPostLatitude.toFixed(4)}
+                  </div>
                 </div>
-              ) : null}
-
-              <div className="space-y-2">
-                <Label>Description</Label>
-                <Textarea
-                  rows={4}
-                  value={newPostDescription}
-                  onChange={(e) => setNewPostDescription(e.target.value)}
-                  placeholder="Write something..."
-                />
-              </div>
-
-              <FileDropzone
-                label="Photos"
-                helper="JPG/PNG only, max 5MB each, up to 9 images."
-                accept={ACCEPT_ATTR}
-                multiple
-                filesCount={newPostFiles.length}
-                onPickFiles={(files) => {
-                  if (files.length > 9) toast.error("Max 9 images per post")
-                  const { valid, errors } = validateFiles(files.slice(0, 9))
-                  if (errors.length) toast.error(errors[0])
-                  setNewPostFiles(valid)
-                }}
-                onClear={newPostFiles.length ? () => setNewPostFiles([]) : undefined}
-                preview={
-                  newPostFiles.length ? (
-                    <div className="grid grid-cols-3 gap-2">
-                      {newPostPreviewUrls.slice(0, 9).map((p) => (
-                        <div key={p.url} className="aspect-square overflow-hidden rounded-md border bg-muted">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={p.url}
-                            alt={p.file.name}
-                            className="h-full w-full cursor-zoom-in object-cover transition-transform duration-200 hover:scale-[1.03]"
-                            onClick={() => onZoom(p.url)}
-                          />
-                        </div>
+              ) : (
+                /* ── Read row ─────────────────────────────────────────── */
+                <div key={p.id} className="p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs text-muted-foreground">
+                        {new Date(p.occurred_at ?? p.created_at).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+                      </div>
+                      {p.deleted_at ? (
+                        <Badge variant="secondary" className="text-[10px] h-5">Deleted</Badge>
+                      ) : null}
+                    </div>
+                    <Button variant="outline" size="sm" className="gap-2" onClick={() => openPostEditor(p)}>
+                      <Pencil className="h-4 w-4" />
+                      Edit
+                    </Button>
+                  </div>
+                  {p.location_name || (p.longitude != null && p.latitude != null) ? (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {p.location_name ? p.location_name : `lon ${Number(p.longitude).toFixed(4)} · lat ${Number(p.latitude).toFixed(4)}`}
+                    </div>
+                  ) : null}
+                  <div className="mt-2 text-sm">{p.description ?? "—"}</div>
+                  {p.photos?.length ? (
+                    <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
+                      {p.photos.slice(0, 6).map((url) => (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          key={url}
+                          src={url}
+                          alt="post"
+                          className="h-28 w-full cursor-zoom-in rounded-md object-cover transition-transform duration-200 hover:scale-[1.03]"
+                          onClick={() => onZoom(url)}
+                        />
                       ))}
                     </div>
-                  ) : null
-                }
-              />
-            </div>
-          </div>
-
-          <SheetFooter className="flex-none pt-2">
-            <Button variant="outline" onClick={() => setAddPostOpen(false)} disabled={addPostSaving}>
-              Cancel
-            </Button>
-            <Button onClick={createPost} disabled={addPostSaving}>
-              {addPostSaving ? "Creating..." : "Create post"}
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
-    </>
+                  ) : null}
+                </div>
+              )
+            )
+          : null}
+      </div>
+    </div>
   )
 }
-
-

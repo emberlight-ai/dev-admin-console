@@ -79,8 +79,10 @@ Step deliberately, never skip a tier:
 
 The accent is themeable. [`theme-color.tsx`](src/components/theme-color.tsx)
 sets `data-color` on `<html>`, which remaps `--primary` / `--ring` /
-`--sidebar-primary`. Eight Elden-Ring-named affinities ship; **Magic** (glintstone
-blue) is the default, **Sekura** (sakura pink) is the house favorite.
+`--sidebar-primary`. Eight Elden-Ring-named affinities ship; **Sekura** (sakura
+pink) is the default. The accent and light/dark/auto appearance are chosen in the
+Settings dialog ([`settings-dialog.tsx`](src/components/settings-dialog.tsx)),
+opened from the sidebar — not from the header.
 
 | Affinity | Swatch | Affinity | Swatch |
 |---|---|---|---|
