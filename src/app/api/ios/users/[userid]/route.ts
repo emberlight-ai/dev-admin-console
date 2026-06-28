@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import tzlookup from 'tz-lookup';
+import { supabaseAdmin } from '@/lib/supabase';
 import { withLogging } from '@/lib/with-logging';
 
 function isUuid(v: string) {
@@ -164,6 +165,22 @@ async function handleGET(
     }
     if (!data) {
       return NextResponse.json(unknownUser(userid), { status: 200 });
+    }
+
+    // Restore on re-login: if a previously soft-deleted user signs back in (same
+    // Apple/auth identity) and fetches their OWN profile, clear `deleted_at` so
+    // they return to a working account instead of a hidden, half-deleted state.
+    if (data.deleted_at) {
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData?.user?.id === userid) {
+        const { data: restored } = await supabaseAdmin
+          .from('users')
+          .update({ deleted_at: null })
+          .eq('userid', userid)
+          .select('*')
+          .maybeSingle();
+        return NextResponse.json(restored ?? { ...data, deleted_at: null });
+      }
     }
 
     return NextResponse.json(data);

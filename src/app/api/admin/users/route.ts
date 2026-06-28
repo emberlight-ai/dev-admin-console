@@ -65,12 +65,14 @@ export async function GET(req: NextRequest) {
       return jsonError('Missing required query params: created_from, created_to', 400);
     }
 
+    // New-customers acquisition: count by created_at regardless of deleted_at — a
+    // user acquired in the window still counts even if they later deleted (that's
+    // what made the chart go negative for a day when someone deleted).
     const q = supabaseAdmin
       .from('users')
       .select('created_at,is_digital_human')
       .gte('created_at', createdFrom)
       .lte('created_at', createdTo)
-      .is('deleted_at', null)
       .order('created_at', { ascending: true });
 
     const { data, error } = await q;
@@ -78,11 +80,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ data: data ?? [] });
   }
 
-  // mode=list
+  // mode=list — includes deleted users (so they're counted in "new customers" and
+  // shown with a red "Deleted" tag); `deleted_at` lets the UI distinguish them.
   let q = supabaseAdmin
     .from('users')
-    .select('userid,username,gender,age,zipcode,location_name,avatar,created_at,profession,updated_at,is_digital_human')
-    .is('deleted_at', null)
+    .select('userid,username,gender,age,zipcode,location_name,avatar,created_at,profession,updated_at,is_digital_human,deleted_at')
     .order('created_at', { ascending: false });
 
   if (isDigitalBool !== null) q = q.eq('is_digital_human', isDigitalBool);

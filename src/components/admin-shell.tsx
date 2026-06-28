@@ -17,6 +17,7 @@ import {
   Settings,
   SlidersHorizontal,
   Star,
+  UserX,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -53,6 +54,7 @@ const dbManagementGroup = {
   title: "DB management",
   items: [
     { href: "/admin/digital-humans", label: "Digital Humans", icon: Bot },
+    { href: "/admin/deleted-users", label: "Deleted Users", icon: UserX },
   ],
 }
 

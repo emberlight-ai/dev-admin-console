@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { endOfDay, format, isSameDay, startOfDay, subDays } from "date-fns"
-import { CalendarDays, ChevronDown, Eye } from "lucide-react"
+import { CalendarDays, Eye } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -31,19 +31,7 @@ type UserRow = {
   location_name?: string | null
   avatar?: string | null
   created_at: string
-}
-
-type DeletedUserRow = {
-  id: string
-  deleted_user_id: string
-  deleted_at: string
-  provider?: string | null
-  profile_snapshot?: { username?: string; avatar?: string } | null
-  usage_snapshot?: {
-    user_posts?: number
-    messages?: number
-    user_matches?: number
-  } | null
+  deleted_at?: string | null
 }
 
 import type { DateRange } from "react-day-picker"
@@ -181,11 +169,6 @@ function SubscriptionsCard({
 export default function ManageUsers() {
   const [users, setUsers] = React.useState<UserRow[]>([])
   const [loading, setLoading] = React.useState(true)
-  // Deleted Users is collapsed by default; admins expand it on demand so the
-  // page isn't dominated by a list they rarely need.
-  const [deletedExpanded, setDeletedExpanded] = React.useState(false)
-  const [deletedUsers, setDeletedUsers] = React.useState<DeletedUserRow[]>([])
-  const [deletedLoading, setDeletedLoading] = React.useState(true)
   const [dateMode, setDateMode] = React.useState<"day" | "range">("day")
   const [selectedDay, setSelectedDay] = React.useState<Date>(() => startOfDay(new Date()))
   const [customRange, setCustomRange] = React.useState<DateRange | undefined>(undefined)
@@ -335,24 +318,6 @@ export default function ManageUsers() {
     void fetchImageCounts()
   }, [fetchImageCounts])
 
-  const fetchDeletedUsers = React.useCallback(async () => {
-    setDeletedLoading(true)
-    try {
-      const res = await fetch("/api/admin/deleted-users?mode=list")
-      const json = (await res.json()) as { data?: DeletedUserRow[]; error?: string }
-      if (!res.ok) throw new Error(json.error || "Failed to fetch deleted users")
-      setDeletedUsers((json.data ?? []) as DeletedUserRow[])
-    } catch (err: unknown) {
-      console.error(err)
-      setDeletedUsers([])
-    }
-    setDeletedLoading(false)
-  }, [])
-
-  React.useEffect(() => {
-    void fetchDeletedUsers()
-  }, [fetchDeletedUsers])
-
   // Cohort conversion for the selected range: of the new real users created in
   // the window, the share who have ever paid (in the selected environment).
   const paidUserIds = React.useMemo(() => new Set(paidIds), [paidIds])
@@ -361,6 +326,14 @@ export default function ManageUsers() {
     const paid = users.reduce((n, u) => n + (paidUserIds.has(u.userid) ? 1 : 0), 0)
     return { total, paid, rate: total === 0 ? 0 : (paid / total) * 100 }
   }, [users, paidUserIds])
+
+  // New customers acquired in range = active + deleted. Deletion doesn't subtract
+  // from acquisition (the customer was still acquired); we just split the total.
+  const customerStats = React.useMemo(() => {
+    const total = users.length
+    const deleted = users.reduce((n, u) => n + (u.deleted_at ? 1 : 0), 0)
+    return { total, active: total - deleted, deleted }
+  }, [users])
 
   return (
     <div className="space-y-6">
@@ -447,9 +420,13 @@ export default function ManageUsers() {
         />
         <StatCard
           title="New Customers"
-          value={loading ? "—" : users.length.toLocaleString()}
+          value={loading ? "—" : customerStats.total.toLocaleString()}
           deltaPct={0}
-          subtitle="Real users created in range"
+          subtitle={
+            loading
+              ? "Real users created in range"
+              : `${customerStats.active.toLocaleString()} active · ${customerStats.deleted.toLocaleString()} deleted`
+          }
           showDelta={false}
         />
         <StatCard
@@ -570,7 +547,7 @@ export default function ManageUsers() {
               </TableHeader>
               <TableBody>
                 {users.map((u) => (
-                  <TableRow key={u.userid}>
+                  <TableRow key={u.userid} className={cn(u.deleted_at && "opacity-60")}>
                     <TableCell className="pl-4">
                       <Avatar className="h-9 w-9">
                         <AvatarImage src={`/api/avatar/${u.userid}`} alt={u.username} />
@@ -580,6 +557,9 @@ export default function ManageUsers() {
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         <span>{u.username}</span>
+                        {u.deleted_at ? (
+                          <Badge variant="destructive">Deleted</Badge>
+                        ) : null}
                         {premiumUserIds.has(u.userid) ? (
                           <Badge className="bg-amber-500 text-amber-950 hover:bg-amber-600">Premium</Badge>
                         ) : null}
@@ -610,87 +590,6 @@ export default function ManageUsers() {
         </div>
       </Card>
 
-      <Card className="p-0">
-        <button
-          type="button"
-          onClick={() => setDeletedExpanded((v) => !v)}
-          aria-expanded={deletedExpanded}
-          className="flex w-full items-center justify-between gap-4 p-6 text-left transition-colors hover:bg-muted/40"
-        >
-          <div>
-            <div className="text-sm font-medium">Deleted Users</div>
-            <div className="text-xs text-muted-foreground">
-              {deletedLoading
-                ? "Loading..."
-                : `${deletedUsers.length} deleted users · click to ${deletedExpanded ? "collapse" : "expand"}`}
-            </div>
-          </div>
-          <ChevronDown
-            className={cn(
-              "h-5 w-5 shrink-0 text-muted-foreground transition-transform",
-              deletedExpanded && "rotate-180"
-            )}
-          />
-        </button>
-        {deletedExpanded ? (
-        <div className="border-t">
-          {deletedLoading ? (
-            <TableSkeleton columns={8} />
-          ) : deletedUsers.length === 0 ? (
-            <div className="py-10 text-center text-muted-foreground">No deleted users.</div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="pl-4">Avatar</TableHead>
-                  <TableHead>Username</TableHead>
-                  <TableHead>Provider</TableHead>
-                  <TableHead>Deleted</TableHead>
-                  <TableHead>Posts</TableHead>
-                  <TableHead>Matches</TableHead>
-                  <TableHead>Messages</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {deletedUsers.map((u) => {
-                  const username = u.profile_snapshot?.username ?? "—"
-                  const posts = u.usage_snapshot?.user_posts ?? 0
-                  const matches = u.usage_snapshot?.user_matches ?? 0
-                  const messages = u.usage_snapshot?.messages ?? 0
-                  return (
-                    <TableRow key={u.id}>
-                      <TableCell className="pl-4">
-                        <Avatar className="h-9 w-9">
-                          <AvatarImage src={u.profile_snapshot?.avatar ?? ""} alt={username} />
-                          <AvatarFallback>{String(username).slice(0, 2).toUpperCase()}</AvatarFallback>
-                        </Avatar>
-                      </TableCell>
-                      <TableCell className="font-medium">{username}</TableCell>
-                      <TableCell className="text-muted-foreground">{u.provider ?? "—"}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {u.deleted_at ? new Date(u.deleted_at).toLocaleString() : "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">{posts}</TableCell>
-                      <TableCell className="text-muted-foreground">{matches}</TableCell>
-                      <TableCell className="text-muted-foreground">{messages}</TableCell>
-                      <TableCell className="text-left">
-                        <Button asChild variant="outline" size="sm">
-                          <Link href={`/admin/users/${u.deleted_user_id}`} className="gap-2">
-                            <Eye className="h-4 w-4" />
-                            View
-                          </Link>
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-        ) : null}
-      </Card>
     </div>
   )
 }

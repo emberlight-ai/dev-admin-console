@@ -47,52 +47,6 @@ async function fetchAllRows<T>(
   return out;
 }
 
-async function deleteUserImagesFolder(userId: string) {
-  // Our storage paths are generally `${userId}/...` in the `images` bucket (see schema storage policy).
-  const rootPrefix = `${userId}/`;
-  const bucket = supabaseAdmin.storage.from('images');
-
-  // Supabase storage listing is non-recursive; implement our own traversal.
-  const limit = 1000;
-  const maxPagesPerFolder = 200; // safety cap
-
-  const folderQueue: string[] = [rootPrefix];
-
-  while (folderQueue.length > 0) {
-    const folder = folderQueue.shift()!;
-
-    for (let page = 0; page < maxPagesPerFolder; page++) {
-      const offset = page * limit;
-      const { data: items, error } = await bucket.list(folder, {
-        limit,
-        offset,
-        sortBy: { column: 'name', order: 'asc' },
-      });
-      if (error) throw error;
-      if (!items || items.length === 0) break;
-
-      const filePaths: string[] = [];
-
-      for (const it of items) {
-        // Heuristic: folders generally have `id: null` and no metadata.
-        const isFolder = (it as { id?: string | null }).id == null;
-        if (isFolder) {
-          folderQueue.push(`${folder}${it.name}/`);
-        } else {
-          filePaths.push(`${folder}${it.name}`);
-        }
-      }
-
-      if (filePaths.length > 0) {
-        const { error: removeErr } = await bucket.remove(filePaths);
-        if (removeErr) throw removeErr;
-      }
-
-      if (items.length < limit) break;
-    }
-  }
-}
-
 async function handlePOST(req: NextRequest) {
   try {
     const supabase = getUserSupabase(req);
@@ -254,28 +208,45 @@ async function handlePOST(req: NextRequest) {
       return NextResponse.json({ error: auditErr.message }, { status: 500 });
     }
 
-    // 3) Best-effort: delete user-owned storage objects (not covered by FK cascades).
-    try {
-      await deleteUserImagesFolder(userId);
-    } catch (storageErr: unknown) {
-      // Don't block account deletion; return success but note cleanup warning.
-      const msg =
-        storageErr instanceof Error
-          ? storageErr.message
-          : 'storage cleanup failed';
-      // Continue to delete auth user regardless (privacy first).
-      console.warn('[deleteUserImagesFolder] failed:', msg);
+    // 3) SOFT-DELETE. Account deletion is NOT a refund, so we must keep the user
+    //    row and (crucially) their `subscription` rows for billing/ops visibility
+    //    in the admin console. We therefore do NOT hard-delete the Supabase Auth
+    //    user — that cascades `public.users` (FK ON DELETE CASCADE) and wipes the
+    //    subscription. Instead we set `deleted_at`, which every app-facing query
+    //    already filters on (`deleted_at is null`), so the profile stops appearing
+    //    in match cards, discovery, chat, etc. Profile media is left intact so the
+    //    admin can still see the account. A returning user who signs back in is
+    //    restored (see the iOS profile GET, which clears `deleted_at`).
+    const nowIso = new Date().toISOString();
+    const { error: softErr } = await supabaseAdmin
+      .from('users')
+      .update({ deleted_at: nowIso })
+      .eq('userid', userId);
+    if (softErr) {
+      return NextResponse.json({ error: softErr.message }, { status: 500 });
     }
 
-    // 4) Hard-delete the Supabase Auth user.
-    // This also frees up the Apple identity so the same Apple ID can create a NEW auth.users row with a NEW id.
-    // NOTE: Because public.users.userid references auth.users(id) ON DELETE CASCADE, deleting the auth user
-    // will cascade-delete public.users and most app tables referencing it.
-    const { error: delErr } = await supabaseAdmin.auth.admin.deleteUser(userId);
-
-    if (delErr) {
-      return NextResponse.json({ error: delErr.message }, { status: 500 });
-    }
+    // Remove the user's presence from matching/safety tables so they don't linger
+    // in anyone's deck, pending invites, or chat list (mirrors rpc_request_delete_user).
+    // Deleting user_matches cascades their messages — already captured in the audit above.
+    await Promise.all([
+      supabaseAdmin
+        .from('match_requests')
+        .delete()
+        .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`),
+      supabaseAdmin
+        .from('user_matches')
+        .delete()
+        .or(`user_a.eq.${userId},user_b.eq.${userId}`),
+      supabaseAdmin
+        .from('blocks')
+        .delete()
+        .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`),
+      supabaseAdmin
+        .from('reports')
+        .delete()
+        .or(`reporter_id.eq.${userId},target_user_id.eq.${userId}`),
+    ]);
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
