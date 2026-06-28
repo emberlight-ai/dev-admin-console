@@ -664,17 +664,17 @@ export function SystemPromptForm({
           <div className="space-y-4">
             <StageHeading
               title="Matching"
-              description="Whether this personality appears in the feed and whether matches are instant."
+              description="How this personality shows up in matching and what happens when a real user invites it."
             />
             <ToggleRow
               title="Matching enabled"
-              description="Appears in the swipe feed"
+              description="Appears in the swipe feed and on the map, and can send / accept requests. Off = hidden from discovery."
               checked={matchingEnabled}
               onChange={setMatchingEnabled}
             />
             <ToggleRow
               title="Immediate match"
-              description="Skip the request — match instantly"
+              description="When a real user invites this personality (swipe or map), skip the pending request and create the match instantly. Off = the user's invite waits as a request."
               checked={immediateMatchEnabled}
               onChange={setImmediateMatchEnabled}
             />
@@ -684,24 +684,27 @@ export function SystemPromptForm({
         {activeStage === "greeting" ? (
           <div className="space-y-4">
             <StageHeading
-              title="Greeting"
-              description="An optional first message sent automatically when a match is created."
+              title="Greeting / outreach (the 'say hi')"
+              description="This single switch controls whether the personality initiates: it proactively reaches out to nearby real users on the map (nearby invitations) AND sends the first message when a match is created. Off = it never initiates; it only replies."
             />
             <ToggleRow
-              title="Active greeting"
-              description="Send the first message on match"
+              title="Active greeting & nearby outreach"
+              description="ON: this personality says hi first — reaches out to nearby users and opens new matches. OFF: no nearby outreach, no auto first message."
               checked={activeGreetingEnabled}
               onChange={setActiveGreetingEnabled}
             />
             <div className="space-y-2">
-              <Label>Greeting prompt</Label>
+              <Label>Greeting prompt (nearby opener)</Label>
               <Textarea
                 rows={10}
                 value={activeGreetingPrompt}
                 onChange={(e) => setActiveGreetingPrompt(e.target.value)}
-                placeholder="e.g. When a match is created, send a warm, casual first message to break the ice."
+                placeholder="e.g. Notice you're nearby and send a short, warm 'say hi' opener to start the conversation."
                 disabled={!activeGreetingEnabled}
               />
+              <div className="text-xs text-muted-foreground">
+                Used by nearby invitations (find-nearby-people → dh-nearby-dispatch) to generate each &quot;say hi&quot; opener.
+              </div>
             </div>
           </div>
         ) : null}

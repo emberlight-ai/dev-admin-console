@@ -78,6 +78,58 @@ async function generateReply(prompt: string) {
   }
 }
 
+// ── Typing indicator (server → client Realtime broadcast) ─────────────────────
+// The iOS client subscribes to the per-conversation channel `chat:<match_id>` and
+// renders "Typing…" from broadcasts on the `typing` event. The DH is server-side
+// and never holds a websocket, so we push typing via the Realtime HTTP Broadcast
+// API while generating + pacing the reply, then clear it right before the message
+// lands. Payload shape mirrors the client's TypingPayload ({ user_id, typing }).
+const REALTIME_BROADCAST_URL = `${Deno.env.get('SUPABASE_URL')}/realtime/v1/api/broadcast`;
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+async function broadcastTyping(matchId: string, dhId: string, isTyping: boolean): Promise<void> {
+  try {
+    await fetch(REALTIME_BROADCAST_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({
+        messages: [
+          {
+            topic: `chat:${matchId.toLowerCase()}`,
+            event: 'typing',
+            payload: { user_id: dhId, typing: isTyping },
+            private: false,
+          },
+        ],
+      }),
+    });
+  } catch (err) {
+    // Typing is best-effort cosmetic — never let it break a reply.
+    console.error('[dh-auto-reply] broadcastTyping failed', err);
+  }
+}
+
+// Start broadcasting "typing" and keep it alive with a heartbeat (the client
+// auto-clears the indicator a few seconds after the last event). Returns a stop
+// function that cancels the heartbeat and broadcasts "stopped" exactly once.
+function startTypingHeartbeat(matchId: string, dhId: string): () => Promise<void> {
+  void broadcastTyping(matchId, dhId, true);
+  const interval = setInterval(() => {
+    void broadcastTyping(matchId, dhId, true);
+  }, 3000);
+  let stopped = false;
+  return async () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(interval);
+    await broadcastTyping(matchId, dhId, false);
+  };
+}
+
 // ── In-process cache (survives warm invocations on Deno Deploy) ───────────────
 interface CachedPrompt {
   template: string;
@@ -893,45 +945,55 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 11b. Generate the reply.
-      const result = await generateReply(replyPrompt);
-      const respData = await result.response;
-      const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
+      // 11b–12. Now that we've committed to replying, show a live "Typing…"
+      //          indicator for the whole generation + send-delay window, and clear
+      //          it right before the message lands (in `finally`, so a failure
+      //          can't leave the user staring at a stuck indicator).
+      const stopTyping = startTypingHeartbeat(matchId, bot.userid);
+      try {
+        // 11b. Generate the reply.
+        const result = await generateReply(replyPrompt);
+        const respData = await result.response;
+        const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
 
-      // 11c. Human-like send delay — the ONLY thing that paces auto-replies.
-      //      (follow_up_delay in SystemPrompts is unrelated: it paces the separate
-      //      dh-followup re-engagement job, not reply speed.)
-      //
-      //      A longer reply lands slower, and nothing ever sends instantly. We derive
-      //      a target reply time from the reply length (read lead + "typing" time at
-      //      the personality's configured chars/sec), count time already spent
-      //      generating toward it, then bound the wait by the personality's min
-      //      (never instant) and max (kept under the lock window) delays.
-      const charsPerSec = Math.max(1, promptConfig?.replyCharsPerSecond ?? 15);
-      const READ_LEAD_MS = 800;
-      const minSendDelayMs = Math.max(0, (promptConfig?.replyMinDelaySeconds ?? 2)) * 1000;
-      const maxSendDelayMs = Math.min(60, Math.max(0, (promptConfig?.replyMaxDelaySeconds ?? 18))) * 1000;
-      const jitter = 0.85 + Math.random() * 0.3;  // ±15% so the cadence isn't metronomic
-      const typingTargetMs = (READ_LEAD_MS + (responseText.length / charsPerSec) * 1000) * jitter;
-      const elapsedMs = Date.now() - startTime;
-      const sendDelayMs = Math.min(
-        maxSendDelayMs,
-        Math.max(minSendDelayMs, Math.round(typingTargetMs) - elapsedMs)
-      );
-      console.log(
-        '[dh-auto-reply] send delay', sendDelayMs, 'ms for', matchId,
-        '(', responseText.length, 'chars, gen', elapsedMs, 'ms, cps', charsPerSec, ')'
-      );
-      if (sendDelayMs > 0) await new Promise((r) => setTimeout(r, sendDelayMs));
+        // 11c. Human-like send delay — the ONLY thing that paces auto-replies.
+        //      (follow_up_delay in SystemPrompts is unrelated: it paces the separate
+        //      dh-followup re-engagement job, not reply speed.)
+        //
+        //      A longer reply lands slower, and nothing ever sends instantly. We derive
+        //      a target reply time from the reply length (read lead + "typing" time at
+        //      the personality's configured chars/sec), count time already spent
+        //      generating toward it, then bound the wait by the personality's min
+        //      (never instant) and max (kept under the lock window) delays.
+        const charsPerSec = Math.max(1, promptConfig?.replyCharsPerSecond ?? 15);
+        const READ_LEAD_MS = 800;
+        const minSendDelayMs = Math.max(0, (promptConfig?.replyMinDelaySeconds ?? 2)) * 1000;
+        const maxSendDelayMs = Math.min(60, Math.max(0, (promptConfig?.replyMaxDelaySeconds ?? 18))) * 1000;
+        const jitter = 0.85 + Math.random() * 0.3;  // ±15% so the cadence isn't metronomic
+        const typingTargetMs = (READ_LEAD_MS + (responseText.length / charsPerSec) * 1000) * jitter;
+        const elapsedMs = Date.now() - startTime;
+        const sendDelayMs = Math.min(
+          maxSendDelayMs,
+          Math.max(minSendDelayMs, Math.round(typingTargetMs) - elapsedMs)
+        );
+        console.log(
+          '[dh-auto-reply] send delay', sendDelayMs, 'ms for', matchId,
+          '(', responseText.length, 'chars, gen', elapsedMs, 'ms, cps', charsPerSec, ')'
+        );
+        if (sendDelayMs > 0) await new Promise((r) => setTimeout(r, sendDelayMs));
 
-      // 12. Insert reply
-      const { error: sendError } = await sendMessageWithOptionalIntimacy({
-        matchId,
-        content: responseText,
-        senderId: bot.userid,
-        intimacyScore: messageIntimacyScore,
-      });
-      if (sendError) throw sendError;
+        // 12. Insert reply
+        const { error: sendError } = await sendMessageWithOptionalIntimacy({
+          matchId,
+          content: responseText,
+          senderId: bot.userid,
+          intimacyScore: messageIntimacyScore,
+        });
+        if (sendError) throw sendError;
+      } finally {
+        // Clear the typing indicator whether the send succeeded or threw.
+        await stopTyping();
+      }
 
       // 12b. Maybe send a preserved selfie. Three paths feed the gate:
       //   • Early casual — if the chat has not warmed up after a couple of user

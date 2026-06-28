@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 import { supabaseAdmin } from "@/lib/supabase"
 
-type KeyRow = { 
+type KeyRow = {
   gender: string
   personality: string
   created_at: string

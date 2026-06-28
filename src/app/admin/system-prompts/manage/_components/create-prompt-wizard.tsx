@@ -483,13 +483,13 @@ export function CreatePromptWizard({ initialGender = "Female" }: { initialGender
               />
               <ToggleRow
                 title="Enable matching"
-                description="Personality appears in the swipe feed and can send / accept requests."
+                description="Personality appears in the swipe feed and on the map, and can send / accept requests."
                 value={matchingEnabled}
                 onChange={setMatchingEnabled}
               />
               <ToggleRow
                 title="Immediate match"
-                description="Skip the request step — create a match instantly."
+                description="When a real user invites this personality (swipe or map), skip the pending request and create the match instantly."
                 value={immediateMatchEnabled}
                 onChange={setImmediateMatchEnabled}
                 disabled={!matchingEnabled}
@@ -506,17 +506,17 @@ export function CreatePromptWizard({ initialGender = "Female" }: { initialGender
           {currentStep.key === "greeting" ? (
             <div className="space-y-4">
               <StepHeading
-                title="Should it send the first message?"
-                description="When enabled, the personality greets the user automatically as soon as a match is created."
+                title="Greeting / outreach — the 'say hi'"
+                description="One switch: whether this personality initiates. ON = it reaches out to nearby real users on the map (nearby invitations) AND sends the first message on a new match. OFF = it only replies, never initiates."
               />
               <ToggleRow
-                title="Enable greeting"
-                description="Send an opening message on a new match."
+                title="Active greeting & nearby outreach"
+                description="ON: says hi first — nearby outreach + opens new matches. OFF: no nearby outreach, no auto first message."
                 value={activeGreetingEnabled}
                 onChange={setActiveGreetingEnabled}
               />
               <div className="space-y-2">
-                <Label>Greeting prompt</Label>
+                <Label>Greeting prompt (nearby opener)</Label>
                 <Textarea
                   rows={8}
                   className="max-h-[40vh] overflow-auto"
