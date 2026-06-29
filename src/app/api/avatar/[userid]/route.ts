@@ -39,11 +39,11 @@ export async function GET(
   const res = await fetch(upstream, { cache: 'no-store' });
 
   if (!res.ok) {
-    // If the upstream is missing, send a friendly default avatar.
-    if (res.status === 404) {
-      return NextResponse.redirect(new URL('/default-avatar.svg', req.url));
-    }
-    return new NextResponse(null, { status: res.status });
+    // A missing/broken avatar should always degrade to the default rather than
+    // surface an error in the UI. Supabase Storage returns 400 (not 404) for a
+    // missing public object, and a user mid-onboarding has no `users.avatar` yet
+    // — so fall back for ANY non-OK upstream status.
+    return NextResponse.redirect(new URL('/default-avatar.svg', req.url));
   }
 
   const buf = await res.arrayBuffer();
