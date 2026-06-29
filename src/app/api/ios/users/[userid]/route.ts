@@ -163,24 +163,33 @@ async function handleGET(
       }
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
+    // Restore on re-login. A soft-deleted user CANNOT see their own row — the
+    // "Public read profiles" RLS policy filters `deleted_at IS NULL` — so the
+    // user-client read above returns null (not the deleted row). If the
+    // authenticated caller owns a soft-deleted row, clear `deleted_at` via the
+    // ADMIN client so they come back to a working account; otherwise re-signup /
+    // onboarding would fail the UPDATE RLS (also `deleted_at IS NULL`) with a 400.
     if (!data) {
-      return NextResponse.json(unknownUser(userid), { status: 200 });
-    }
-
-    // Restore on re-login: if a previously soft-deleted user signs back in (same
-    // Apple/auth identity) and fetches their OWN profile, clear `deleted_at` so
-    // they return to a working account instead of a hidden, half-deleted state.
-    if (data.deleted_at) {
       const { data: authData } = await supabase.auth.getUser();
       if (authData?.user?.id === userid) {
-        const { data: restored } = await supabaseAdmin
+        const { data: deletedRow } = await supabaseAdmin
           .from('users')
-          .update({ deleted_at: null })
+          .select('deleted_at')
           .eq('userid', userid)
-          .select('*')
           .maybeSingle();
-        return NextResponse.json(restored ?? { ...data, deleted_at: null });
+        if (deletedRow?.deleted_at) {
+          const { data: restored } = await supabaseAdmin
+            .from('users')
+            .update({ deleted_at: null })
+            .eq('userid', userid)
+            .select('*')
+            .maybeSingle();
+          if (restored) {
+            return NextResponse.json(restored);
+          }
+        }
       }
+      return NextResponse.json(unknownUser(userid), { status: 200 });
     }
 
     return NextResponse.json(data);
