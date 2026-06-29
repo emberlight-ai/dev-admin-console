@@ -1189,12 +1189,12 @@ function PromptHistoryButton({
         History
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle>{title} — version history</DialogTitle>
           </DialogHeader>
-          <div className="grid grid-cols-[210px_1fr] gap-4">
-            <ScrollArea className="h-[55vh] rounded-md border">
+          <div className="grid min-h-0 flex-1 grid-cols-[210px_1fr] gap-4">
+            <ScrollArea className="rounded-md border">
               <div className="p-1">
                 {loading ? (
                   <div className="p-4 text-sm text-muted-foreground">Loading…</div>
@@ -1220,19 +1220,23 @@ function PromptHistoryButton({
                 )}
               </div>
             </ScrollArea>
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">
+            <div className="flex min-h-0 flex-col gap-2">
+              <Label className="shrink-0 text-xs text-muted-foreground">
                 {selected ? `Preview · ${new Date(selected.created_at).toLocaleString()}` : "Preview"}
               </Label>
-              <Textarea
-                readOnly
-                rows={18}
-                className={cn("resize-none", mono && "font-mono text-sm")}
-                value={selected ? extract(selected) : ""}
-              />
+              <ScrollArea className="min-h-0 flex-1 rounded-md border">
+                <pre
+                  className={cn(
+                    "whitespace-pre-wrap break-words p-3 text-sm",
+                    mono && "font-mono"
+                  )}
+                >
+                  {selected ? extract(selected) : ""}
+                </pre>
+              </ScrollArea>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
