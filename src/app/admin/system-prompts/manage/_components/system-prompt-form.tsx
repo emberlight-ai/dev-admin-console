@@ -8,6 +8,7 @@ import {
   ChevronRight,
   FlaskConical,
   Hand,
+  History,
   MessageSquare,
   Pencil,
   Repeat,
@@ -33,6 +34,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 
 import { composeSystemPromptFromTemplate } from "@/lib/botProfile"
@@ -59,6 +61,16 @@ export type SystemPromptLatest = {
   skip_reply_intimacy_drop_chance: number
   skip_reply_intimacy_drop_delta: number
   skip_reply_max_consecutive: number
+}
+
+/// A previously-saved version of this personality (one row per save). Only the
+/// per-section prompt fields are needed for the rollback UI.
+type SystemPromptVersion = {
+  id: string
+  created_at: string
+  system_prompt: string | null
+  active_greeting_prompt: string | null
+  follow_up_message_prompt: string | null
 }
 
 type StageId = "matching" | "greeting" | "reply" | "followup"
@@ -134,6 +146,29 @@ export function SystemPromptForm({
   }
 
   const [initialSnapshot, setInitialSnapshot] = React.useState<PromptSnapshot | null>(null)
+
+  // Version history for the per-section rollback UI (loaded lazily on first open).
+  const [versions, setVersions] = React.useState<SystemPromptVersion[]>([])
+  const [versionsLoading, setVersionsLoading] = React.useState(false)
+
+  const fetchVersions = React.useCallback(async () => {
+    const g = gender.trim()
+    const p = personality.trim()
+    if (!g || !p) return
+    setVersionsLoading(true)
+    try {
+      const res = await fetch(
+        `/api/system-prompts/versions?gender=${encodeURIComponent(g)}&personality=${encodeURIComponent(p)}`
+      )
+      const json = (await res.json()) as { data?: SystemPromptVersion[]; error?: string }
+      if (!res.ok) throw new Error(json.error || "Failed to load versions")
+      setVersions(json.data ?? [])
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to load versions")
+    } finally {
+      setVersionsLoading(false)
+    }
+  }, [gender, personality])
 
   const [activeStage, setActiveStage] = React.useState<StageId>("reply")
   const [testOpen, setTestOpen] = React.useState(false)
@@ -694,7 +729,19 @@ export function SystemPromptForm({
               onChange={setActiveGreetingEnabled}
             />
             <div className="space-y-2">
-              <Label>Greeting prompt (nearby opener)</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label>Greeting prompt (nearby opener)</Label>
+                {isEdit ? (
+                  <PromptHistoryButton
+                    title="Greeting prompt"
+                    versions={versions}
+                    loading={versionsLoading}
+                    onOpen={fetchVersions}
+                    extract={(v) => v.active_greeting_prompt ?? ""}
+                    onRestore={setActiveGreetingPrompt}
+                  />
+                ) : null}
+              </div>
               <Textarea
                 rows={10}
                 value={activeGreetingPrompt}
@@ -716,7 +763,20 @@ export function SystemPromptForm({
               description="Core response behavior: the prompt, send pacing, and human-like silence."
             />
             <div className="space-y-2">
-              <Label>System prompt template</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label>System prompt template</Label>
+                {isEdit ? (
+                  <PromptHistoryButton
+                    title="Reply prompt"
+                    versions={versions}
+                    loading={versionsLoading}
+                    onOpen={fetchVersions}
+                    extract={(v) => v.system_prompt ?? ""}
+                    onRestore={setSystemPrompt}
+                    mono
+                  />
+                ) : null}
+              </div>
               <Textarea
                 rows={variant === "dialog" ? 12 : 16}
                 className="font-mono text-sm"
@@ -887,7 +947,19 @@ export function SystemPromptForm({
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Follow-up instruction prompt</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label>Follow-up instruction prompt</Label>
+                {isEdit ? (
+                  <PromptHistoryButton
+                    title="Follow-up prompt"
+                    versions={versions}
+                    loading={versionsLoading}
+                    onOpen={fetchVersions}
+                    extract={(v) => v.follow_up_message_prompt ?? ""}
+                    onRestore={setFollowUpPrompt}
+                  />
+                ) : null}
+              </div>
               <Textarea
                 rows={10}
                 value={followUpPrompt}
@@ -1067,6 +1139,123 @@ export function SystemPromptForm({
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+/// Per-section rollback: lists previous saved versions by date/time, previews the
+/// selected one, and restores its prompt into the form (the user then Saves, which
+/// commits it as a new version — non-destructive, matching the versioned model).
+function PromptHistoryButton({
+  title,
+  versions,
+  loading,
+  onOpen,
+  extract,
+  onRestore,
+  mono = false,
+}: {
+  title: string
+  versions: SystemPromptVersion[]
+  loading: boolean
+  onOpen: () => void
+  extract: (v: SystemPromptVersion) => string
+  onRestore: (value: string) => void
+  mono?: boolean
+}) {
+  const [open, setOpen] = React.useState(false)
+  const [selectedId, setSelectedId] = React.useState<string | null>(null)
+
+  // Only versions that actually had content for this section, newest first.
+  const items = React.useMemo(
+    () => versions.filter((v) => extract(v).trim().length > 0),
+    [versions, extract]
+  )
+  const selected = items.find((v) => v.id === selectedId) ?? items[0] ?? null
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-7 gap-1.5 text-xs text-muted-foreground"
+        onClick={() => {
+          onOpen()
+          setSelectedId(null)
+          setOpen(true)
+        }}
+      >
+        <History className="h-3.5 w-3.5" />
+        History
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{title} — version history</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-[210px_1fr] gap-4">
+            <ScrollArea className="h-[55vh] rounded-md border">
+              <div className="p-1">
+                {loading ? (
+                  <div className="p-4 text-sm text-muted-foreground">Loading…</div>
+                ) : items.length === 0 ? (
+                  <div className="p-4 text-sm text-muted-foreground">No saved versions yet.</div>
+                ) : (
+                  items.map((v, i) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => setSelectedId(v.id)}
+                      className={cn(
+                        "flex w-full flex-col items-start gap-0.5 rounded px-3 py-2 text-left text-sm transition-colors hover:bg-muted",
+                        selected?.id === v.id && "bg-muted"
+                      )}
+                    >
+                      <span className="font-medium">{new Date(v.created_at).toLocaleString()}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {i === 0 ? "Latest (current)" : `${i} newer version${i === 1 ? "" : "s"}`}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">
+                {selected ? `Preview · ${new Date(selected.created_at).toLocaleString()}` : "Preview"}
+              </Label>
+              <Textarea
+                readOnly
+                rows={18}
+                className={cn("resize-none", mono && "font-mono text-sm")}
+                value={selected ? extract(selected) : ""}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!selected}
+              onClick={() => {
+                if (!selected) return
+                onRestore(extract(selected))
+                toast.success(
+                  `Restored ${title.toLowerCase()} from ${new Date(
+                    selected.created_at
+                  ).toLocaleString()}. Review and Save to apply.`
+                )
+                setOpen(false)
+              }}
+            >
+              Restore this version
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
