@@ -226,18 +226,18 @@ async function handlePOST(req: NextRequest) {
       return NextResponse.json({ error: softErr.message }, { status: 500 });
     }
 
-    // Remove the user's presence from matching/safety tables so they don't linger
-    // in anyone's deck, pending invites, or chat list (mirrors rpc_request_delete_user).
-    // Deleting user_matches cascades their messages — already captured in the audit above.
+    // Remove the user's presence from pending-invite / safety tables so they don't
+    // linger in anyone's deck or invite list. We deliberately do NOT delete
+    // `user_matches`: `messages.match_id` references it `ON DELETE CASCADE`, so
+    // deleting matches would wipe the entire chat history — which we keep for
+    // analytics. The deleted user is still hidden from others' chat lists because
+    // `rpc_list_connections` is SECURITY INVOKER and joins `public.users`, whose
+    // `deleted_at IS NULL` read policy filters the deleted participant out.
     await Promise.all([
       supabaseAdmin
         .from('match_requests')
         .delete()
         .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`),
-      supabaseAdmin
-        .from('user_matches')
-        .delete()
-        .or(`user_a.eq.${userId},user_b.eq.${userId}`),
       supabaseAdmin
         .from('blocks')
         .delete()
