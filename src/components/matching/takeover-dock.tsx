@@ -76,6 +76,7 @@ export function TakeoverDock({ matchId, participantIds, onClose }: TakeoverDockP
   // Typing indicator plumbing. dhIdRef mirrors `dh` so stable callbacks can read
   // it without a stale closure; the other two throttle outgoing "typing" pings.
   const dhIdRef = React.useRef<string | null>(null);
+  const takeoverRef = React.useRef(false);
   const lastTypingAtRef = React.useRef<number>(0);
   const typingStopRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -207,8 +208,13 @@ export function TakeoverDock({ matchId, participantIds, onClose }: TakeoverDockP
     dhIdRef.current = dh?.userid ?? null;
   }, [dh]);
 
-  // Clear the DH typing indicator when the dock unmounts (closed), so the user's
-  // app doesn't get stuck showing "Typing…".
+  React.useEffect(() => {
+    takeoverRef.current = takeover;
+  }, [takeover]);
+
+  // On close (unmount): hand control back to the AI and clear the typing
+  // indicator, so closing the dock resumes the bot. Raw fire-and-forget fetches
+  // (no setState) so they still land after the component is gone.
   React.useEffect(() => {
     return () => {
       if (typingStopRef.current) clearTimeout(typingStopRef.current);
@@ -219,7 +225,29 @@ export function TakeoverDock({ matchId, participantIds, onClose }: TakeoverDockP
           body: JSON.stringify({ match_id: matchId, dh_user_id: dhIdRef.current, typing: false }),
         }).catch(() => {});
       }
+      if (takeoverRef.current) {
+        void fetch('/api/admin/chat/takeover', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ match_id: matchId, active: false }),
+        }).catch(() => {});
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Safety net for tab-close / navigation, where the unmount cleanup may not run:
+  // release takeover via sendBeacon so a match is never left silently paused.
+  React.useEffect(() => {
+    const onBeforeUnload = () => {
+      if (!takeoverRef.current) return;
+      const blob = new Blob([JSON.stringify({ match_id: matchId, active: false })], {
+        type: 'application/json',
+      });
+      navigator.sendBeacon('/api/admin/chat/takeover', blob);
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -448,7 +476,7 @@ export function TakeoverDock({ matchId, participantIds, onClose }: TakeoverDockP
           </div>
           {takeover && (
             <div className="px-3 pb-2 text-[10px] text-muted-foreground">
-              The AI stays paused for this chat until you hand control back.
+              AI paused while you have control — closing this chat hands it back.
             </div>
           )}
         </>
