@@ -734,6 +734,15 @@ create table if not exists public.user_match_ai_state (
   updated_at timestamptz default now()
 );
 
+-- Human takeover ("human state"): when an admin operator takes over a digital-human
+-- conversation from the admin console, dh-auto-reply pauses for this match until
+-- control is handed back, so the operator is not fighting the bot. human_takeover_at
+-- records when it was engaged (null when released). Unlike ai_state (which advances
+-- with every message), this flag persists across messages until explicitly cleared.
+alter table public.user_match_ai_state
+  add column if not exists human_takeover boolean not null default false,
+  add column if not exists human_takeover_at timestamptz;
+
 -- ── DH preserved selfies: inventory + per-conversation sent ledger ──────────────
 -- Some digital humans have curated selfies at images/{dh}/chat_images/pic_N.{jpg,png}.
 -- A DH releases them in order as intimacy grows; the ledger prevents repeats per match.

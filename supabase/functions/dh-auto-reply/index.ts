@@ -744,7 +744,7 @@ Deno.serve(async (req) => {
     // 2. Fetch ai state for this match
     const { data: stateData, error: stateErr } = await supabase
       .from('user_match_ai_state')
-      .select('match_id, last_message_id, last_message_at, ai_last_processed_message_id, ai_locked_until, dh_user_id, real_user_id, ai_state, intimacy_score, intimacy_m, intimacy_v, last_selfie_sent_at')
+      .select('match_id, last_message_id, last_message_at, ai_last_processed_message_id, ai_locked_until, dh_user_id, real_user_id, ai_state, intimacy_score, intimacy_m, intimacy_v, last_selfie_sent_at, human_takeover')
       .eq('match_id', matchId)
       .single();
 
@@ -764,6 +764,14 @@ Deno.serve(async (req) => {
     // 3. Skip if the message was sent BY the digital human (avoid reply loops)
     if (senderId === dhId) {
       return new Response('Sender is DH, skip', { status: 200 });
+    }
+
+    // 3b. Skip if a human admin has taken over this conversation. The flag is set
+    // from the admin console (POST /api/admin/chat/takeover) and stays on until the
+    // operator hands control back, so the bot never talks over the human.
+    if (stateData.human_takeover) {
+      console.log('[dh-auto-reply] Human takeover active, skip', matchId);
+      return new Response('Human takeover', { status: 200 });
     }
 
     // 4. Skip if already locked (another invocation is handling it)

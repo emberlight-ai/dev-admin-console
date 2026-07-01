@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { TakeoverDock } from '@/components/matching/takeover-dock';
 
 // Helper to get a client that definitely has the keys from the env
 function getSupabase() {
@@ -42,6 +42,7 @@ interface MatchedUser {
   userid: string;
   username: string;
   is_digital_human?: boolean;
+  avatar?: string | null;
 }
 
 type UserSearchResult = {
@@ -430,6 +431,8 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
   // Per-row sending state, so multiple invites in flight don't fight over a
   // single boolean and the right button shows the spinner.
   const [pendingInviteUserId, setPendingInviteUserId] = React.useState<string | null>(null);
+  // When set, the Messenger-style takeover dock is open for the selected partner.
+  const [takeoverOpen, setTakeoverOpen] = React.useState(false);
 
   const fetchMatches = React.useCallback(async () => {
     setLoading(true);
@@ -468,7 +471,7 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
     if (partnerIds.length > 0) {
       const { data: usersData, error: usersError } = await supabase
         .from('users')
-        .select('userid, username, is_digital_human')
+        .select('userid, username, is_digital_human, avatar')
         .in('userid', partnerIds);
 
       if (usersError) {
@@ -561,11 +564,12 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
   }
 
   const selectedPartner = matchedUsers.find((u) => u.userid === selectedPartnerId) ?? null;
-  // "Take over" jumps to the partner's own admin page (chat history tab). If the
-  // partner is a digital human, that page lets you send messages as them.
-  const takeOverHref = selectedPartner
-    ? `${selectedPartner.is_digital_human ? '/admin/digital-humans' : '/admin/users'}/${selectedPartner.userid}?tab=history`
-    : null;
+  // "Take over" opens an in-place chat dock where the admin speaks AS the digital
+  // human toward the real user and pauses the bot for that conversation. Requires a
+  // digital human on one side of the match (the page user or the selected partner).
+  const canTakeOver = Boolean(
+    selectedPartner && (currentUserIsDigitalHuman || selectedPartner.is_digital_human)
+  );
 
   return (
     <div className="space-y-4">
@@ -654,18 +658,22 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
                   </SelectContent>
                 </Select>
               </div>
-              {takeOverHref && (
+              {selectedPartner && (
                 <Button
-                  asChild
+                  type="button"
                   variant="outline"
                   size="sm"
                   className="shrink-0"
-                  title="Open this partner's page to chat as them"
+                  disabled={!canTakeOver}
+                  title={
+                    canTakeOver
+                      ? 'Chat as the digital human and pause the bot for this conversation'
+                      : 'Takeover needs a digital human on one side of the match'
+                  }
+                  onClick={() => setTakeoverOpen(true)}
                 >
-                  <Link href={takeOverHref}>
-                    <LogIn className="h-4 w-4 mr-1" />
-                    Take over
-                  </Link>
+                  <LogIn className="h-4 w-4 mr-1" />
+                  Take over
                 </Button>
               )}
             </div>
@@ -681,6 +689,14 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
         </>
       ) : (
         <div className="text-sm text-muted-foreground p-4">No matches found for this user.</div>
+      )}
+
+      {takeoverOpen && selectedPartner && selectedPartnerId && matches[selectedPartnerId] && (
+        <TakeoverDock
+          matchId={matches[selectedPartnerId]}
+          participantIds={[currentUserId, selectedPartner.userid]}
+          onClose={() => setTakeoverOpen(false)}
+        />
       )}
     </div>
   );
