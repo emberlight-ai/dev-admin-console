@@ -76,5 +76,24 @@ select cron.schedule(
 -- the top of this file drops the old job when re-run. To remove the live job
 -- once, run:  select cron.unschedule('dh-scheduled-replies');
 
+-- ---- 5. dh-nightly-debrief: 09:10 UTC (~1-2am Pacific) ------
+-- The L5 loop: each L5 digital human reviews yesterday's conversations + OKR,
+-- checks the news for talking points, writes coach notes for tomorrow's replies
+-- and tomorrow's diary. See functions/dh-nightly-debrief.
+-- Deployed with --no-verify-jwt (like the other DH functions), so the cron call
+-- carries no Authorization header — no service-role JWT embedded in cron.
+select cron.unschedule('dh-nightly-debrief') where exists (select 1 from cron.job where jobname = 'dh-nightly-debrief');
+select cron.schedule(
+  'dh-nightly-debrief',
+  '10 9 * * *',
+  $$
+  select net.http_post(
+    url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-nightly-debrief',
+    headers := jsonb_build_object('Content-Type', 'application/json'),
+    body    := '{}'::jsonb
+  );
+  $$
+);
+
 -- ---- Verify all jobs are registered -------------------------
 select jobname, schedule, active from cron.job order by jobname;

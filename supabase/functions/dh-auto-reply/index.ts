@@ -69,12 +69,12 @@ const replyModel = vertexAI.getGenerativeModel({
 // Generate the user-facing reply with the Pro model, falling back to the utility
 // model if the configured reply model id is unavailable — so a bad id degrades
 // gracefully instead of breaking replies in production.
-async function generateReply(prompt: string) {
+async function generateReply(request: string | Record<string, unknown>) {
   try {
-    return await replyModel.generateContent(prompt);
+    return await replyModel.generateContent(request as any);
   } catch (err) {
     console.error('[dh-auto-reply] reply model failed; falling back to utility model', err);
-    return await model.generateContent(prompt);
+    return await model.generateContent(request as any);
   }
 }
 
@@ -165,6 +165,7 @@ interface UserRow {
   location_name: string | null;
   timezone: string | null;
   storyline: string | null;
+  dh_engine: string | null; // 'v1' (legacy) | 'l5' (persona kernel + memory + director)
 }
 
 const globalPromptCache = (globalThis as any).__dhPromptCache as Map<string, CachedPrompt> | undefined;
@@ -254,7 +255,7 @@ async function getUserRow(userid: string): Promise<UserRow | null> {
 
   const { data, error } = await supabase
     .from('users')
-    .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode, location_name, timezone, storyline')
+    .select('userid, is_digital_human, username, gender, personality, age, bio, profession, zipcode, location_name, timezone, storyline, dh_engine')
     .eq('userid', userid)
     .single();
   if (error || !data) return null;
@@ -386,6 +387,178 @@ function composeSystemInstruction(template: string, bot: UserRow, human: UserRow
   return prompt;
 }
 
+// ── Conversation craft (applies to ALL engines) ────────────────────────────────
+// Fixes the interrogation death-spiral: the legacy prompts say "match his length /
+// mirror low effort", which turns a low-effort user into a low-effort DH. These
+// rules are appended AFTER the persona template and take precedence on conflict.
+const CRAFT_RULES = `
+### CONVERSATION CRAFT — these rules OVERRIDE any earlier style rules they conflict with
+- You may send 1-3 chat bubbles this turn, like real texting. Each bubble is one short thought (under ~20 words). Two short bubbles usually feel more alive than one long one.
+- At most ONE question mark across ALL bubbles this turn. If your previous turn ended with a question, this turn should end with a statement instead.
+- If his messages are short or low-effort ("yeah", "ok", "lol"), do NOT mirror the low effort and do NOT fire another question. Carry the conversation: volunteer a small story, opinion, or something from your day, then leave room for him to react.
+- Deepen by sharing first: reveal something slightly personal and let him reciprocate, instead of extracting information with questions.
+- React to what he actually said before steering anywhere new. Callbacks to earlier details beat new topics.
+- Never restart with a greeting mid-conversation, and never repeat a sentence shape you used in your last few messages.`;
+
+// ── L5 engine: persona kernel + match memory + diary + coach notes ─────────────
+type L5Memory = { facts: unknown[]; open_loops: unknown[]; inside_jokes: unknown[] };
+type L5Context = { blocks: string; memory: L5Memory | null };
+
+function jsonList(v: unknown): string {
+  if (!Array.isArray(v) || v.length === 0) return '(none yet)';
+  return v.map((x) => `- ${typeof x === 'string' ? x : JSON.stringify(x)}`).join('\n');
+}
+
+async function loadL5Context(dhId: string, matchId: string): Promise<L5Context> {
+  const [personaRes, memRes, diaryRes, debriefRes] = await Promise.all([
+    supabase.from('dh_persona').select('tastes, texting_style, schedule, okr, notes').eq('dh_user_id', dhId).maybeSingle(),
+    supabase.from('dh_match_memory').select('facts, open_loops, inside_jokes').eq('match_id', matchId).maybeSingle(),
+    supabase.from('dh_diary').select('day, events, mood, talking_points').eq('dh_user_id', dhId).order('day', { ascending: false }).limit(1),
+    supabase.from('dh_debrief').select('prompt_addendum').eq('dh_user_id', dhId).order('day', { ascending: false }).limit(1),
+  ]);
+
+  const persona = personaRes.data ?? null;
+  const memory = (memRes.data as L5Memory | null) ?? null;
+  const diary = diaryRes.data?.[0] ?? null;
+  const coach = debriefRes.data?.[0]?.prompt_addendum ?? null;
+
+  const blocks: string[] = [];
+  if (persona) {
+    blocks.push(`<persona_kernel>
+Your tastes and boundaries (these BIND — have real opinions, disagree when it fits, deflect what you dislike):
+${JSON.stringify(persona.tastes ?? {}, null, 1)}
+Your texting fingerprint (follow it: bubble length, emoji policy, punctuation quirks):
+${JSON.stringify(persona.texting_style ?? {}, null, 1)}
+${persona.notes ? `Character notes: ${persona.notes}` : ''}
+</persona_kernel>`);
+  }
+  if (memory) {
+    blocks.push(`<what_you_remember_about_him>
+Facts you know:
+${jsonList(memory.facts)}
+Open threads to call back to (use ONE when natural — callbacks are gold):
+${jsonList(memory.open_loops)}
+Inside jokes:
+${jsonList(memory.inside_jokes)}
+</what_you_remember_about_him>`);
+  }
+  if (diary) {
+    blocks.push(`<your_day_today>
+Mood: ${diary.mood ?? 'normal'}
+Things that happened to you today (share ONE when the conversation needs fuel — do not dump them):
+${jsonList(diary.events)}
+Fresh topics you found interesting today:
+${jsonList(diary.talking_points)}
+</your_day_today>`);
+  }
+  if (coach) {
+    blocks.push(`<coach_notes>
+From your own debrief of yesterday's conversations (apply quietly):
+${coach}
+</coach_notes>`);
+  }
+
+  return { blocks: blocks.length ? `\n\n${blocks.join('\n\n')}` : '', memory };
+}
+
+// Async memory writer: after a reply goes out, distill durable memory for this
+// match. Cheap flash-lite call; failures never affect the reply.
+async function updateMatchMemory(
+  matchId: string,
+  dhId: string,
+  transcript: string,
+  existing: L5Memory | null,
+  lastMessageId: string | null
+): Promise<void> {
+  try {
+    const prompt = `You maintain the long-term memory a woman keeps about a man she is texting on a dating app.
+Existing memory (merge into it, don't lose good entries):
+${JSON.stringify(existing ?? { facts: [], open_loops: [], inside_jokes: [] })}
+
+Conversation (most recent):
+${transcript}
+
+Update the memory. Rules: facts = durable, specific things about HIM (job, city, hobbies, people, preferences), max 14, drop stale/duplicate ones. open_loops = unresolved threads worth a future callback ("his tournament Saturday"), max 6, remove resolved ones. inside_jokes = shared bits/nicknames, max 5. Short strings only. Respond with JSON only.`;
+    const res = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'OBJECT',
+          properties: {
+            facts: { type: 'ARRAY', items: { type: 'STRING' } },
+            open_loops: { type: 'ARRAY', items: { type: 'STRING' } },
+            inside_jokes: { type: 'ARRAY', items: { type: 'STRING' } },
+          },
+          required: ['facts', 'open_loops', 'inside_jokes'],
+        },
+      },
+    });
+    const txt = res.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? res.response?.text?.() ?? '';
+    const parsed = JSON.parse(txt);
+    await supabase.from('dh_match_memory').upsert({
+      match_id: matchId,
+      dh_user_id: dhId,
+      facts: (parsed.facts ?? []).slice(0, 14),
+      open_loops: (parsed.open_loops ?? []).slice(0, 6),
+      inside_jokes: (parsed.inside_jokes ?? []).slice(0, 5),
+      last_extracted_message_id: lastMessageId,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[dh-auto-reply] memory writer failed (non-fatal)', matchId, err);
+  }
+}
+
+// Post-send safety net: if a user message landed while we were generating (its
+// webhook hit our lock and exited), re-invoke ourselves for the newest message so
+// it is never silently dropped.
+async function reprocessNewestIfMissed(matchId: string, dhId: string, processedCheckpointId: string | null) {
+  try {
+    // Compare against the newest USER message in the table (not ai_state's
+    // last_message_id, which our own just-sent bubbles overwrite) so a user
+    // message that landed mid-generation or between bubbles is never masked.
+    const { data: newestRows } = await supabase
+      .from('messages')
+      .select('id, sender_id')
+      .eq('match_id', matchId)
+      .neq('sender_id', dhId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const st = newestRows?.[0]
+      ? { last_message_id: newestRows[0].id, last_message_sender_id: newestRows[0].sender_id }
+      : null;
+    if (!st?.last_message_id) return;
+    if (st.last_message_id === processedCheckpointId) return;
+
+    console.log('[dh-auto-reply] Missed message detected, re-invoking for', matchId, st.last_message_id);
+    const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/dh-auto-reply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
+      body: JSON.stringify({
+        type: 'INSERT',
+        table: 'messages',
+        schema: 'public',
+        record: {
+          id: st.last_message_id,
+          match_id: matchId,
+          sender_id: st.last_message_sender_id,
+          content: null,
+          created_at: new Date().toISOString(),
+        },
+      }),
+    }).then(() => {}).catch((e) => console.error('[dh-auto-reply] re-invoke failed', e));
+    const rt = (globalThis as any).EdgeRuntime;
+    if (rt?.waitUntil) rt.waitUntil(p);
+    // No await on purpose when waitUntil is unavailable: the re-invocation runs
+    // its own debounce; blocking this response on a full downstream reply would
+    // hold the lock window open for nothing.
+  } catch (err) {
+    console.error('[dh-auto-reply] reprocess check failed', matchId, err);
+  }
+}
+
 // ── Intimacy critic + Adam-style momentum + selfie picker ─────────────────────
 type IntimacyWarmupRate = 'very_low' | 'low' | 'normal' | 'high' | 'very_high' | 'extreme';
 
@@ -506,6 +679,11 @@ interface IntimacyResult {
   intimacy: number;            // 0-100 current closeness from the user's side
   selfieAppropriate: boolean;  // would sharing a personal selfie feel natural/welcome now?
   userRequestedPhoto: boolean; // did the user explicitly ask to see them / a pic?
+  // Director fields (L5 engine only; undefined on v1)
+  engagement?: number;         // 0-100: how engaged/entertained is HE right now
+  beat?: string;               // share | ask | tease | deepen | repair
+  callback?: string;           // a memory/open-loop worth referencing, or ''
+  bubbleCount?: number;        // suggested bubbles this turn (1-3)
 }
 
 type ImageTier = 'casual' | 'tease' | 'reward';
@@ -591,10 +769,22 @@ async function scoreIntimacy(
   systemText: string,
   transcript: string,
   previousScore: number | null,
-  warmupRate: IntimacyWarmupRate
+  warmupRate: IntimacyWarmupRate,
+  directorMode = false
 ): Promise<IntimacyResult | null> {
   try {
     const previous = previousScore == null ? 'unknown' : String(normalizeIntimacyScore(previousScore));
+    const directorInstructions = directorMode
+      ? `
+
+You are ALSO the conversation director. Judge how engaged/entertained HE is right now (0-100; one-word answers and slowing pace = low). Then plan the next beat:
+- "share": conversation needs fuel — she should volunteer something from her day/memory, not ask.
+- "ask": he's giving energy and it's natural to be curious back (use sparingly).
+- "tease": playful push-pull fits the vibe.
+- "deepen": the moment is right for a slightly personal disclosure that invites reciprocity.
+- "repair": he's cooling off or annoyed — acknowledge, lighten, re-engage gently.
+Pick a callback: ONE remembered fact/open thread from the context that would land well right now, or empty string. Suggest bubble_count 1-3 (2 is a good default; 1 for terse moods, 3 for storytelling).`
+      : '';
     const judgePrompt = `${systemText}
 
 You are an objective relationship analyst observing the conversation below. Do NOT role-play or reply. Judge the CURRENT emotional/romantic closeness from the user's side, and whether the digital human sharing a personal selfie would feel natural and welcome right at this moment.
@@ -603,12 +793,25 @@ Previous intimacy score: ${previous} on a 0-100 scale.
 Relationship warm-up rate: ${warmupRate}.
 Warm-up guidance: ${warmupGuidance(warmupRate)}
 
-Return the new CURRENT intimacy score on a 0-100 scale. Do not return a 0-1 fraction. Avoid both extremes: do not freeze the score when the user clearly warms up, and do not jump to a near-maximum score from one mildly positive message.
+Return the new CURRENT intimacy score on a 0-100 scale. Do not return a 0-1 fraction. Avoid both extremes: do not freeze the score when the user clearly warms up, and do not jump to a near-maximum score from one mildly positive message.${directorInstructions}
 
 Conversation:
 ${transcript}
 
 Respond with JSON only.`;
+    const baseProps: Record<string, unknown> = {
+      intimacy: { type: 'NUMBER' },
+      selfie_appropriate: { type: 'BOOLEAN' },
+      user_requested_photo: { type: 'BOOLEAN' },
+    };
+    const directorProps: Record<string, unknown> = directorMode
+      ? {
+          engagement: { type: 'NUMBER' },
+          beat: { type: 'STRING' },
+          callback: { type: 'STRING' },
+          bubble_count: { type: 'NUMBER' },
+        }
+      : {};
     const res = await model.generateContent({
       contents: [{ role: 'user', parts: [{ text: judgePrompt }] }],
       generationConfig: {
@@ -616,12 +819,13 @@ Respond with JSON only.`;
         responseMimeType: 'application/json',
         responseSchema: {
           type: 'OBJECT',
-          properties: {
-            intimacy: { type: 'NUMBER' },
-            selfie_appropriate: { type: 'BOOLEAN' },
-            user_requested_photo: { type: 'BOOLEAN' },
-          },
-          required: ['intimacy', 'selfie_appropriate', 'user_requested_photo'],
+          properties: { ...baseProps, ...directorProps },
+          required: [
+            'intimacy',
+            'selfie_appropriate',
+            'user_requested_photo',
+            ...(directorMode ? ['engagement', 'beat', 'callback', 'bubble_count'] : []),
+          ],
         },
       },
     });
@@ -629,10 +833,21 @@ Respond with JSON only.`;
       res.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? res.response?.text?.() ?? '';
     const parsed = JSON.parse(txt);
     const intimacy = normalizeIntimacyScore(parsed.intimacy);
+    const VALID_BEATS = new Set(['share', 'ask', 'tease', 'deepen', 'repair']);
     return {
       intimacy,
       selfieAppropriate: !!parsed.selfie_appropriate,
       userRequestedPhoto: !!parsed.user_requested_photo,
+      ...(directorMode
+        ? {
+            engagement: Number.isFinite(Number(parsed.engagement))
+              ? Math.max(0, Math.min(100, Number(parsed.engagement)))
+              : undefined,
+            beat: VALID_BEATS.has(String(parsed.beat)) ? String(parsed.beat) : 'share',
+            callback: typeof parsed.callback === 'string' ? parsed.callback : '',
+            bubbleCount: Math.max(1, Math.min(3, Math.round(Number(parsed.bubble_count) || 2))),
+          }
+        : {}),
     };
   } catch (e) {
     console.error('[dh-auto-reply] intimacy critic failed', e);
@@ -741,10 +956,12 @@ Deno.serve(async (req) => {
 
     await ensurePrompts();
 
-    // 2. Fetch ai state for this match
-    const { data: stateData, error: stateErr } = await supabase
+    // 2. Fetch ai state for this match (mutable: re-read after the burst debounce)
+    const AI_STATE_COLS =
+      'match_id, last_message_id, last_message_at, last_message_sender_id, ai_last_processed_message_id, ai_locked_until, dh_user_id, real_user_id, ai_state, intimacy_score, intimacy_m, intimacy_v, last_selfie_sent_at, human_takeover';
+    let { data: stateData, error: stateErr } = await supabase
       .from('user_match_ai_state')
-      .select('match_id, last_message_id, last_message_at, ai_last_processed_message_id, ai_locked_until, dh_user_id, real_user_id, ai_state, intimacy_score, intimacy_m, intimacy_v, last_selfie_sent_at, human_takeover')
+      .select(AI_STATE_COLS)
       .eq('match_id', matchId)
       .single();
 
@@ -774,6 +991,31 @@ Deno.serve(async (req) => {
       return new Response('Human takeover', { status: 200 });
     }
 
+    // 3c. Burst debounce. Real users send thoughts as several quick messages; the
+    // webhook fires on the FIRST one. Wait a beat, then re-read state: if a newer
+    // USER message arrived, ITS invocation (also debouncing, started later) owns
+    // the burst — exit and let it answer everything as one thought.
+    const DEBOUNCE_MS = 7000 + Math.floor(Math.random() * 4000);
+    await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
+    {
+      const { data: freshState } = await supabase
+        .from('user_match_ai_state')
+        .select(AI_STATE_COLS)
+        .eq('match_id', matchId)
+        .single();
+      if (freshState) {
+        if (
+          freshState.last_message_id &&
+          freshState.last_message_id !== record.id &&
+          freshState.last_message_sender_id !== dhId
+        ) {
+          console.log('[dh-auto-reply] Superseded by newer burst message, skip', matchId);
+          return new Response('Superseded', { status: 200 });
+        }
+        stateData = freshState; // include anything that landed during the debounce
+      }
+    }
+
     // 4. Skip if already locked (another invocation is handling it)
     if (stateData.ai_locked_until && new Date(stateData.ai_locked_until).getTime() > Date.now()) {
       console.log('[dh-auto-reply] Match locked, skip', matchId);
@@ -795,9 +1037,10 @@ Deno.serve(async (req) => {
 
     // 8. Acquire lock. The window must outlast generation + the configured
     //    human-like send delay (step 11b) so it can't expire mid-reply and let a
-    //    concurrent webhook double-reply. Size it to the personality's max delay.
+    //    concurrent webhook double-reply. Size it to the personality's max delay
+    //    plus headroom for up to two inter-bubble gaps (≤6s each).
     const configuredMaxDelaySec = Math.min(60, Math.max(0, promptConfig?.replyMaxDelaySeconds ?? 18));
-    const lockSeconds = Math.min(120, Math.max(LOCK_DURATION_SECONDS, configuredMaxDelaySec + 25));
+    const lockSeconds = Math.min(120, Math.max(LOCK_DURATION_SECONDS, configuredMaxDelaySec + 37));
     const lockTime = new Date(Date.now() + lockSeconds * 1000).toISOString();
     const { error: lockErr } = await supabase
       .from('user_match_ai_state')
@@ -871,23 +1114,28 @@ Deno.serve(async (req) => {
       }
       // -------------------------------
 
-      // 10. Build prompt
+      // 10. Build prompt. L5 DHs get their persona kernel, per-match memory,
+      //     today's diary, and last night's coach notes appended; every engine
+      //     gets the conversation-craft rules (anti-interrogation, multi-bubble).
       const template =
         promptConfig?.template ??
         `You are ${bot.username ?? 'a digital human'}. Personality: ${bot.personality ?? 'Friendly'}. Bio: ${bot.bio ?? 'N/A'}. Reply as this character. Keep it engaging, short, and natural.`;
 
-      const systemInstruction = composeSystemInstruction(template, bot, human);
+      const isL5 = bot.dh_engine === 'l5';
+      const l5 = isL5 ? await loadL5Context(dhId, matchId) : { blocks: '', memory: null };
+      const systemInstruction =
+        composeSystemInstruction(template, bot, human) + '\n' + CRAFT_RULES + l5.blocks;
       const transcript = buildTranscript([...msgRows].reverse(), bot.userid, bot.username ?? 'Bot');
-      const replyPrompt = `${systemInstruction}\n\nConversation so far:\n${transcript}\n\nWrite the next message as ${bot.username ?? 'the bot'}. Reply with only the message text.`;
 
       // 11. Score intimacy FIRST (cheap flash-lite call), so the human-like
       //     silence gate can decide whether to stay quiet before we spend an
-      //     expensive Pro generation on a reply we might throw away.
+      //     expensive Pro generation on a reply we might throw away. For L5 the
+      //     same call doubles as the conversation DIRECTOR (beat plan).
       console.log('[dh-auto-reply] systemInstruction', systemInstruction);
       console.log('[dh-auto-reply] transcript', transcript);
       const selfieCfg = await getSelfieConfig(bot.personality);
       const critic = await scoreIntimacy(
-        systemInstruction, transcript, stateData.intimacy_score ?? null, selfieCfg.warmupRate
+        systemInstruction, transcript, stateData.intimacy_score ?? null, selfieCfg.warmupRate, isL5
       );
       const messageIntimacyScore = critic?.intimacy ?? stateData.intimacy_score ?? null;
 
@@ -947,57 +1195,89 @@ Deno.serve(async (req) => {
             '(chance', skipChance.toFixed(2), ', intimacyDropped', intimacyDropped,
             ', prev', prevIntimacy ?? 'n/a', '-> curr', currIntimacy ?? 'n/a', ')'
           );
+          await reprocessNewestIfMissed(matchId, dhId, checkpointId);
           return new Response(JSON.stringify({ ok: true, skipped: true }), {
             headers: { 'Content-Type': 'application/json' },
           });
         }
       }
 
+      // 11a2. Build the actor prompt. For L5, the director's beat plan steers the
+      //        turn; for v1, the craft rules alone govern shape.
+      const beatPlan = isL5 && critic?.beat
+        ? `
+
+Beat plan for THIS turn (follow it loosely, stay fully in character):
+- move: ${critic.beat} (share = volunteer something from your day/memory, don't ask; ask = one light question is fine; tease = playful push-pull; deepen = a slightly personal disclosure that invites his; repair = he's cooling off, acknowledge and re-engage gently)
+- callback worth using: ${critic.callback || 'none'}
+- his engagement right now: ${critic.engagement ?? 'unknown'}/100
+- send ${critic.bubbleCount ?? 2} bubble(s)`
+        : '';
+      const replyPrompt = `${systemInstruction}\n\nConversation so far:\n${transcript}${beatPlan}\n\nWrite the next message(s) as ${bot.username ?? 'the bot'}. Respond with a JSON array of 1-3 strings — each string is one chat bubble, sent in order. No names, no quotes around the array, JSON only.`;
+
       // 11b–12. Now that we've committed to replying, show a live "Typing…"
-      //          indicator for the whole generation + send-delay window, and clear
-      //          it right before the message lands (in `finally`, so a failure
-      //          can't leave the user staring at a stuck indicator).
+      //          indicator for the whole generation + send window, and clear it
+      //          after the last bubble lands (in `finally`, so a failure can't
+      //          leave the user staring at a stuck indicator).
       const stopTyping = startTypingHeartbeat(matchId, bot.userid);
       try {
-        // 11b. Generate the reply.
-        const result = await generateReply(replyPrompt);
+        // 11b. Generate 1-3 bubbles as structured JSON; fall back to treating the
+        //      raw text as a single bubble if parsing fails.
+        const result = await generateReply({
+          contents: [{ role: 'user', parts: [{ text: replyPrompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: { type: 'ARRAY', items: { type: 'STRING' } },
+          },
+        });
         const respData = await result.response;
-        const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
+        const rawText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
+        let bubbles: string[];
+        try {
+          const parsed = JSON.parse(rawText);
+          bubbles = (Array.isArray(parsed) ? parsed : [String(parsed)])
+            .map((b) => String(b).trim())
+            .filter((b) => b.length > 0)
+            .slice(0, 3);
+        } catch {
+          bubbles = rawText.trim() ? [rawText.trim()] : [];
+        }
+        if (bubbles.length === 0) throw new Error('Empty reply from model');
 
-        // 11c. Human-like send delay — the ONLY thing that paces auto-replies.
-        //      (follow_up_delay in SystemPrompts is unrelated: it paces the separate
-        //      dh-followup re-engagement job, not reply speed.)
-        //
-        //      A longer reply lands slower, and nothing ever sends instantly. We derive
-        //      a target reply time from the reply length (read lead + "typing" time at
-        //      the personality's configured chars/sec), count time already spent
-        //      generating toward it, then bound the wait by the personality's min
-        //      (never instant) and max (kept under the lock window) delays.
+        // 11c. Human-like pacing. First bubble: derive a target from its length
+        //      (read lead + "typing" time at the personality's chars/sec), count
+        //      generation time toward it, bound by the personality's min/max.
+        //      Subsequent bubbles: short typing gaps scaled by their own length.
         const charsPerSec = Math.max(1, promptConfig?.replyCharsPerSecond ?? 15);
         const READ_LEAD_MS = 800;
         const minSendDelayMs = Math.max(0, (promptConfig?.replyMinDelaySeconds ?? 2)) * 1000;
         const maxSendDelayMs = Math.min(60, Math.max(0, (promptConfig?.replyMaxDelaySeconds ?? 18))) * 1000;
         const jitter = 0.85 + Math.random() * 0.3;  // ±15% so the cadence isn't metronomic
-        const typingTargetMs = (READ_LEAD_MS + (responseText.length / charsPerSec) * 1000) * jitter;
+        const typingTargetMs = (READ_LEAD_MS + (bubbles[0].length / charsPerSec) * 1000) * jitter;
         const elapsedMs = Date.now() - startTime;
-        const sendDelayMs = Math.min(
+        const firstDelayMs = Math.min(
           maxSendDelayMs,
           Math.max(minSendDelayMs, Math.round(typingTargetMs) - elapsedMs)
         );
         console.log(
-          '[dh-auto-reply] send delay', sendDelayMs, 'ms for', matchId,
-          '(', responseText.length, 'chars, gen', elapsedMs, 'ms, cps', charsPerSec, ')'
+          '[dh-auto-reply] sending', bubbles.length, 'bubble(s), first delay', firstDelayMs,
+          'ms for', matchId, '(gen', elapsedMs, 'ms, cps', charsPerSec, ')'
         );
-        if (sendDelayMs > 0) await new Promise((r) => setTimeout(r, sendDelayMs));
 
-        // 12. Insert reply
-        const { error: sendError } = await sendMessageWithOptionalIntimacy({
-          matchId,
-          content: responseText,
-          senderId: bot.userid,
-          intimacyScore: messageIntimacyScore,
-        });
-        if (sendError) throw sendError;
+        // 12. Send each bubble in order with its own pacing.
+        for (let i = 0; i < bubbles.length; i++) {
+          const delayMs = i === 0
+            ? firstDelayMs
+            : Math.min(6000, Math.max(1200, Math.round((bubbles[i].length / charsPerSec) * 1000 * jitter)));
+          if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+          const { error: sendError } = await sendMessageWithOptionalIntimacy({
+            matchId,
+            content: bubbles[i],
+            senderId: bot.userid,
+            intimacyScore: messageIntimacyScore,
+          });
+          if (sendError) throw sendError;
+        }
       } finally {
         // Clear the typing indicator whether the send succeeded or threw.
         await stopTyping();
@@ -1123,7 +1403,20 @@ Deno.serve(async (req) => {
         })
         .eq('match_id', matchId);
 
-      console.log('[dh-auto-reply] Replied to match', matchId, '(intimacy', critic?.intimacy ?? 'n/a', ')');
+      // 14. L5 memory writer — distill durable facts/open-loops for this match.
+      //     Runs after the reply is out; prefers waitUntil so it never delays the
+      //     response, but degrades to a short await on runtimes without it.
+      if (isL5) {
+        const memP = updateMatchMemory(matchId, dhId, transcript, l5.memory, checkpointId);
+        const rt = (globalThis as any).EdgeRuntime;
+        if (rt?.waitUntil) rt.waitUntil(memP); else await memP;
+      }
+
+      // 15. Never drop a message that arrived while we were generating (its own
+      //     webhook bounced off our lock): re-invoke for the newest if needed.
+      await reprocessNewestIfMissed(matchId, dhId, checkpointId);
+
+      console.log('[dh-auto-reply] Replied to match', matchId, '(intimacy', critic?.intimacy ?? 'n/a', ', engine', bot.dh_engine ?? 'v1', ')');
       return new Response(JSON.stringify({ ok: true }), {
         headers: { 'Content-Type': 'application/json' },
       });

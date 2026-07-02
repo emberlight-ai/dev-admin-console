@@ -743,6 +743,66 @@ alter table public.user_match_ai_state
   add column if not exists human_takeover boolean not null default false,
   add column if not exists human_takeover_at timestamptz;
 
+-- ── L5 digital-human engine ─────────────────────────────────────────────────────
+-- users.dh_engine gates which conversation engine a DH runs on:
+--   'v1' — single-bubble webhook reply (legacy)
+--   'l5' — persona kernel + match memory + diary + director/actor + nightly debrief
+alter table public.users
+  add column if not exists dh_engine text not null default 'v1'
+  check (dh_engine in ('v1', 'l5'));
+
+create table if not exists public.dh_persona (
+  dh_user_id uuid primary key references public.users(userid) on delete cascade,
+  tastes jsonb not null default '{}'::jsonb,        -- loves, hates, opinions, boundaries, humor
+  texting_style jsonb not null default '{}'::jsonb, -- bubble length, emoji policy, punctuation, latency curve
+  schedule jsonb not null default '{}'::jsonb,      -- availability by local hour + timezone
+  okr jsonb not null default '{}'::jsonb,           -- targets: conversations_per_day, reply_rate, intimacy_gain, tips
+  notes text,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.dh_match_memory (
+  match_id uuid primary key references public.user_matches(id) on delete cascade,
+  dh_user_id uuid not null references public.users(userid) on delete cascade,
+  facts jsonb not null default '[]'::jsonb,        -- durable facts about the user
+  open_loops jsonb not null default '[]'::jsonb,   -- unresolved threads to call back to
+  inside_jokes jsonb not null default '[]'::jsonb,
+  last_extracted_message_id uuid,
+  updated_at timestamptz not null default now()
+);
+create index if not exists dh_match_memory_dh_idx on public.dh_match_memory (dh_user_id);
+
+create table if not exists public.dh_diary (
+  id uuid primary key default gen_random_uuid(),
+  dh_user_id uuid not null references public.users(userid) on delete cascade,
+  day date not null,
+  events jsonb not null default '[]'::jsonb,          -- 2-3 micro-events in her life today
+  mood text,
+  talking_points jsonb not null default '[]'::jsonb,  -- news-derived safe topics for today
+  created_at timestamptz not null default now(),
+  unique (dh_user_id, day)
+);
+create index if not exists dh_diary_dh_day_idx on public.dh_diary (dh_user_id, day desc);
+
+create table if not exists public.dh_debrief (
+  id uuid primary key default gen_random_uuid(),
+  dh_user_id uuid not null references public.users(userid) on delete cascade,
+  day date not null,                                -- the day being debriefed
+  metrics jsonb not null default '{}'::jsonb,       -- conversations, replies, intimacy deltas vs OKR
+  notes jsonb not null default '{}'::jsonb,         -- what worked / what flopped / experiments
+  prompt_addendum text,                             -- coach notes injected into next-day replies
+  created_at timestamptz not null default now(),
+  unique (dh_user_id, day)
+);
+create index if not exists dh_debrief_dh_day_idx on public.dh_debrief (dh_user_id, day desc);
+
+-- Service-role only: RLS on, no policies (admin console + edge functions use the
+-- service key; the app never reads these).
+alter table public.dh_persona enable row level security;
+alter table public.dh_match_memory enable row level security;
+alter table public.dh_diary enable row level security;
+alter table public.dh_debrief enable row level security;
+
 -- ── DH preserved selfies: inventory + per-conversation sent ledger ──────────────
 -- Some digital humans have curated selfies at images/{dh}/chat_images/pic_N.{jpg,png}.
 -- A DH releases them in order as intimacy grows; the ledger prevents repeats per match.
