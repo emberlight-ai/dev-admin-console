@@ -403,13 +403,31 @@ function composeSystemInstruction(template: string, bot: UserRow, human: UserRow
 // rules are appended AFTER the persona template and take precedence on conflict.
 const CRAFT_RULES = `
 ### CONVERSATION CRAFT — these rules OVERRIDE any earlier style rules they conflict with
-- You may send 1-3 chat bubbles this turn, like real texting. Each bubble is one short thought (under ~20 words). Two short bubbles usually feel more alive than one long one.
-- MATCH HIS LENGTH: if his messages are short, send ONE short bubble (under ~12 words). Never send long messages unless he is writing long messages himself. Short does not mean boring — a short tease or a five-word share beats a paragraph.
-- At most ONE question mark across ALL bubbles this turn. If your previous turn ended with a question, this turn should end with a statement instead.
-- If his messages are low-effort ("yeah", "ok", "lol"), do NOT fire another question. Carry the conversation with something SMALL to react to — a quick share, an opinion, a tease — and leave room for him.
-- Deepen by sharing first: reveal something slightly personal and let him reciprocate, instead of extracting information with questions.
+- TEXT LIKE A PERSON TYPES ON A PHONE, not like prose. Fragments are fine. Starting a message lowercase is fine (follow your texting fingerprint). Never write like a letter or a novel — no "Flowers are a lovely gesture, but I..." energy. "flowers huh" beats a paragraph.
+- MATCH HIS LENGTH — hard rule: if his last message is short (a few words), reply with ONE bubble, roughly as short as his. You earn more bubbles only when HE writes more. Short is not boring — a 4-word tease wins.
+- At most ONE question mark across ALL bubbles this turn. If your previous turn ended with a question, end this one with a statement.
+- If his messages are low-effort ("yeah", "ok", "lol"), do NOT fire another question. Toss out something SMALL to react to — a quick opinion, a tease — and leave room.
 - React to what he actually said before steering anywhere new. Callbacks to earlier details beat new topics.
-- Never restart with a greeting mid-conversation, and never repeat a sentence shape you used in your last few messages.`;
+- Never restart with a greeting mid-conversation, never repeat a sentence shape you used recently, and never restate his words back at him formally.`;
+
+// Stage-aware guidance appended per turn. Early conversation is a DIFFERENT
+// game than an established one: curious questions are exactly right while you
+// are strangers (job, what he is looking for, his week — one per turn), and
+// monologuing at a stranger is deadly. Once established, shares and callbacks
+// beat questions.
+function stageGuidance(stage: 'first-chat' | 'established'): string {
+  if (stage === 'first-chat') {
+    return `
+### STAGE: FIRST CHAT — you two are still strangers
+- Be a curious, flirty stranger: react briefly to what he said, then ONE light getting-to-know-him question is the RIGHT move. Natural territory: what he does for work, what he is actually looking for on here, how his week is going, where he is from; once it is warm, past relationships (lightly).
+- Introduce yourself in DROPS, not speeches: one small true detail from your storyline/life at a time, usually attached to your question ("just got off shift lol. what do you do").
+- Keep every message short. You are feeling him out, not performing.`;
+  }
+  return `
+### STAGE: ESTABLISHED — you know each other now
+- Shares and callbacks beat questions. Reveal something small and real from your day/story and let him reciprocate.
+- Use what you remember about him — a callback to an earlier detail lands better than any new topic.`;
+}
 
 // ── L5 engine: persona kernel + match memory + diary + coach notes ─────────────
 type L5Memory = { facts: unknown[]; open_loops: unknown[]; inside_jokes: unknown[] };
@@ -1199,8 +1217,16 @@ Deno.serve(async (req) => {
 
       const isL5 = bot.dh_engine === 'l5';
       const l5 = isL5 ? await loadL5Context(dhId, matchId) : { blocks: '', memory: null };
+
+      // Conversation stage + his-energy signals drive both the prompt and the
+      // HARD enforcement below (prompts alone don't hold under long personas).
+      const realUserMessageCount = msgRows.filter((m) => m.sender_id !== dhId).length;
+      const stage: 'first-chat' | 'established' = realUserMessageCount < 12 ? 'first-chat' : 'established';
+      const lastUserWords = (latestUserMsg?.content ?? '').trim().split(/\s+/).filter(Boolean).length;
+      const shortUser = !latestUserMsg?.media_url && lastUserWords > 0 && lastUserWords <= 7;
+
       const systemInstruction =
-        composeSystemInstruction(template, bot, human) + '\n' + CRAFT_RULES + l5.blocks;
+        composeSystemInstruction(template, bot, human) + '\n' + CRAFT_RULES + stageGuidance(stage) + l5.blocks;
 
       // Captions for photos SHE sent in this match, so the transcript reminds her
       // of them (nested select rides the dh_sent_images -> dh_chat_images FK).
@@ -1305,7 +1331,10 @@ Beat plan for THIS turn (follow it loosely, stay fully in character):
 - his engagement right now: ${critic.engagement ?? 'unknown'}/100
 - send ${critic.bubbleCount ?? 2} bubble(s)`
         : '';
-      const replyPrompt = `${systemInstruction}\n\nConversation so far:\n${transcript}${beatPlan}\n\nWrite the next message(s) as ${bot.username ?? 'the bot'}. Respond with a JSON array of 1-3 strings — each string is one chat bubble, sent in order. No names, no quotes around the array, JSON only.`;
+      const lengthDirective = shortUser
+        ? `\n\nHis last message was only ${lastUserWords} word(s). Reply with EXACTLY ONE bubble, roughly matching his length — a short reaction, tease, or (in first chat) one light question.`
+        : '';
+      const replyPrompt = `${systemInstruction}\n\nConversation so far:\n${transcript}${beatPlan}${lengthDirective}\n\nWrite the next message(s) as ${bot.username ?? 'the bot'}. Respond with a JSON array of 1-3 strings — each string is one chat bubble, sent in order. No names, no quotes around the array, JSON only.`;
 
       // 11b–12. Now that we've committed to replying, show a live "Typing…"
       //          indicator for the whole generation + send window, and clear it
@@ -1335,6 +1364,11 @@ Beat plan for THIS turn (follow it loosely, stay fully in character):
           bubbles = rawText.trim() ? [rawText.trim()] : [];
         }
         if (bubbles.length === 0) throw new Error('Empty reply from model');
+        // HARD length discipline: a few words from him never earns a multi-bubble
+        // essay back, no matter what the model produced.
+        if (shortUser && bubbles.length > 1) {
+          bubbles = bubbles.slice(0, 1);
+        }
 
         // 11c. Human-like pacing. First bubble: derive a target from its length
         //      (read lead + "typing" time at the personality's chars/sec), count
@@ -1397,7 +1431,7 @@ Beat plan for THIS turn (follow it loosely, stay fully in character):
         const userAskedToSee = !!critic && critic.userRequestedPhoto;
         const strongCue = reciprocate || userAskedToSee;
         const observedIntimacy = messageIntimacyScore;
-        const realUserMessageCount = msgRows.filter((m) => m.sender_id !== dhId).length;
+        // realUserMessageCount computed at step 10 (stage detection) — reused here.
         const earlyCasual =
           !highestSentTier &&
           observedIntimacy != null &&

@@ -362,12 +362,28 @@ Deno.serve(async (req) => {
           start_index: 0,
         });
         const msgRows = (messages ?? []) as Array<{ sender_id: string; content: string | null; media_url?: string | null }>;
+
+        // Never stack a wall of unanswered messages: if the DH already has 3
+        // consecutive messages with zero reply (greeting/openers + follow-ups +
+        // multi-bubble turns all count), stop chasing this match. A 4th unanswered
+        // message reads desperate and buries the chat in a pink wall.
+        let trailingDhMsgs = 0; // msgRows is newest-first
+        for (const m of msgRows) {
+          if (m.sender_id === botUser.userid) trailingDhMsgs += 1;
+          else break;
+        }
+        if (trailingDhMsgs >= 3) {
+          await supabase.from('user_match_ai_state').update({ ai_locked_until: null }).eq('match_id', c.match_id);
+          console.log('[dh-followup] Skipping match', c.match_id, '- already', trailingDhMsgs, 'unanswered DH messages');
+          continue;
+        }
+
         const transcript = buildTranscript([...msgRows].reverse(), botUser.userid, botUser.username ?? 'Bot');
 
         const systemText = composeSystemText(promptConfig.template, botUser, humanUser);
         const followUpInstruction =
           promptConfig.followUpPrompt || 'Send a casual follow-up message to re-engage the conversation.';
-        const prompt = `${systemText}\n\nConversation so far:\n${transcript}\n\nThe user hasn't replied in a while.\nInstruction: ${followUpInstruction}\n\nWrite the follow-up as ${botUser.username ?? 'the bot'}. Reply with only the message text.`;
+        const prompt = `${systemText}\n\nConversation so far:\n${transcript}\n\nThe user hasn't replied in a while.\nInstruction: ${followUpInstruction}\n\nWrite the follow-up as ${botUser.username ?? 'the bot'}. Keep it SHORT (under ~12 words), casual texting register (lowercase start is fine), one bubble. Reply with only the message text.`;
 
         const result = await model.generateContent(prompt);
         const respData = await result.response;
