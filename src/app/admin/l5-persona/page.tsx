@@ -24,7 +24,6 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { ScrollArea } from '@/components/ui/scroll-area';
 
 type RosterDh = {
   userid: string;
@@ -117,7 +116,7 @@ const PERSONA_TEMPLATES: Record<string, Record<string, unknown>> = {
 
 function glass(cls?: string) {
   return cn(
-    'rounded-2xl border border-border/60 bg-background/40 backdrop-blur-xl',
+    'min-w-0 rounded-2xl border border-border/60 bg-card/75 backdrop-blur-xl',
     'shadow-[0_0_50px_-18px] shadow-violet-500/25',
     cls
   );
@@ -200,7 +199,10 @@ function JsonSection({
           }
         }}
         className={cn(
-          'min-h-[130px] font-mono text-xs leading-relaxed rounded-xl bg-background/50',
+          // Pin the height: the shadcn textarea has field-sizing:content, which
+          // balloons to fit the whole JSON. Fixed height + resize-y + scroll.
+          'h-[170px] min-h-[120px] max-h-[320px] resize-y overflow-auto [field-sizing:fixed]',
+          'font-mono text-xs leading-relaxed rounded-xl bg-background/50',
           invalid && 'border-destructive focus-visible:ring-destructive'
         )}
       />
@@ -358,9 +360,10 @@ export default function L5PersonaPage() {
     }, [detail]);
 
   return (
-    <div className="relative">
-      {/* Ambient gradient glow — the page's signature look */}
-      <div className="pointer-events-none absolute -top-24 left-1/3 h-72 w-[42rem] -translate-x-1/2 rounded-full bg-gradient-to-r from-violet-600/20 via-fuchsia-500/15 to-amber-400/10 blur-3xl" />
+    <div className="relative overflow-x-clip">
+      {/* Ambient gradient glow — the page's signature look. inset-x + margin
+          auto keeps it inside the content box at every viewport width. */}
+      <div className="pointer-events-none absolute -top-24 inset-x-0 mx-auto h-72 w-full max-w-[42rem] rounded-full bg-gradient-to-r from-violet-600/20 via-fuchsia-500/15 to-amber-400/10 blur-3xl" />
 
       <div className="relative space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -391,7 +394,7 @@ export default function L5PersonaPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[290px_1fr]">
+        <div className="grid min-w-0 gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
           {/* Roster */}
           <div className={glass('p-3')}>
             <div className="relative">
@@ -403,7 +406,10 @@ export default function L5PersonaPage() {
                 className="h-9 rounded-xl pl-8 text-sm"
               />
             </div>
-            <ScrollArea className="mt-3 h-[calc(100vh-280px)] min-h-[320px]">
+            {/* Plain overflow div on purpose: Radix ScrollArea's inner
+                display:table wrapper sizes children to max-content, which pushed
+                the engine badges out of the clip box. */}
+            <div className="mt-3 h-[calc(100vh-280px)] min-h-[320px] overflow-y-auto">
               <div className="space-y-1 pr-2">
                 {rosterLoading ? (
                   <div className="flex justify-center py-8">
@@ -436,16 +442,18 @@ export default function L5PersonaPage() {
                           {dh.last_debrief_day ? ` · debriefed ${dh.last_debrief_day}` : ''}
                         </div>
                       </div>
-                      <EngineBadge engine={dh.dh_engine} />
+                      <span className="shrink-0">
+                        <EngineBadge engine={dh.dh_engine} />
+                      </span>
                     </button>
                   ))
                 )}
               </div>
-            </ScrollArea>
+            </div>
           </div>
 
           {/* Detail */}
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             {detailLoading || !detail ? (
               <div className={glass('flex h-64 items-center justify-center')}>
                 {detailLoading ? (
@@ -514,7 +522,7 @@ export default function L5PersonaPage() {
                 </div>
 
                 {/* Pulse */}
-                <div className="grid gap-3 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
                   <StatPill label="Msgs sent · 24h" value={detail.metrics24h.messages_sent} />
                   <StatPill label="Msgs received · 24h" value={detail.metrics24h.messages_received} />
                   <StatPill label="Warming matches" value={<span className="inline-flex items-center gap-1"><Flame className="h-4 w-4 text-amber-400" />{detail.metrics24h.matches_warming}</span>} />
@@ -528,7 +536,13 @@ export default function L5PersonaPage() {
                       <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                         <Target className="h-4 w-4 text-violet-400" /> Persona kernel
                       </h3>
-                      <Button type="button" size="sm" className="rounded-xl" disabled={saving} onClick={() => void savePersona()}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:from-violet-600 hover:to-fuchsia-600"
+                        disabled={saving}
+                        onClick={() => void savePersona()}
+                      >
                         {saving ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1 h-3.5 w-3.5" />}
                         Save kernel
                       </Button>
@@ -543,7 +557,7 @@ export default function L5PersonaPage() {
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
                         placeholder="Free-form directives, voice notes, no-go topics…"
-                        className="min-h-[70px] rounded-xl bg-background/50 text-sm"
+                        className="h-[90px] max-h-[220px] min-h-[70px] resize-y overflow-auto [field-sizing:fixed] rounded-xl bg-background/50 text-sm"
                       />
                     </div>
                   </div>
@@ -553,7 +567,7 @@ export default function L5PersonaPage() {
                     <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                       <BookOpen className="h-4 w-4 text-fuchsia-400" /> Living timeline
                     </h3>
-                    <ScrollArea className="mt-3 h-[560px]">
+                    <div className="mt-3 max-h-[600px] min-h-[200px] overflow-y-auto">
                       {timeline.length === 0 ? (
                         <div className="py-10 text-center text-sm text-muted-foreground">
                           No debriefs or diary entries yet — promote to L5 and run a debrief.
@@ -623,7 +637,7 @@ export default function L5PersonaPage() {
                           ))}
                         </div>
                       )}
-                    </ScrollArea>
+                    </div>
                   </div>
                 </div>
 
