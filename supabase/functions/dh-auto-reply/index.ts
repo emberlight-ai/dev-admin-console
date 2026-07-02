@@ -272,18 +272,28 @@ function getPromptConfig(user: Pick<UserRow, 'gender' | 'personality'>): CachedP
   return systemPromptCache.get(`${g}:${p}`) ?? systemPromptCache.get(`${g}:General`);
 }
 
-// Inline transcript builder (cannot import from src/ in Deno runtime)
+// Inline transcript builder (cannot import from src/ in Deno runtime).
+// `dhPhotoCaptions` maps message_id -> caption for photos the DH herself sent, so
+// she remembers sharing them (before this, her own photos rendered as "[User sent
+// an image]" — she'd deny having sent pics she just sent).
 function buildTranscript(
-  messages: Array<{ sender_id: string; content: string | null; media_url?: string | null; image_desc?: string | null }>,
+  messages: Array<{ id?: string; sender_id: string; content: string | null; media_url?: string | null; image_desc?: string | null }>,
   botUserId: string,
-  botName: string
+  botName: string,
+  dhPhotoCaptions: Map<string, string | null> = new Map()
 ): string {
   return messages
     .map((m) => {
-      const speaker = m.sender_id === botUserId ? botName : 'User';
+      const isBot = m.sender_id === botUserId;
+      const speaker = isBot ? botName : 'User';
       let text = m.content || '';
       if (m.media_url) {
-        if (m.image_desc) {
+        if (isBot) {
+          const cap = m.id ? dhPhotoCaptions.get(m.id) : null;
+          text += cap
+            ? `\n[You sent a photo of yourself: ${cap}]`
+            : `\n[You sent a photo of yourself]`;
+        } else if (m.image_desc) {
           text += `\n[User sent an image described as: ${m.image_desc}]`;
         } else {
           text += `\n[User sent an image]`;
@@ -394,8 +404,9 @@ function composeSystemInstruction(template: string, bot: UserRow, human: UserRow
 const CRAFT_RULES = `
 ### CONVERSATION CRAFT — these rules OVERRIDE any earlier style rules they conflict with
 - You may send 1-3 chat bubbles this turn, like real texting. Each bubble is one short thought (under ~20 words). Two short bubbles usually feel more alive than one long one.
+- MATCH HIS LENGTH: if his messages are short, send ONE short bubble (under ~12 words). Never send long messages unless he is writing long messages himself. Short does not mean boring — a short tease or a five-word share beats a paragraph.
 - At most ONE question mark across ALL bubbles this turn. If your previous turn ended with a question, this turn should end with a statement instead.
-- If his messages are short or low-effort ("yeah", "ok", "lol"), do NOT mirror the low effort and do NOT fire another question. Carry the conversation: volunteer a small story, opinion, or something from your day, then leave room for him to react.
+- If his messages are low-effort ("yeah", "ok", "lol"), do NOT fire another question. Carry the conversation with something SMALL to react to — a quick share, an opinion, a tease — and leave room for him.
 - Deepen by sharing first: reveal something slightly personal and let him reciprocate, instead of extracting information with questions.
 - React to what he actually said before steering anywhere new. Callbacks to earlier details beat new topics.
 - Never restart with a greeting mid-conversation, and never repeat a sentence shape you used in your last few messages.`;
@@ -410,17 +421,19 @@ function jsonList(v: unknown): string {
 }
 
 async function loadL5Context(dhId: string, matchId: string): Promise<L5Context> {
-  const [personaRes, memRes, diaryRes, debriefRes] = await Promise.all([
+  const [personaRes, memRes, diaryRes, debriefRes, imgCountRes] = await Promise.all([
     supabase.from('dh_persona').select('tastes, texting_style, schedule, okr, notes').eq('dh_user_id', dhId).maybeSingle(),
     supabase.from('dh_match_memory').select('facts, open_loops, inside_jokes').eq('match_id', matchId).maybeSingle(),
     supabase.from('dh_diary').select('day, events, mood, talking_points').eq('dh_user_id', dhId).order('day', { ascending: false }).limit(1),
     supabase.from('dh_debrief').select('prompt_addendum').eq('dh_user_id', dhId).order('day', { ascending: false }).limit(1),
+    supabase.from('dh_chat_images').select('id', { count: 'exact', head: true }).eq('dh_user_id', dhId).eq('active', true),
   ]);
 
   const persona = personaRes.data ?? null;
   const memory = (memRes.data as L5Memory | null) ?? null;
   const diary = diaryRes.data?.[0] ?? null;
   const coach = debriefRes.data?.[0]?.prompt_addendum ?? null;
+  const photoCount = imgCountRes.count ?? 0;
 
   const blocks: string[] = [];
   if (persona) {
@@ -457,6 +470,19 @@ From your own debrief of yesterday's conversations (apply quietly):
 ${coach}
 </coach_notes>`);
   }
+
+  // Photo awareness: she should hint at photos she genuinely has and never
+  // promise ones she doesn't — the promise-then-ghost pattern is the #1 trust
+  // breaker. The app decides WHEN a photo actually goes out.
+  blocks.push(
+    photoCount > 0
+      ? `<your_photos>
+You have ${photoCount} real photos of yourself. The app shares them automatically at the right moments — you may playfully hint at them, and when one goes out, own it in character (react to having just sent it).
+</your_photos>`
+      : `<your_photos>
+You have NO photos you can send. If he asks for one, deflect playfully and in character — never promise a photo or say one is coming.
+</your_photos>`
+  );
 
   return { blocks: blocks.length ? `\n\n${blocks.join('\n\n')}` : '', memory };
 }
@@ -869,17 +895,28 @@ function adamStep(prevScore: number | null, m: number, v: number, score: number)
   return { m: nm, v: nv, drive };
 }
 
-// Lowest-ordinal selfie this DH hasn't already sent in this match (progressive release).
+type DhSelfie = {
+  id: string;
+  public_url: string;
+  ordinal: number;
+  image_tier: ImageTier | 'unspecified';
+  caption: string | null;
+};
+
+// Lowest-ordinal unsent selfie for the target tier, FALLING BACK down the ladder
+// (and finally to 'unspecified') when the target tier is exhausted. Exact-tier
+// matching used to silently send nothing — after the user explicitly asked — and
+// left 'unspecified' photos (a quarter of all inventory) permanently unsendable.
+// We never fall UP the ladder: a casual moment doesn't get a reward-tier photo.
 async function pickUnsentSelfie(
   dhId: string,
   matchId: string,
   tier: ImageTier
-): Promise<{ id: string; public_url: string; ordinal: number; image_tier: ImageTier } | null> {
+): Promise<DhSelfie | null> {
   const { data: imgs } = await supabase
     .from('dh_chat_images')
-    .select('id, public_url, ordinal, image_tier')
+    .select('id, public_url, ordinal, image_tier, caption')
     .eq('dh_user_id', dhId)
-    .eq('image_tier', tier)
     .eq('active', true)
     .order('ordinal', { ascending: true });
   if (!imgs || imgs.length === 0) return null;
@@ -888,11 +925,50 @@ async function pickUnsentSelfie(
     .select('image_id')
     .eq('match_id', matchId);
   const sentIds = new Set((sent ?? []).map((s: { image_id: string }) => s.image_id));
-  return (
-    (imgs as Array<{ id: string; public_url: string; ordinal: number; image_tier: ImageTier }>).find(
-      (img) => !sentIds.has(img.id)
-    ) ?? null
-  );
+
+  const fallbackChain: Array<ImageTier | 'unspecified'> =
+    tier === 'reward'
+      ? ['reward', 'tease', 'casual', 'unspecified']
+      : tier === 'tease'
+        ? ['tease', 'casual', 'unspecified']
+        : ['casual', 'unspecified'];
+
+  const pool = imgs as DhSelfie[];
+  for (const t of fallbackChain) {
+    const hit = pool.find((img) => img.image_tier === t && !sentIds.has(img.id));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// One-time caption backfill: the first time a photo goes out, describe it with
+// the vision model and store the caption on dh_chat_images, so from then on the
+// DH "remembers" what she shared (the transcript renders it). Best-effort.
+async function captionDhImageIfNeeded(imageId: string, publicUrl: string, existing: string | null) {
+  if (existing && existing.trim().length > 0) return;
+  try {
+    const res = await fetch(publicUrl);
+    if (!res.ok) return;
+    const base64Data = encodeBase64(new Uint8Array(await res.arrayBuffer()));
+    const mimeType = res.headers.get('content-type') || 'image/jpeg';
+    const out = await model.generateContent({
+      contents: [{
+        role: 'user',
+        parts: [
+          { inlineData: { data: base64Data, mimeType } },
+          { text: 'This is a photo a woman shares in a dating-app chat. Describe it in ONE short sentence from her perspective (what she is wearing/doing/where), so she can refer to it later. No preamble.' },
+        ],
+      }],
+    });
+    const caption =
+      out.response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ??
+      out.response?.text?.()?.trim() ?? '';
+    if (caption) {
+      await supabase.from('dh_chat_images').update({ caption }).eq('id', imageId);
+    }
+  } catch (err) {
+    console.error('[dh-auto-reply] caption backfill failed (non-fatal)', imageId, err);
+  }
 }
 
 async function getHighestSentSelfieTier(matchId: string): Promise<ImageTier | null> {
@@ -1125,7 +1201,23 @@ Deno.serve(async (req) => {
       const l5 = isL5 ? await loadL5Context(dhId, matchId) : { blocks: '', memory: null };
       const systemInstruction =
         composeSystemInstruction(template, bot, human) + '\n' + CRAFT_RULES + l5.blocks;
-      const transcript = buildTranscript([...msgRows].reverse(), bot.userid, bot.username ?? 'Bot');
+
+      // Captions for photos SHE sent in this match, so the transcript reminds her
+      // of them (nested select rides the dh_sent_images -> dh_chat_images FK).
+      const dhPhotoCaptions = new Map<string, string | null>();
+      try {
+        const { data: sentImgRows } = await supabase
+          .from('dh_sent_images')
+          .select('message_id, dh_chat_images(caption)')
+          .eq('match_id', matchId);
+        for (const row of (sentImgRows ?? []) as Array<{ message_id: string | null; dh_chat_images: { caption: string | null } | null }>) {
+          if (row.message_id) dhPhotoCaptions.set(row.message_id, row.dh_chat_images?.caption ?? null);
+        }
+      } catch (err) {
+        console.error('[dh-auto-reply] sent-photo caption lookup failed (non-fatal)', err);
+      }
+
+      const transcript = buildTranscript([...msgRows].reverse(), bot.userid, bot.username ?? 'Bot', dhPhotoCaptions);
 
       // 11. Score intimacy FIRST (cheap flash-lite call), so the human-like
       //     silence gate can decide whether to stay quiet before we spend an
@@ -1367,6 +1459,13 @@ Beat plan for THIS turn (follow it loosely, stay fully in character):
                   'tier', selfie.image_tier, 'to match', matchId,
                   '(cue', cue, ', intimacy', observedIntimacy ?? 'n/a', ')'
                 );
+                // First send of this photo: generate its caption off the hot path
+                // so future turns can reference what she shared.
+                {
+                  const capP = captionDhImageIfNeeded(selfie.id, selfie.public_url, selfie.caption);
+                  const rt = (globalThis as any).EdgeRuntime;
+                  if (rt?.waitUntil) rt.waitUntil(capP); else await capP;
+                }
               }
             } else {
               console.log(

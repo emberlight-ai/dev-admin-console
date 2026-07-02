@@ -6,6 +6,15 @@ Rollback is instant and safe: revert the column, the DH is back on v1 behavior w
 
 **Pilots on L5 since 2026-07-01:** Xier (`dd4f41ea-…`), Rafael (`13f9d9d1-…`).
 
+**Top-10 rollout 2026-07-02:** the 10 all-time-favorite whitelisted DHs (ranked by
+distinct real users engaged, likes received, messages, peak intimacy) now run L5
+with hand-seeded persona kernels: Rafael, Xier, Samantha, Autumn-Rose, Elisa,
+Jay, Gemini, Maria, Lori, Dream. Engine additions with this rollout: selfie tier
+FALLBACK (incl. previously-unsendable 'unspecified' photos), caption backfill on
+first send + "[You sent a photo of yourself: …]" in the transcript, L5 photo-
+inventory awareness (never promise a photo she can't send), and a match-his-length
+craft rule (short user ⇒ one short bubble).
+
 ## What changed for EVERY DH (v1 included)
 
 These shipped as mechanical fixes to `supabase/functions/dh-auto-reply/index.ts` and apply regardless of engine:
