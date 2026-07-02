@@ -151,7 +151,10 @@ const builtins: Record<string, (params: Record<string, string>) => Promise<unkno
     };
   },
 
-  async read_user_profile(params) {
+  // One call, the full picture of who she's talking to: profile + registration
+  // + his local time right now (merged from the former read_user_profile and
+  // get_user_local_time).
+  async get_user_info(params) {
     const userId = params.user_id?.trim();
     if (!userId) throw new Error('user_id is required');
     const { data, error } = await supabaseAdmin
@@ -164,6 +167,15 @@ const builtins: Record<string, (params: Record<string, string>) => Promise<unkno
 
     const registered = data.created_at ? new Date(data.created_at) : null;
     const daysAgo = registered ? Math.floor((Date.now() - registered.getTime()) / 86_400_000) : null;
+
+    const tz = data.timezone || 'America/Los_Angeles';
+    const now = new Date();
+    const localTime = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, weekday: 'long', hour: 'numeric', minute: '2-digit', hour12: true,
+    }).format(now);
+    const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(now));
+    const partOfDay = h < 5 ? 'late night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 21 ? 'evening' : 'night';
+
     return {
       username: data.username,
       age: data.age,
@@ -172,46 +184,38 @@ const builtins: Record<string, (params: Record<string, string>) => Promise<unkno
       profession: data.profession,
       education: data.education,
       location: data.location_name || '(no location set)',
-      timezone: data.timezone,
       registered_at: data.created_at,
       registered_days_ago: daysAgo,
+      local_time: localTime,
+      part_of_day: partOfDay,
+      timezone: tz,
+      timezone_known: !!data.timezone,
       is_digital_human: !!data.is_digital_human,
     };
   },
 
   async get_trending_topics() {
-    const res = await fetch('https://www.reddit.com/r/popular/top.json?limit=10&t=day', {
-      headers: { 'User-Agent': 'AmberTools/1.0' },
+    // Reddit's public JSON 403s datacenter egress (Vercel), so trends come from
+    // Google properties instead — reliable from cloud IPs. Primary: Google
+    // Trends daily searches; fallback: top news headlines.
+    try {
+      const res = await fetch('https://trends.google.com/trending/rss?geo=US', {
+        headers: { 'User-Agent': 'Mozilla/5.0 (AmberTools)' },
+      });
+      if (res.ok) {
+        const items = parseRssItems(await res.text(), 10);
+        if (items.length > 0) {
+          return { source: 'google_trends_us', topics: items.map((i) => ({ title: i.title })) };
+        }
+      }
+    } catch {
+      // fall through to headlines
+    }
+    const res = await fetch('https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (AmberTools)' },
     });
     if (!res.ok) throw new Error(`Trending fetch failed: ${res.status}`);
-    const json = (await res.json()) as {
-      data?: { children?: Array<{ data?: { title?: string; subreddit?: string; ups?: number } }> };
-    };
-    return {
-      topics: (json.data?.children ?? [])
-        .map((c) => ({ title: c.data?.title, community: c.data?.subreddit, upvotes: c.data?.ups }))
-        .filter((t) => t.title),
-    };
-  },
-
-  async get_user_local_time(params) {
-    const userId = params.user_id?.trim();
-    if (!userId) throw new Error('user_id is required');
-    const { data, error } = await supabaseAdmin
-      .from('users')
-      .select('username, timezone')
-      .eq('userid', userId)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!data) throw new Error('User not found');
-    const tz = data.timezone || 'America/Los_Angeles';
-    const now = new Date();
-    const local = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz, weekday: 'long', hour: 'numeric', minute: '2-digit', hour12: true,
-    }).format(now);
-    const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(now));
-    const partOfDay = h < 5 ? 'late night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 21 ? 'evening' : 'night';
-    return { username: data.username, timezone: tz, local_time: local, part_of_day: partOfDay, timezone_known: !!data.timezone };
+    return { source: 'top_headlines', topics: parseRssItems(await res.text(), 10) };
   },
 };
 

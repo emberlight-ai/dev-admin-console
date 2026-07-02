@@ -254,6 +254,8 @@ function AddToolDialog({
           </DialogTitle>
         </DialogHeader>
 
+        {/* House convention: DialogContent is p-0; the body pads itself. */}
+        <div className="p-4 pt-0">
         <Tabs value={tab} onValueChange={(v) => setTab(v as 'describe' | 'build')}>
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="describe" className="gap-1.5"><Sparkles className="h-3.5 w-3.5" /> Describe it</TabsTrigger>
@@ -390,6 +392,7 @@ function AddToolDialog({
             </div>
           </TabsContent>
         </Tabs>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -555,7 +558,9 @@ export default function ToolsPage() {
                   <KindBadge kind={testTool.kind} />
                 </SheetTitle>
               </SheetHeader>
-              <div className="mt-4 space-y-4">
+              {/* House convention: SheetContent is unpadded; SheetHeader carries
+                  p-4, the body pads itself. */}
+              <div className="space-y-4 px-4 pb-6">
                 <p className="text-sm text-muted-foreground">{testTool.description}</p>
                 <ParamForm
                   schema={testTool.input_schema}

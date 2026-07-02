@@ -218,6 +218,19 @@ textareas for prompt templates.
 `Sheet side="right"` for companion panels that shouldn't steal the page (e.g.
 **Test & tune**). Widen with `sm:max-w-xl` when the default is too narrow.
 
+**Padding contract (read this before building an overlay).** `DialogContent`
+and `SheetContent` are deliberately **unpadded shells** (`p-0`), so full-bleed
+content (lists, code editors, media) never fights the container. Padding lives
+in the pieces:
+
+- `DialogHeader` / `SheetHeader` carry their own `p-4`.
+- The body pads itself: `p-4 pt-0` in a dialog, `px-4 pb-6` in a sheet.
+- `AlertDialogContent` is the exception — stock `p-6`, confirms are plain text.
+
+If an overlay renders flush to its edges, the body wrapper is missing — add
+padding there, **never** to the shell (that would double-pad every self-padded
+overlay in the app).
+
 ### Tabs / segmented — [`tabs.tsx`](src/components/ui/tabs.tsx)
 Radix `Tabs` for content switching; a `border` pill with `bg-primary` on the
 selected segment for compact binary toggles (Female / Male).
