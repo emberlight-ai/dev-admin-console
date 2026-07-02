@@ -251,11 +251,47 @@ async function handlePATCH(
       .select()
       .single();
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    if (!error && data) {
+      return NextResponse.json(data);
     }
 
-    return NextResponse.json(data);
+    // The owner's UPDATE matched 0 rows. The usual cause is a soft-deleted
+    // account: the `users_update_owner` RLS policy requires `deleted_at IS NULL`,
+    // so a deleted row is invisible to the user-context UPDATE and `.single()`
+    // returns PGRST116. Re-registering with the same email / Apple ID re-onboards
+    // through here, so restore the account — mirror handleGET's restore: verify
+    // the caller owns this id, then clear `deleted_at` and apply the profile
+    // update with the admin client (bypasses RLS). Without this, re-onboarding a
+    // previously-deleted user 400s on "Add a photo".
+    const noRows =
+      !data &&
+      (!error ||
+        error.code === 'PGRST116' ||
+        /Cannot coerce the result to a single JSON object/i.test(error.message));
+
+    if (noRows) {
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData?.user?.id === userid) {
+        const { data: restored, error: restoreErr } = await supabaseAdmin
+          .from('users')
+          .update({ ...updates, deleted_at: null })
+          .eq('userid', userid)
+          .select()
+          .single();
+        if (!restoreErr && restored) {
+          return NextResponse.json(restored);
+        }
+        if (restoreErr) {
+          return NextResponse.json({ error: restoreErr.message }, { status: 400 });
+        }
+      }
+    }
+
+    // Genuine error (constraint, bad value) or caller isn't the owner.
+    return NextResponse.json(
+      { error: error?.message ?? 'Update failed' },
+      { status: 400 }
+    );
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : 'Internal Server Error';
