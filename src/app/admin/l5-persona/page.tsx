@@ -344,9 +344,13 @@ export default function L5PersonaPage() {
     }
   };
 
-  const filtered = roster.filter((d) =>
-    (d.username || '').toLowerCase().includes(query.trim().toLowerCase())
-  );
+  const filtered = roster
+    .filter((d) => (d.username || '').toLowerCase().includes(query.trim().toLowerCase()))
+    // L5 engine DHs float to the top; alphabetical within each engine tier.
+    .sort((a, b) => {
+      if (a.dh_engine !== b.dh_engine) return a.dh_engine === 'l5' ? -1 : 1;
+      return (a.username || '').localeCompare(b.username || '');
+    });
   const l5Count = roster.filter((d) => d.dh_engine === 'l5').length;
 
   const timeline: Array<{ kind: 'debrief'; day: string; d: Debrief } | { kind: 'diary'; day: string; d: Diary }> =
@@ -396,7 +400,7 @@ export default function L5PersonaPage() {
 
         <div className="grid min-w-0 gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
           {/* Roster */}
-          <div className={glass('p-3')}>
+          <div className={glass('p-3 lg:sticky lg:top-[4.5rem] lg:self-start')}>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -409,7 +413,7 @@ export default function L5PersonaPage() {
             {/* Plain overflow div on purpose: Radix ScrollArea's inner
                 display:table wrapper sizes children to max-content, which pushed
                 the engine badges out of the clip box. */}
-            <div className="mt-3 h-[calc(100vh-280px)] min-h-[320px] overflow-y-auto">
+            <div className="mt-3 h-[calc(100dvh-11rem)] min-h-[320px] overflow-y-auto">
               <div className="space-y-1 pr-2">
                 {rosterLoading ? (
                   <div className="flex justify-center py-8">
@@ -567,7 +571,11 @@ export default function L5PersonaPage() {
                     <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                       <BookOpen className="h-4 w-4 text-fuchsia-400" /> Living timeline
                     </h3>
-                    <div className="mt-3 max-h-[600px] min-h-[200px] overflow-y-auto">
+                    {/* No inner-scroll cap: a fixed max-height nested a scroll
+                        region whose lower half fell below the fold, clipping
+                        entries mid-text. Let the timeline flow so the page owns
+                        the scroll and nothing is cut off. */}
+                    <div className="mt-3">
                       {timeline.length === 0 ? (
                         <div className="py-10 text-center text-sm text-muted-foreground">
                           No debriefs or diary entries yet — promote to L5 and run a debrief.

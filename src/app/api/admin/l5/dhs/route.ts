@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
     .from('users')
     .select('userid, username, age, gender, personality, profession, avatar, whitelisted, dh_engine')
     .eq('is_digital_human', true)
+    .eq('whitelisted', true)
     .is('deleted_at', null)
     .order('username');
   if (error) return jsonError(error.message, 500);
