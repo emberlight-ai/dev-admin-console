@@ -19,6 +19,7 @@ import {
   Sparkles,
   Star,
   UserX,
+  Wrench,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -48,6 +49,12 @@ const navGroups = [
       { href: "/admin/matching/green-mode", label: "Green Mode", icon: Leaf },
       { href: "/admin/matching/traffic", label: "Chat Traffic", icon: MessageSquare },
       { href: "/admin/matching/reports", label: "Reports", icon: Flag },
+    ],
+  },
+  {
+    title: "Agents",
+    items: [
+      { href: "/admin/tools", label: "Tools", icon: Wrench },
     ],
   },
 ]

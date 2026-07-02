@@ -803,6 +803,26 @@ alter table public.dh_match_memory enable row level security;
 alter table public.dh_diary enable row level security;
 alter table public.dh_debrief enable row level security;
 
+-- ── Agent tool registry ─────────────────────────────────────────────────────────
+-- Tools digital humans (and future agents) can call for fresh conversation
+-- material. Tools are ROWS, not deployments — the executor on Vercel
+-- (/api/tools/execute) interprets them:
+--   builtin — implemented natively in src/lib/agent-tools.ts, keyed by name
+--   http    — declarative: URL template with {param} placeholders
+--   js      — stored JavaScript body: async (params, ctx) => result
+create table if not exists public.agent_tools (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  description text not null,
+  input_schema jsonb not null default '[]'::jsonb, -- [{name,type,description,example,required}]
+  kind text not null check (kind in ('builtin','http','js')),
+  config jsonb not null default '{}'::jsonb,
+  enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.agent_tools enable row level security; -- service-role only
+
 -- ── DH preserved selfies: inventory + per-conversation sent ledger ──────────────
 -- Some digital humans have curated selfies at images/{dh}/chat_images/pic_N.{jpg,png}.
 -- A DH releases them in order as intimacy grows; the ledger prevents repeats per match.
