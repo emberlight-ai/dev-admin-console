@@ -171,7 +171,11 @@ async function handleGET(
     // onboarding would fail the UPDATE RLS (also `deleted_at IS NULL`) with a 400.
     if (!data) {
       const { data: authData } = await supabase.auth.getUser();
-      if (authData?.user?.id === userid) {
+      // Case-insensitive: the iOS app sends the UUID uppercased in the path,
+      // while Supabase auth returns user.id lowercased. Postgres uuid comparison
+      // ignores case (so .eq('userid', …) matches), but this JS string compare
+      // must be normalized or the ownership check — and the restore — is skipped.
+      if (authData?.user?.id?.toLowerCase() === userid.toLowerCase()) {
         const { data: deletedRow } = await supabaseAdmin
           .from('users')
           .select('deleted_at')
@@ -271,7 +275,11 @@ async function handlePATCH(
 
     if (noRows) {
       const { data: authData } = await supabase.auth.getUser();
-      if (authData?.user?.id === userid) {
+      // Case-insensitive: the iOS app sends the UUID uppercased in the path,
+      // while Supabase auth returns user.id lowercased. Postgres uuid comparison
+      // ignores case (so .eq('userid', …) matches), but this JS string compare
+      // must be normalized or the ownership check — and the restore — is skipped.
+      if (authData?.user?.id?.toLowerCase() === userid.toLowerCase()) {
         const { data: restored, error: restoreErr } = await supabaseAdmin
           .from('users')
           .update({ ...updates, deleted_at: null })
