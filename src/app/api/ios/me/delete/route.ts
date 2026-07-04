@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import { supabaseAdmin } from '@/lib/supabase';
+import { FRESH_PROFILE_FIELDS, purgeUserContent } from '@/lib/account-reset';
 import { withLogging } from '@/lib/with-logging';
 
 export const runtime = 'nodejs';
@@ -151,7 +152,8 @@ async function handlePOST(req: NextRequest) {
     };
 
     // 2b) Archive full details needed for admin review (posts, matches, messages).
-    // These will be cascade-deleted once we delete the auth user.
+    // These are hard-deleted by purgeUserContent below; the snapshot is the only
+    // copy that survives.
     const postsSnapshot = await fetchAllRows<Record<string, unknown>>(
       (from, to) =>
         supabaseAdmin
@@ -208,45 +210,30 @@ async function handlePOST(req: NextRequest) {
       return NextResponse.json({ error: auditErr.message }, { status: 500 });
     }
 
-    // 3) SOFT-DELETE. Account deletion is NOT a refund, so we must keep the user
-    //    row and (crucially) their `subscription` rows for billing/ops visibility
-    //    in the admin console. We therefore do NOT hard-delete the Supabase Auth
-    //    user — that cascades `public.users` (FK ON DELETE CASCADE) and wipes the
-    //    subscription. Instead we set `deleted_at`, which every app-facing query
-    //    already filters on (`deleted_at is null`), so the profile stops appearing
-    //    in match cards, discovery, chat, etc. Profile media is left intact so the
-    //    admin can still see the account. A returning user who signs back in is
-    //    restored (see the iOS profile GET, which clears `deleted_at`).
+    // 3) SOFT-DELETE + WIPE. Account deletion is NOT a refund, so we must keep
+    //    the user row and (crucially) their `subscription` rows for billing/ops
+    //    visibility in the admin console. We therefore do NOT hard-delete the
+    //    Supabase Auth user — that cascades `public.users` (FK ON DELETE CASCADE)
+    //    and wipes the subscription. Instead we set `deleted_at` AND reset every
+    //    profile field to its bootstrap default: the audit snapshot above is the
+    //    only copy of their data we retain (GDPR), and a returning sign-in with
+    //    the same provider goes through clean onboarding on a blank account
+    //    instead of resurrecting the old one (see the iOS profile GET/PATCH
+    //    fresh-start restore, which only clears `deleted_at`).
     const nowIso = new Date().toISOString();
     const { error: softErr } = await supabaseAdmin
       .from('users')
-      .update({ deleted_at: nowIso })
+      .update({ ...FRESH_PROFILE_FIELDS, deleted_at: nowIso })
       .eq('userid', userId);
     if (softErr) {
       return NextResponse.json({ error: softErr.message }, { status: 500 });
     }
 
-    // Remove the user's presence from pending-invite / safety tables so they don't
-    // linger in anyone's deck or invite list. We deliberately do NOT delete
-    // `user_matches`: `messages.match_id` references it `ON DELETE CASCADE`, so
-    // deleting matches would wipe the entire chat history — which we keep for
-    // analytics. The deleted user is still hidden from others' chat lists because
-    // `rpc_list_connections` is SECURITY INVOKER and joins `public.users`, whose
-    // `deleted_at IS NULL` read policy filters the deleted participant out.
-    await Promise.all([
-      supabaseAdmin
-        .from('match_requests')
-        .delete()
-        .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`),
-      supabaseAdmin
-        .from('blocks')
-        .delete()
-        .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`),
-      supabaseAdmin
-        .from('reports')
-        .delete()
-        .or(`reporter_id.eq.${userId},target_user_id.eq.${userId}`),
-    ]);
+    // Remove posts, matches (cascades messages + AI state + DH match memory),
+    // swipes, pending invites, push tokens and safety rows — everything was
+    // snapshotted into user_deletion_audit above, so analytics/admin review
+    // still have the data while the live tables are clean for a fresh start.
+    await purgeUserContent(userId);
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

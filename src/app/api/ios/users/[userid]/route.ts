@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import tzlookup from 'tz-lookup';
 import { supabaseAdmin } from '@/lib/supabase';
+import { FRESH_PROFILE_FIELDS, purgeUserContent } from '@/lib/account-reset';
 import { withLogging } from '@/lib/with-logging';
 
 function isUuid(v: string) {
@@ -163,12 +164,20 @@ async function handleGET(
       }
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
-    // Restore on re-login. A soft-deleted user CANNOT see their own row — the
-    // "Public read profiles" RLS policy filters `deleted_at IS NULL` — so the
-    // user-client read above returns null (not the deleted row). If the
+    // Fresh-start restore on re-login. A soft-deleted user CANNOT see their own
+    // row — the "Public read profiles" RLS policy filters `deleted_at IS NULL` —
+    // so the user-client read above returns null (not the deleted row). If the
     // authenticated caller owns a soft-deleted row, clear `deleted_at` via the
-    // ADMIN client so they come back to a working account; otherwise re-signup /
-    // onboarding would fail the UPDATE RLS (also `deleted_at IS NULL`) with a 400.
+    // ADMIN client so the account works again; otherwise re-signup / onboarding
+    // would fail the UPDATE RLS (also `deleted_at IS NULL`) with a 400.
+    //
+    // Deliberately NOT a resurrection: the profile fields are re-wiped and any
+    // remaining content purged (no-ops for accounts deleted after the delete
+    // route started wiping; real work for accounts deleted before that), so the
+    // returning user gets a blank account and the iOS app routes them through
+    // clean onboarding (it checks age/gender to set hasCompletedOnboarding).
+    // The old data lives only in user_deletion_audit; subscriptions survive on
+    // the same user id.
     if (!data) {
       const { data: authData } = await supabase.auth.getUser();
       // Case-insensitive: the iOS app sends the UUID uppercased in the path,
@@ -182,9 +191,10 @@ async function handleGET(
           .eq('userid', userid)
           .maybeSingle();
         if (deletedRow?.deleted_at) {
+          await purgeUserContent(userid);
           const { data: restored } = await supabaseAdmin
             .from('users')
-            .update({ deleted_at: null })
+            .update({ ...FRESH_PROFILE_FIELDS, deleted_at: null })
             .eq('userid', userid)
             .select('*')
             .maybeSingle();
@@ -263,10 +273,11 @@ async function handlePATCH(
     // account: the `users_update_owner` RLS policy requires `deleted_at IS NULL`,
     // so a deleted row is invisible to the user-context UPDATE and `.single()`
     // returns PGRST116. Re-registering with the same email / Apple ID re-onboards
-    // through here, so restore the account — mirror handleGET's restore: verify
-    // the caller owns this id, then clear `deleted_at` and apply the profile
-    // update with the admin client (bypasses RLS). Without this, re-onboarding a
-    // previously-deleted user 400s on "Add a photo".
+    // through here, so restore the account — mirror handleGET's fresh-start
+    // restore: verify the caller owns this id, then re-wipe the profile, purge
+    // leftover content, clear `deleted_at`, and apply the incoming onboarding
+    // update on top with the admin client (bypasses RLS). Without this,
+    // re-onboarding a previously-deleted user 400s on "Add a photo".
     const noRows =
       !data &&
       (!error ||
@@ -280,9 +291,10 @@ async function handlePATCH(
       // ignores case (so .eq('userid', …) matches), but this JS string compare
       // must be normalized or the ownership check — and the restore — is skipped.
       if (authData?.user?.id?.toLowerCase() === userid.toLowerCase()) {
+        await purgeUserContent(userid);
         const { data: restored, error: restoreErr } = await supabaseAdmin
           .from('users')
-          .update({ ...updates, deleted_at: null })
+          .update({ ...FRESH_PROFILE_FIELDS, ...updates, deleted_at: null })
           .eq('userid', userid)
           .select()
           .single();
