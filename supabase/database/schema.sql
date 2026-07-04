@@ -1021,18 +1021,19 @@ create policy swipe_insert_swiper
   to authenticated
   with check (swiper_user_id = auth.uid());
 
--- Profile boost (Likes page "Boost"): one row per activation. Only activation
--- recording exists for now — ranking + expiry logic come later. Server-managed:
--- RLS on with no policies (service role only).
+-- Profile boost ledger (Likes page "Boost"): one immutable row per activation,
+-- expiry derived from expires_at (started_at + 15 min) — no mutable status, no
+-- cron. First boost is free; later boosts require an active subscription
+-- (enforced in /api/ios/me/boost). Server-managed: RLS on, no policies.
 create table if not exists public.user_boost (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references public.users(userid) on delete cascade,
   started_at timestamptz not null default now(),
-  status text not null default 'active' check (status in ('active', 'expired')),
+  expires_at timestamptz not null,
   created_at timestamptz not null default now()
 );
 
-create index if not exists user_boost_user_status_idx
-  on public.user_boost (user_id, status, started_at desc);
+create index if not exists user_boost_user_expires_idx
+  on public.user_boost (user_id, expires_at desc);
 
 alter table public.user_boost enable row level security;
