@@ -12,7 +12,6 @@ import {
   Menu,
   LayoutDashboard,
   Flag,
-  Leaf,
   MessageSquare,
   Settings,
   SlidersHorizontal,
@@ -46,7 +45,7 @@ const navGroups = [
   {
     title: "Matching",
     items: [
-      { href: "/admin/matching/green-mode", label: "Green Mode", icon: Leaf },
+      // Green Mode moved into Configuration → Matching tab.
       { href: "/admin/matching/traffic", label: "Chat Traffic", icon: MessageSquare },
       { href: "/admin/matching/reports", label: "Reports", icon: Flag },
     ],

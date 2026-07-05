@@ -48,25 +48,43 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
   if (configError) return jsonError(configError.message, 500);
 
+  // Gender rides along so the admin UI can tag each persona (female = pink,
+  // male = blue) and green mode can be configured for BOTH decks — with only
+  // female personas in the set, the male deck goes empty.
   const { data: rows, error: personalitiesError } = await supabaseAdmin
     .from('users')
-    .select('personality')
+    .select('personality, gender')
     .eq('is_digital_human', true)
     .is('deleted_at', null)
     .not('personality', 'is', null)
     .order('personality', { ascending: true });
   if (personalitiesError) return jsonError(personalitiesError.message, 500);
 
-  const seen = new Set<string>();
-  const availablePersonalities: string[] = [];
+  const genderOf = (raw: unknown): 'female' | 'male' | 'unknown' => {
+    const g = typeof raw === 'string' ? raw.toLowerCase() : '';
+    if (g.includes('female') || g.includes('woman')) return 'female';
+    if (g.includes('male') || g.includes('man')) return 'male';
+    return 'unknown';
+  };
+
+  const byKey = new Map<string, { personality: string; genders: Set<string> }>();
   for (const row of rows ?? []) {
     const personality = normalizePersonality((row as { personality?: unknown }).personality);
     if (!personality) continue;
     const key = personality.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    availablePersonalities.push(personality);
+    const entry = byKey.get(key) ?? { personality, genders: new Set<string>() };
+    entry.genders.add(genderOf((row as { gender?: unknown }).gender));
+    byKey.set(key, entry);
   }
+
+  const availablePersonalities = Array.from(byKey.values()).map(({ personality, genders }) => {
+    const hasF = genders.has('female');
+    const hasM = genders.has('male');
+    return {
+      personality,
+      gender: hasF && hasM ? ('mixed' as const) : hasF ? ('female' as const) : hasM ? ('male' as const) : ('unknown' as const),
+    };
+  });
 
   return NextResponse.json({
     data: {

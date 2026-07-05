@@ -8,7 +8,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Send, Loader2, Copy, Image as ImageIcon, LogIn, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TakeoverDock } from '@/components/matching/takeover-dock';
 
@@ -43,20 +42,6 @@ interface MatchedUser {
   username: string;
   is_digital_human?: boolean;
   avatar?: string | null;
-}
-
-type UserSearchResult = {
-  userid: string;
-  username: string;
-  avatar?: string | null;
-  is_digital_human?: boolean;
-};
-
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 function formatIntimacyScore(score?: number | null) {
@@ -425,12 +410,6 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
   const [matches, setMatches] = React.useState<Record<string, string>>({}); // partnerId -> matchId
   const [loading, setLoading] = React.useState(true);
 
-  const [searchQuery, setSearchQuery] = React.useState('');
-  const [searching, setSearching] = React.useState(false);
-  const [searchResults, setSearchResults] = React.useState<UserSearchResult[]>([]);
-  // Per-row sending state, so multiple invites in flight don't fight over a
-  // single boolean and the right button shows the spinner.
-  const [pendingInviteUserId, setPendingInviteUserId] = React.useState<string | null>(null);
   // When set, the Messenger-style takeover dock is open for the selected partner.
   const [takeoverOpen, setTakeoverOpen] = React.useState(false);
 
@@ -494,70 +473,8 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
     }
   }, [currentUserId, fetchMatches]);
 
-  // Debounced search: short delay so typing feels responsive, no extra "Search"
-  // button to click. Results land directly in the list below the input.
-  React.useEffect(() => {
-    const q = searchQuery.trim();
-    if (!q) {
-      setSearchResults([]);
-      return;
-    }
-
-    const timeoutId = setTimeout(async () => {
-      setSearching(true);
-      try {
-        const res = await fetch(
-          `/api/admin/users?mode=search&q=${encodeURIComponent(q)}&is_digital_human=false&limit=20`
-        );
-        const json = (await res.json()) as { data?: UserSearchResult[]; error?: string };
-        if (!res.ok) throw new Error(json.error || 'Failed to search users');
-        const results = (json.data ?? []).filter((u) => u.userid !== currentUserId);
-        setSearchResults(results);
-      } catch (err: unknown) {
-        console.error(err);
-        toast.error(err instanceof Error ? err.message : 'Failed to search users');
-        setSearchResults([]);
-      } finally {
-        setSearching(false);
-      }
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery, currentUserId]);
-
-  const sendMatchRequest = React.useCallback(async (userId: string) => {
-    if (!userId) return;
-    setPendingInviteUserId(userId);
-    try {
-      const res = await fetch('/api/admin/matching/send-match-request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from_user_id: currentUserId,
-          target_user_id: userId,
-        }),
-      });
-      const json = (await res.json()) as { type?: 'match' | 'request'; id?: string; error?: string };
-      if (!res.ok) throw new Error(json.error || 'Failed to send match request');
-
-      if (json.type === 'match') {
-        toast.success(`Match created: ${json.id}`);
-        await fetchMatches();
-      } else {
-        toast.success(`Match request sent: ${json.id}`);
-      }
-      // Drop the just-invited user from the results so the admin can keep
-      // inviting others without seeing duplicates. Keep the search query so
-      // they can continue down the list.
-      setSearchResults((prev) => prev.filter((u) => u.userid !== userId));
-    } catch (err: unknown) {
-      console.error(err);
-      toast.error(err instanceof Error ? err.message : 'Failed to send match request');
-    } finally {
-      setPendingInviteUserId(null);
-    }
-  }, [currentUserId, fetchMatches]);
-
+  // Send-match-request moved to its own surface: SendMatchRequestPanel
+  // (rendered as a dedicated tab on the digital-human detail page).
 
   if (loading) {
     return <div className="text-sm text-muted-foreground p-4">Loading matches...</div>;
@@ -573,72 +490,6 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border p-3">
-        <div className="text-sm font-medium">Send Match Request</div>
-        <div className="mt-2 relative">
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search real user by username prefix…"
-          />
-          {searching && (
-            <div className="absolute right-2 top-1/2 -translate-y-1/2">
-              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-            </div>
-          )}
-        </div>
-
-        {searchQuery.trim() ? (
-          <div className="mt-2 rounded-md border bg-background overflow-hidden">
-            {searchResults.length === 0 && !searching ? (
-              <div className="p-3 text-sm text-muted-foreground text-center">
-                No users found.
-              </div>
-            ) : (
-              <ul className="divide-y max-h-64 overflow-auto">
-                {searchResults.map((u) => {
-                  const isPending = pendingInviteUserId === u.userid;
-                  return (
-                    <li
-                      key={u.userid}
-                      className="flex items-center justify-between gap-2 px-3 py-2"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Avatar className="h-7 w-7 shrink-0">
-                          <AvatarImage src={u.avatar ?? undefined} alt={u.username} />
-                          <AvatarFallback className="text-xs">
-                            {initials(u.username || u.userid)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="text-sm truncate">
-                          {u.username || u.userid}
-                        </span>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={isPending}
-                        onClick={() => void sendMatchRequest(u.userid)}
-                      >
-                        {isPending ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <>
-                            <Send className="h-3 w-3 mr-1" />
-                            Send
-                          </>
-                        )}
-                      </Button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        ) : null}
-      </div>
-
       {matchedUsers.length > 0 ? (
         <>
           <div className="w-full max-w-md">

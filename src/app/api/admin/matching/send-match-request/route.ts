@@ -95,7 +95,63 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ type: 'match', id: insertedMatch.id });
     }
 
-    // Normal path: create outbound request (idempotent).
+    // Normal path. When the sender is a digital human, go through the SAME
+    // pipeline as organic nearby invitations (dh-nearby-dispatch): enqueue a
+    // scheduled invite due now, trigger the dispatcher, and it generates the
+    // Gemini opener, inserts match_requests WITH `greeting`, and sends the
+    // invitation push. The old bare insert here produced greeting-less rows —
+    // no push, no opener on the iOS Likes page card (deprecated flow).
+    if (fromUser.is_digital_human) {
+      const { error: queueErr } = await supabaseAdmin
+        .from('scheduled_dh_invites')
+        .insert({
+          user_id: target_user_id,
+          dh_user_id: from_user_id,
+          run_at: new Date().toISOString(),
+          status: 'pending',
+        });
+      if (queueErr) return jsonError(queueErr.message, 500);
+
+      // Kick the dispatcher so the invite goes out now instead of on the next
+      // cron tick. Generation takes a few seconds; if this times out the row
+      // stays pending and the ~1/min cron delivers it anyway.
+      try {
+        await fetch(
+          `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/dh-nearby-dispatch`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({}),
+            signal: AbortSignal.timeout(30_000),
+          }
+        );
+      } catch (dispatchErr) {
+        console.warn('[send-match-request] dispatch trigger failed (cron will retry)', dispatchErr);
+      }
+
+      const { data: sentReq } = await supabaseAdmin
+        .from('match_requests')
+        .select('id, greeting')
+        .eq('from_user_id', from_user_id)
+        .eq('to_user_id', target_user_id)
+        .maybeSingle();
+
+      if (sentReq?.id) {
+        return NextResponse.json({
+          type: 'request',
+          id: sentReq.id,
+          greeting: sentReq.greeting ?? null,
+        });
+      }
+      // Dispatcher hasn't delivered yet — the queued row guarantees it lands
+      // within the next cron tick.
+      return NextResponse.json({ type: 'queued' });
+    }
+
+    // Sender is a real user (legacy/testing path): plain request, no opener.
     const { data: reqRow, error: reqErr } = await supabaseAdmin
       .from('match_requests')
       .insert({ from_user_id, to_user_id: target_user_id })

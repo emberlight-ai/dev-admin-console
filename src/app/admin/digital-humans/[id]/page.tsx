@@ -13,6 +13,7 @@ import { composeSystemPromptFromTemplate } from "@/lib/botProfile"
 import { ImageZoomDialog } from "./_components/image-zoom-dialog"
 import { ProfileCard } from "./_components/profile-card"
 import { ChatHistory } from "@/components/matching/chat-history"
+import { SendMatchRequestPanel } from "@/components/matching/send-match-request-panel"
 import { PostsPanel } from "./_components/posts-panel"
 import { ChatImagesPanel } from "./_components/chat-images-panel"
 import type { DbUser } from "./_components/types"
@@ -201,11 +202,16 @@ export default function DigitalHumanDetail() {
                 <TabsTrigger value="posts">Post History</TabsTrigger>
                 <TabsTrigger value="chat-images">Chat Images</TabsTrigger>
                 <TabsTrigger value="history">Chat History</TabsTrigger>
+                <TabsTrigger value="invite">Send Invitation</TabsTrigger>
               </TabsList>
 
 
               <TabsContent value="history">
                 <ChatHistory currentUserId={user.userid} currentUserIsDigitalHuman />
+              </TabsContent>
+
+              <TabsContent value="invite" className="mt-4">
+                <SendMatchRequestPanel fromUserId={user.userid} />
               </TabsContent>
 
               <TabsContent value="posts" className="mt-4">
