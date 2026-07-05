@@ -130,6 +130,56 @@ function startTypingHeartbeat(matchId: string, dhId: string): () => Promise<void
   };
 }
 
+// ── DH activity status ("Viewing profiles…") ──────────────────────────────────
+// Honest presence for the pre-typing phase: after the debounce commits, the DH
+// really is reading the conversation + the user's profile (history fetch, image
+// description, intimacy critic) before the reply generation starts. The client
+// renders this from `dh_status` broadcasts on the same per-match channel and
+// shows "Typing…" the moment the typing heartbeat takes over.
+type DhActivity = 'viewing_profile';
+
+async function broadcastActivity(matchId: string, dhId: string, status: DhActivity | null): Promise<void> {
+  try {
+    await fetch(REALTIME_BROADCAST_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({
+        messages: [
+          {
+            topic: `chat:${matchId.toLowerCase()}`,
+            event: 'dh_status',
+            payload: { user_id: dhId, status },
+            private: false,
+          },
+        ],
+      }),
+    });
+  } catch (err) {
+    // Cosmetic, best-effort — never let it break a reply.
+    console.error('[dh-auto-reply] broadcastActivity failed', err);
+  }
+}
+
+/// Same heartbeat/stop contract as startTypingHeartbeat (the client auto-clears
+/// a few seconds after the last event; stop broadcasts the clear exactly once).
+function startActivityHeartbeat(matchId: string, dhId: string, status: DhActivity): () => Promise<void> {
+  void broadcastActivity(matchId, dhId, status);
+  const interval = setInterval(() => {
+    void broadcastActivity(matchId, dhId, status);
+  }, 3000);
+  let stopped = false;
+  return async () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(interval);
+    await broadcastActivity(matchId, dhId, null);
+  };
+}
+
 // ── In-process cache (survives warm invocations on Deno Deploy) ───────────────
 interface CachedPrompt {
   template: string;
@@ -1146,6 +1196,14 @@ Deno.serve(async (req) => {
       return new Response('Lock contention', { status: 200 });
     }
 
+    // Committed to this turn: broadcast "viewing profile" for the phase where
+    // the DH really is reading the user's info — history fetch, image
+    // description, intimacy critic. The typing heartbeat replaces it the moment
+    // reply generation starts, so the user sees Viewing profiles… → Typing…
+    // instead of 10+ seconds of nothing (old bug: typing only started after
+    // debounce + critic). Stop is idempotent; also called on skip and error.
+    const stopViewing = startActivityHeartbeat(matchId, dhId, 'viewing_profile');
+
     try {
       // 9. Fetch conversation history
       const { data: messages } = await supabase.rpc('rpc_get_messages', {
@@ -1314,6 +1372,9 @@ Deno.serve(async (req) => {
             ', prev', prevIntimacy ?? 'n/a', '-> curr', currIntimacy ?? 'n/a', ')'
           );
           await reprocessNewestIfMissed(matchId, dhId, checkpointId);
+          // She looked, then chose not to reply — clear the status (human-ish:
+          // "seen" without a response).
+          await stopViewing();
           return new Response(JSON.stringify({ ok: true, skipped: true }), {
             headers: { 'Content-Type': 'application/json' },
           });
@@ -1336,10 +1397,12 @@ Beat plan for THIS turn (follow it loosely, stay fully in character):
         : '';
       const replyPrompt = `${systemInstruction}\n\nConversation so far:\n${transcript}${beatPlan}${lengthDirective}\n\nWrite the next message(s) as ${bot.username ?? 'the bot'}. Respond with a JSON array of 1-3 strings — each string is one chat bubble, sent in order. No names, no quotes around the array, JSON only.`;
 
-      // 11b–12. Now that we've committed to replying, show a live "Typing…"
-      //          indicator for the whole generation + send window, and clear it
-      //          after the last bubble lands (in `finally`, so a failure can't
-      //          leave the user staring at a stuck indicator).
+      // 11b–12. Now that we've committed to replying, hand the status line over:
+      //          "viewing" ends, live "Typing…" covers the whole Gemini
+      //          generation + send window, and clears after the last bubble
+      //          lands (in `finally`, so a failure can't leave the user staring
+      //          at a stuck indicator).
+      await stopViewing();
       const stopTyping = startTypingHeartbeat(matchId, bot.userid);
       try {
         // 11b. Generate 1-3 bubbles as structured JSON; fall back to treating the
@@ -1555,7 +1618,9 @@ Beat plan for THIS turn (follow it loosely, stay fully in character):
       });
     } catch (err) {
       console.error('[dh-auto-reply] Error processing match', matchId, err);
-      // Release lock on error
+      // Clear the status + release lock on error (stop is idempotent — no-op if
+      // typing already took over).
+      await stopViewing();
       await supabase.from('user_match_ai_state').update({ ai_locked_until: null }).eq('match_id', matchId);
       return new Response(String(err), { status: 500 });
     }
