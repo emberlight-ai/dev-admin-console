@@ -5,7 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 // the user_deletion_audit snapshot is the only retained copy) and again on
 // re-signin restore, so accounts deleted before this wipe existed also come
 // back clean. Ops fields (whitelisted, dh_engine, is_digital_human) and
-// billing rows (subscription, apple_purchase, user_boost) are untouched.
+// billing rows (subscription, apple_purchase) are untouched.
 export const FRESH_PROFILE_FIELDS = {
   username: '',
   age: null,
@@ -60,6 +60,11 @@ export async function purgeUserContent(userId: string) {
       .delete()
       .eq('user_id', userId),
     supabaseAdmin.from('scheduled_dh_invites').delete().eq('user_id', userId),
+    // Boost ledger resets too: a fresh-start account is a new user, and every
+    // new user gets their first Boost free (/api/ios/me/boost counts these
+    // rows to decide). Boost purchases-by-subscription live in subscription/
+    // apple_purchase, which are retained.
+    supabaseAdmin.from('user_boost').delete().eq('user_id', userId),
   ]);
 
   const firstError = results.find((r) => r.error)?.error;
