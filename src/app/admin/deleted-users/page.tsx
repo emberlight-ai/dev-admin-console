@@ -18,9 +18,18 @@ import {
 } from "@/components/ui/table"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return "?"
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
 type DeletedUserRow = {
   userid: string
-  username: string
+  // Sourced from the delete-time audit snapshot now (the live row is wiped on
+  // delete), so absent for accounts that never had a username set.
+  username: string | null
   avatar?: string | null
   gender?: string | null
   age?: number | null
@@ -58,9 +67,10 @@ export default function DeletedUsersPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Deleted Users</h1>
         <p className="text-sm text-muted-foreground">
-          Accounts that requested deletion. The account is soft-deleted (hidden from
-          the app) but the record and any subscription are retained for billing/refund
-          review — open a user to see their subscription.
+          Accounts that requested deletion. This app preserves everything — posts,
+          photos, and full chat transcripts are archived, not destroyed — so a
+          returning sign-in with the same identity gets a clean account while the
+          business keeps the history. Open &ldquo;Archive&rdquo; to browse it.
         </p>
       </div>
 
@@ -95,8 +105,11 @@ export default function DeletedUsersPage() {
                   <TableRow key={u.userid}>
                     <TableCell className="pl-4">
                       <Avatar className="h-9 w-9">
-                        <AvatarImage src={`/api/avatar/${u.userid}`} alt={u.username} />
-                        <AvatarFallback>{u.username.slice(0, 2).toUpperCase()}</AvatarFallback>
+                        {/* Live /api/avatar/[userid] reads users.avatar, which is
+                            wiped on delete — use the archived snapshot URL instead
+                            (rewritten to the archived/ storage path). */}
+                        <AvatarImage src={u.avatar ?? undefined} alt={u.username ?? ""} />
+                        <AvatarFallback>{initials(u.username || "?")}</AvatarFallback>
                       </Avatar>
                     </TableCell>
                     <TableCell className="font-medium">
@@ -115,12 +128,17 @@ export default function DeletedUsersPage() {
                       {u.deleted_at ? new Date(u.deleted_at).toLocaleString() : "—"}
                     </TableCell>
                     <TableCell className="text-left">
-                      <Button asChild variant="outline" size="sm">
-                        <Link href={`/admin/users/${u.userid}`} className="gap-2">
-                          <Eye className="h-4 w-4" />
-                          View
-                        </Link>
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button asChild variant="default" size="sm">
+                          <Link href={`/admin/deleted-users/${u.userid}`} className="gap-2">
+                            <Eye className="h-4 w-4" />
+                            Archive
+                          </Link>
+                        </Button>
+                        <Button asChild variant="outline" size="sm">
+                          <Link href={`/admin/users/${u.userid}`}>Billing</Link>
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import { supabaseAdmin } from '@/lib/supabase';
-import { FRESH_PROFILE_FIELDS, purgeUserContent } from '@/lib/account-reset';
+import { archiveUserContent, FRESH_PROFILE_FIELDS, purgeUserContent } from '@/lib/account-reset';
 import { withLogging } from '@/lib/with-logging';
 
 export const runtime = 'nodejs';
@@ -23,29 +23,6 @@ const getUserSupabase = (req: NextRequest) => {
 
 function sha256Hex(input: string) {
   return crypto.createHash('sha256').update(input).digest('hex');
-}
-
-async function fetchAllRows<T>(
-  queryFactory: (
-    from: number,
-    to: number
-  ) => PromiseLike<{ data: T[] | null; error: unknown }>
-) {
-  const pageSize = 1000;
-  const maxRows = 200_000; // safety cap
-  const out: T[] = [];
-
-  for (let offset = 0; offset < maxRows; offset += pageSize) {
-    const from = offset;
-    const to = offset + pageSize - 1;
-    const { data, error } = await queryFactory(from, to);
-    if (error) throw error;
-    const rows = data ?? [];
-    out.push(...rows);
-    if (rows.length < pageSize) break;
-  }
-
-  return out;
 }
 
 async function handlePOST(req: NextRequest) {
@@ -151,45 +128,26 @@ async function handlePOST(req: NextRequest) {
       digital_human_invites_tracking: invitesTracking.data ?? null,
     };
 
-    // 2b) Archive full details needed for admin review (posts, matches, messages).
-    // These are hard-deleted by purgeUserContent below; the snapshot is the only
-    // copy that survives.
-    const postsSnapshot = await fetchAllRows<Record<string, unknown>>(
-      (from, to) =>
-        supabaseAdmin
-          .from('user_posts')
-          .select('*')
-          .eq('userid', userId)
-          .order('created_at', { ascending: true })
-          .range(from, to)
-    );
+    // 2b) PRESERVE everything before touching the live tables: full posts
+    // (with photos), matches, and complete message transcripts get copied into
+    // the archived_* tables and their storage objects moved to an archived/
+    // folder (see account-reset.ts). This app is not GDPR-scoped and every
+    // user represents real acquisition spend, so "delete" means "leave the
+    // live app," not "destroy the data" — the admin console can browse all of
+    // it via /admin/deleted-users. Safety: never touch the live row unless
+    // archiving succeeded — an archive failure must not be able to lose data.
+    let archive;
+    try {
+      archive = await archiveUserContent(userId);
+    } catch (archiveErr: unknown) {
+      const message = archiveErr instanceof Error ? archiveErr.message : 'Archive failed';
+      return NextResponse.json({ error: `Failed to archive account data: ${message}` }, { status: 500 });
+    }
 
-    const matchesSnapshot = await fetchAllRows<Record<string, unknown>>(
-      (from, to) =>
-        supabaseAdmin
-          .from('user_matches')
-          .select('*')
-          .or(`user_a.eq.${userId},user_b.eq.${userId}`)
-          .order('created_at', { ascending: true })
-          .range(from, to)
-    );
-
-    const matchIds = matchesSnapshot
-      .map((m) => m.id)
-      .filter((v): v is string => typeof v === 'string');
-
-    const messagesSnapshot =
-      matchIds.length === 0
-        ? []
-        : await fetchAllRows<Record<string, unknown>>((from, to) =>
-            supabaseAdmin
-              .from('messages')
-              .select('*')
-              .in('match_id', matchIds)
-              .order('created_at', { ascending: true })
-              .range(from, to)
-          );
-
+    // Lightweight identity/usage record for admin quick-glance and abuse
+    // tracking (provider-subject/email hashing for repeat-offender matching).
+    // The avatar URL is the rewritten (post-move) path, matching where the
+    // file actually lives now — the pre-archive URL in `profile` would 404.
     const { error: auditErr } = await supabaseAdmin
       .from('user_deletion_audit')
       .insert({
@@ -198,28 +156,25 @@ async function handlePOST(req: NextRequest) {
         provider: appleIdentity?.provider ?? null,
         provider_subject_hash: providerSubjectHash,
         email_hash: emailHash,
-        profile_snapshot: profile ?? null,
+        profile_snapshot: profile ? { ...profile, avatar: archive.archivedAvatarUrl } : null,
         usage_snapshot: usageSnapshot,
-        posts_snapshot: postsSnapshot,
-        matches_snapshot: matchesSnapshot,
-        messages_snapshot: messagesSnapshot,
       });
 
-    // Safety: never delete the Auth user unless the audit write succeeded.
     if (auditErr) {
       return NextResponse.json({ error: auditErr.message }, { status: 500 });
     }
 
-    // 3) SOFT-DELETE + WIPE. Account deletion is NOT a refund, so we must keep
-    //    the user row and (crucially) their `subscription` rows for billing/ops
-    //    visibility in the admin console. We therefore do NOT hard-delete the
-    //    Supabase Auth user — that cascades `public.users` (FK ON DELETE CASCADE)
-    //    and wipes the subscription. Instead we set `deleted_at` AND reset every
-    //    profile field to its bootstrap default: the audit snapshot above is the
-    //    only copy of their data we retain (GDPR), and a returning sign-in with
-    //    the same provider goes through clean onboarding on a blank account
-    //    instead of resurrecting the old one (see the iOS profile GET/PATCH
-    //    fresh-start restore, which only clears `deleted_at`).
+    // 3) SOFT-DELETE + WIPE THE LIVE ROW. Account deletion is NOT a refund, so
+    //    we must keep the user row and (crucially) their `subscription` rows
+    //    for billing/ops visibility in the admin console. We therefore do NOT
+    //    hard-delete the Supabase Auth user — that cascades `public.users` (FK
+    //    ON DELETE CASCADE) and wipes the subscription. Instead we set
+    //    `deleted_at` AND reset every profile field to its bootstrap default:
+    //    everything just archived above is what a returning sign-in with the
+    //    same provider will NOT see — they go through clean onboarding on a
+    //    blank account (see the iOS profile GET/PATCH fresh-start restore,
+    //    which only clears `deleted_at`), while the real data lives on
+    //    permanently in the archive for the business to review.
     const nowIso = new Date().toISOString();
     const { error: softErr } = await supabaseAdmin
       .from('users')
@@ -229,13 +184,20 @@ async function handlePOST(req: NextRequest) {
       return NextResponse.json({ error: softErr.message }, { status: 500 });
     }
 
-    // Remove posts, matches (cascades messages + AI state + DH match memory),
-    // swipes, pending invites, push tokens and safety rows — everything was
-    // snapshotted into user_deletion_audit above, so analytics/admin review
-    // still have the data while the live tables are clean for a fresh start.
+    // Clear posts/matches/messages (now safely archived above) plus pending
+    // invites, swipes, push tokens, and safety rows — state/gating data that
+    // has no business value archived — so the live tables are genuinely clean
+    // for a fresh start.
     await purgeUserContent(userId);
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      archived: {
+        posts: archive.postsArchived,
+        matches: archive.matchesArchived,
+        messages: archive.messagesArchived,
+      },
+    });
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : 'Internal Server Error';

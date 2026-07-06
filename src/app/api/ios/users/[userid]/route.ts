@@ -2,8 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import tzlookup from 'tz-lookup';
 import { supabaseAdmin } from '@/lib/supabase';
-import { FRESH_PROFILE_FIELDS, purgeUserContent } from '@/lib/account-reset';
+import { archiveUserContent, FRESH_PROFILE_FIELDS, purgeUserContent } from '@/lib/account-reset';
 import { withLogging } from '@/lib/with-logging';
+
+/// Best-effort archive-before-purge for the restore path. Going forward every
+/// delete already archives content (see /api/ios/me/delete), so this is
+/// normally a fast no-op here — it only does real work for accounts
+/// soft-deleted before that shipped. Never blocks the restore a user is
+/// actively waiting on; a failure just means that legacy content stays
+/// unarchived (it was already going to be purged either way).
+async function archiveBeforePurge(userid: string) {
+  try {
+    await archiveUserContent(userid);
+  } catch (err) {
+    console.error('[restore] archiveUserContent failed (continuing with purge)', userid, err);
+  }
+}
 
 function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -172,12 +186,13 @@ async function handleGET(
     // would fail the UPDATE RLS (also `deleted_at IS NULL`) with a 400.
     //
     // Deliberately NOT a resurrection: the profile fields are re-wiped and any
-    // remaining content purged (no-ops for accounts deleted after the delete
-    // route started wiping; real work for accounts deleted before that), so the
-    // returning user gets a blank account and the iOS app routes them through
-    // clean onboarding (it checks age/gender to set hasCompletedOnboarding).
-    // The old data lives only in user_deletion_audit; subscriptions survive on
-    // the same user id.
+    // remaining LIVE content archived+purged (archiveBeforePurge is a no-op
+    // for accounts deleted after the delete route started archiving; real work
+    // for legacy accounts deleted before that), so the returning user gets a
+    // blank account and the iOS app routes them through clean onboarding (it
+    // checks age/gender to set hasCompletedOnboarding). The real history lives
+    // on permanently in the archived_* tables for admin review; subscriptions
+    // survive on the same user id.
     if (!data) {
       const { data: authData } = await supabase.auth.getUser();
       // Case-insensitive: the iOS app sends the UUID uppercased in the path,
@@ -191,6 +206,7 @@ async function handleGET(
           .eq('userid', userid)
           .maybeSingle();
         if (deletedRow?.deleted_at) {
+          await archiveBeforePurge(userid);
           await purgeUserContent(userid);
           const { data: restored } = await supabaseAdmin
             .from('users')
@@ -291,6 +307,7 @@ async function handlePATCH(
       // ignores case (so .eq('userid', …) matches), but this JS string compare
       // must be normalized or the ownership check — and the restore — is skipped.
       if (authData?.user?.id?.toLowerCase() === userid.toLowerCase()) {
+        await archiveBeforePurge(userid);
         await purgeUserContent(userid);
         const { data: restored, error: restoreErr } = await supabaseAdmin
           .from('users')
