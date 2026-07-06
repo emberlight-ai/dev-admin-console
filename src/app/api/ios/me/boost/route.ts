@@ -86,6 +86,24 @@ async function handlePOST(req: NextRequest) {
 
     if (insErr) return jsonError(insErr.message, 500);
 
+    // Make "get seen first" true: schedule a steady stream of DH invitations
+    // across the boost window (boost_invites_total × boost_invite_interval_seconds,
+    // delivered by dh-nearby-dispatch with a real opener + push). Best-effort —
+    // a scheduling failure must never break the activation the user just paid for.
+    try {
+      const { data: scheduled, error: schedErr } = await supabaseAdmin.rpc(
+        'schedule_boost_invites',
+        { p_user_id: userId }
+      );
+      if (schedErr) {
+        console.error('[boost] schedule_boost_invites failed', schedErr.message);
+      } else {
+        console.log('[boost] scheduled', scheduled, 'invites for', userId);
+      }
+    } catch (e) {
+      console.error('[boost] schedule_boost_invites threw', e);
+    }
+
     return NextResponse.json({
       success: true,
       boost,

@@ -685,6 +685,10 @@ values
   ('selfie_early_casual_after_messages', '2', 'Real-user message count after which a cold conversation may receive one proactive casual image.'),
   ('selfie_early_casual_max_intimacy', '45', 'Max intimacy score for the early-casual image path; at/above this, normal tiered release takes over.'),
   ('intimacy_warmup_rate', 'normal', 'How quickly the intimacy judge should let relationship score rise: very_low, low, normal, high, very_high, or extreme.'),
+  -- Boost invitations (see schedule_boost_invites in functions/matches.sql)
+  ('enable_boost_invites', 'true', 'While a boost is active, digital humans keep reaching out with invitations'),
+  ('boost_invites_total', '7', 'How many DH invitations a boost schedules across its 15-minute window'),
+  ('boost_invite_interval_seconds', '120', 'Seconds between boost invitations (120 = one like every 2 minutes)'),
   ('enable_proactive_double_text', 'true', 'Allow DHs to proactively double-text when intimacy momentum is hot'),
   ('proactive_intimacy_drive_threshold', '0.3', 'Momentum drive (m/sqrt(v), ~-1..1) at/above which a conversation counts as hot'),
   ('proactive_delay_minutes', '90', 'How soon a hot conversation gets a proactive double-text after the DH last message (minutes)'),

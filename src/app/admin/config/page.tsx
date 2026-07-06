@@ -47,6 +47,9 @@ const DEFAULT_CONFIG = {
   proactive_intimacy_drive_threshold: "0.3",
   proactive_delay_minutes: "90",
   proactive_extra_followups: "2",
+  enable_boost_invites: "true",
+  boost_invites_total: "7",
+  boost_invite_interval_seconds: "120",
 }
 
 type ConfigState = typeof DEFAULT_CONFIG
@@ -64,10 +67,17 @@ const BOOLEAN_CONFIG_KEYS = new Set<string>([
   "enable_digital_human_selfies",
   "enable_selfie_reciprocation",
   "enable_proactive_double_text",
+  "enable_boost_invites",
 ])
 
 // App-wide only — no per-personality meaning, hidden from the Overrides tab.
-const GLOBAL_ONLY_CONFIG_KEYS = new Set<string>(["whitelisted_deck_ratio"])
+const GLOBAL_ONLY_CONFIG_KEYS = new Set<string>([
+  "whitelisted_deck_ratio",
+  // Boost invites are per-USER bursts; a personality override makes no sense.
+  "enable_boost_invites",
+  "boost_invites_total",
+  "boost_invite_interval_seconds",
+])
 
 const WARMUP_RATE_OPTIONS = [
   { value: "very_low", label: "Very low" },
@@ -111,6 +121,9 @@ const CONFIG_LABELS: Record<string, string> = {
   proactive_intimacy_drive_threshold: "Proactive drive threshold",
   proactive_delay_minutes: "Proactive delay minutes",
   proactive_extra_followups: "Proactive extra follow-ups",
+  enable_boost_invites: "Enable boost invitations",
+  boost_invites_total: "Invitations per boost",
+  boost_invite_interval_seconds: "Seconds between invitations",
 }
 
 const CONFIG_DESCRIPTIONS: Record<string, string> = {
@@ -145,6 +158,9 @@ const CONFIG_DESCRIPTIONS: Record<string, string> = {
   proactive_intimacy_drive_threshold: "How “hot” momentum must be to trigger proactive outreach (0–1).",
   proactive_delay_minutes: "How soon a hot convo gets a double-text (a 1h floor still applies).",
   proactive_extra_followups: "Extra messages allowed beyond the per-bot max when hot.",
+  enable_boost_invites: "While a boost is active, digital humans keep reaching out — one invitation per interval, with a real opener and a push.",
+  boost_invites_total: "How many digital humans reach out across the 15-minute boost window.",
+  boost_invite_interval_seconds: "Gap between boost invitations. 120 = one like every 2 minutes.",
 }
 
 // ── Field helpers ─────────────────────────────────────────────────────────────
@@ -321,6 +337,7 @@ export default function DigitalHumanConfigPage() {
                 <TabsTrigger value="automation">Automation</TabsTrigger>
                 <TabsTrigger value="nearby">Nearby invites</TabsTrigger>
                 <TabsTrigger value="matching">Matching</TabsTrigger>
+                <TabsTrigger value="boost">Boost</TabsTrigger>
                 <TabsTrigger value="selfies">Selfies</TabsTrigger>
                 <TabsTrigger value="proactive">Proactive</TabsTrigger>
                 <TabsTrigger value="overrides">Personality overrides</TabsTrigger>
@@ -363,6 +380,47 @@ export default function DigitalHumanConfigPage() {
                 <NumberField label="Active hour start (PST)" min={0} max={23} value={config.active_hour_start} onChange={(v) => set("active_hour_start", v)} description={CONFIG_DESCRIPTIONS.active_hour_start} />
                 <NumberField label="Active hour end (PST)" min={0} max={23} value={config.active_hour_end} onChange={(v) => set("active_hour_end", v)} description={CONFIG_DESCRIPTIONS.active_hour_end} />
               </div>
+            </TabsContent>
+
+            {/* Boost — DH invitations while a boost is running */}
+            <TabsContent value="boost" className={TAB_CONTENT}>
+              <ToggleField
+                label={CONFIG_LABELS.enable_boost_invites}
+                description={CONFIG_DESCRIPTIONS.enable_boost_invites}
+                checked={bool("enable_boost_invites")}
+                onChange={(b) => set("enable_boost_invites", b ? "true" : "false")}
+              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <NumberField
+                  label={CONFIG_LABELS.boost_invites_total}
+                  min={0}
+                  value={config.boost_invites_total}
+                  onChange={(v) => set("boost_invites_total", v)}
+                  description={CONFIG_DESCRIPTIONS.boost_invites_total}
+                />
+                <NumberField
+                  label={CONFIG_LABELS.boost_invite_interval_seconds}
+                  min={10}
+                  value={config.boost_invite_interval_seconds}
+                  onChange={(v) => set("boost_invite_interval_seconds", v)}
+                  description={CONFIG_DESCRIPTIONS.boost_invite_interval_seconds}
+                />
+              </div>
+              {(() => {
+                const total = Number(config.boost_invites_total)
+                const interval = Number(config.boost_invite_interval_seconds)
+                if (!Number.isFinite(total) || !Number.isFinite(interval) || total <= 0 || interval <= 0) return null
+                const lastAt = total * interval
+                const mins = Math.round((lastAt / 60) * 10) / 10
+                const overruns = lastAt > 15 * 60
+                return (
+                  <p className={overruns ? "text-xs font-medium text-amber-600" : "text-xs text-muted-foreground"}>
+                    {overruns
+                      ? `⚠ The last invitation would land ~${mins} min after activation — beyond the 15-minute boost. Lower the total or the interval.`
+                      : `With these values the user receives ${total} invitation${total === 1 ? "" : "s"}, the last ~${mins} min into the 15-minute boost.`}
+                  </p>
+                )
+              })()}
             </TabsContent>
 
             {/* Selfies */}
