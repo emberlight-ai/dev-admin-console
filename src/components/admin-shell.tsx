@@ -15,7 +15,6 @@ import {
   MessageSquare,
   Settings,
   SlidersHorizontal,
-  Sparkles,
   Star,
   UserX,
   Wrench,
@@ -37,7 +36,6 @@ const navGroups = [
     items: [
       { href: "/admin/users", label: "Dashboard", icon: LayoutDashboard },
       { href: "/admin/matching/whitelist", label: "Whitelist", icon: Star },
-      { href: "/admin/l5-persona", label: "L5 Persona", icon: Sparkles },
       { href: "/admin/system-prompts", label: "System Prompts", icon: ScrollText },
       { href: "/admin/config", label: "Configuration", icon: SlidersHorizontal },
     ],

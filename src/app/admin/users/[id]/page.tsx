@@ -107,13 +107,53 @@ export default function UserDetail() {
   const [grantPlanType, setGrantPlanType] = React.useState("monthly")
   const [revokingId, setRevokingId] = React.useState<string | null>(null)
 
+  // Cooldown: only the user's top-2 DH conversations keep replying while active.
+  const [cooldown, setCooldown] = React.useState<{ active: boolean; reason: string } | null>(null)
+  const [cooldownBusy, setCooldownBusy] = React.useState(false)
+
   React.useEffect(() => {
     if (!id) return
     void fetchUser()
     void fetchAuthInfo()
     void fetchSubscriptions()
+    void fetchCooldown()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
+
+  const fetchCooldown = async () => {
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(String(id))}/cooldown`)
+      const json = await res.json()
+      setCooldown(json.data ?? null)
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleCooldownToggle = async () => {
+    const entering = !cooldown?.active
+    setCooldownBusy(true)
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(String(id))}/cooldown`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: entering }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed to update cooldown')
+      const kept = Array.isArray(json.data?.kept_match_ids) ? json.data.kept_match_ids.length : 0
+      toast.success(
+        entering
+          ? `Cooldown on — ${kept} busiest conversation${kept === 1 ? '' : 's'} kept chatting, everything else muted`
+          : 'Cooldown off — all digital humans can chat again'
+      )
+      void fetchCooldown()
+    } catch (err) {
+      console.error(err)
+      toast.error(err instanceof Error ? err.message : 'Failed to update cooldown')
+    }
+    setCooldownBusy(false)
+  }
 
   const fetchAuthInfo = async () => {
     try {
@@ -286,7 +326,61 @@ export default function UserDetail() {
                 <div className="mt-3 flex gap-2">
                   <Badge variant="secondary">{isDeleted ? "Deleted User" : "User"}</Badge>
                   {isPremium && <Badge className="bg-amber-500 hover:bg-amber-600">Premium</Badge>}
+                  {cooldown?.active && (
+                    <Badge
+                      variant="outline"
+                      className="border-sky-500/50 text-sky-600 dark:text-sky-400"
+                      title="Only the top-2 digital-human conversations still reply"
+                    >
+                      Cooldown
+                    </Badge>
+                  )}
                 </div>
+
+                {user ? (
+                  <div className="mt-4 w-full">
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          disabled={cooldownBusy}
+                        >
+                          {cooldownBusy
+                            ? "Updating..."
+                            : cooldown?.active
+                              ? "Exit Cooldown Mode"
+                              : "Enter Cooldown Mode"}
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            {cooldown?.active ? "Exit cooldown mode?" : "Enter cooldown mode?"}
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            {cooldown?.active
+                              ? "All digital humans will be able to chat with this user again."
+                              : "Only this user's 2 busiest digital-human conversations will keep replying; every other digital human stops. You can hand-pick who chats afterwards from the Chat History tab."}
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={(e) => {
+                              e.preventDefault()
+                              void handleCooldownToggle()
+                            }}
+                            disabled={cooldownBusy}
+                          >
+                            {cooldown?.active ? "Exit Cooldown" : "Enter Cooldown"}
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                ) : null}
               </div>
 
               <Separator className="my-0 mt-6" />

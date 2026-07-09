@@ -810,65 +810,51 @@ alter table public.user_match_ai_state
   add column if not exists human_takeover boolean not null default false,
   add column if not exists human_takeover_at timestamptz;
 
--- ── L5 digital-human engine ─────────────────────────────────────────────────────
--- users.dh_engine gates which conversation engine a DH runs on:
---   'v1' — single-bubble webhook reply (legacy)
---   'l5' — persona kernel + match memory + diary + director/actor + nightly debrief
+-- ── DH conversation engine (v2 agentic turn loop) ──────────────────────────────
+-- users.dh_engine is a LEGACY column from the retired v1/L5 split (all DHs run
+-- the single v2 engine now); kept for history, no code reads it.
 alter table public.users
   add column if not exists dh_engine text not null default 'v1'
   check (dh_engine in ('v1', 'l5'));
 
-create table if not exists public.dh_persona (
-  dh_user_id uuid primary key references public.users(userid) on delete cascade,
-  tastes jsonb not null default '{}'::jsonb,        -- loves, hates, opinions, boundaries, humor
-  texting_style jsonb not null default '{}'::jsonb, -- bubble length, emoji policy, punctuation, latency curve
-  schedule jsonb not null default '{}'::jsonb,      -- availability by local hour + timezone
-  okr jsonb not null default '{}'::jsonb,           -- targets: conversations_per_day, reply_rate, intimacy_gain, tips
-  notes text,
+-- Grounding cadence for the agent loop: registry info tools (weather/news/user
+-- profile) are only offered on grounding turns — first chat, conversation
+-- resuming after a gap, or when this timestamp is older than a day.
+alter table public.user_match_ai_state
+  add column if not exists last_grounding_at timestamptz;
+
+-- ── Cooldown mode (token-spend cap for unlimited-membership users) ──────────────
+-- Once a user has sent `cooldown_message_threshold` messages (default 200), only
+-- their top-2 busiest DH conversations keep replying. Entry/exit + per-match
+-- muting go through rpc_set_user_cooldown (functions/cooldown.sql); the reply
+-- engines gate on user_match_ai_state.dh_muted.
+create table if not exists public.user_cooldown (
+  user_id uuid primary key references public.users(userid) on delete cascade,
+  active boolean not null default true,
+  reason text not null default 'manual' check (reason in ('auto_message_cap', 'manual')),
+  message_count_at_entry integer,
+  entered_at timestamptz not null default now(),
+  exited_at timestamptz,
   updated_at timestamptz not null default now()
 );
+alter table public.user_cooldown enable row level security; -- service-role only
 
-create table if not exists public.dh_match_memory (
-  match_id uuid primary key references public.user_matches(id) on delete cascade,
-  dh_user_id uuid not null references public.users(userid) on delete cascade,
-  facts jsonb not null default '[]'::jsonb,        -- durable facts about the user
-  open_loops jsonb not null default '[]'::jsonb,   -- unresolved threads to call back to
-  inside_jokes jsonb not null default '[]'::jsonb,
-  last_extracted_message_id uuid,
-  updated_at timestamptz not null default now()
-);
-create index if not exists dh_match_memory_dh_idx on public.dh_match_memory (dh_user_id);
+-- Per-match kill switch read by dh-auto-reply / dh-followup / dh-greeting.
+-- Set in bulk by rpc_set_user_cooldown, individually by the admin console
+-- (POST /api/admin/chat/mute), and inherited by new matches via the
+-- ai_state_cooldown_mute trigger while a cooldown is active.
+alter table public.user_match_ai_state
+  add column if not exists dh_muted boolean not null default false;
 
-create table if not exists public.dh_diary (
-  id uuid primary key default gen_random_uuid(),
-  dh_user_id uuid not null references public.users(userid) on delete cascade,
-  day date not null,
-  events jsonb not null default '[]'::jsonb,          -- 2-3 micro-events in her life today
-  mood text,
-  talking_points jsonb not null default '[]'::jsonb,  -- news-derived safe topics for today
-  created_at timestamptz not null default now(),
-  unique (dh_user_id, day)
-);
-create index if not exists dh_diary_dh_day_idx on public.dh_diary (dh_user_id, day desc);
+-- Per-sender counting (cooldown auto-entry check + conversation ranking).
+create index if not exists messages_sender_id_idx on public.messages (sender_id);
 
-create table if not exists public.dh_debrief (
-  id uuid primary key default gen_random_uuid(),
-  dh_user_id uuid not null references public.users(userid) on delete cascade,
-  day date not null,                                -- the day being debriefed
-  metrics jsonb not null default '{}'::jsonb,       -- conversations, replies, intimacy deltas vs OKR
-  notes jsonb not null default '{}'::jsonb,         -- what worked / what flopped / experiments
-  prompt_addendum text,                             -- coach notes injected into next-day replies
-  created_at timestamptz not null default now(),
-  unique (dh_user_id, day)
-);
-create index if not exists dh_debrief_dh_day_idx on public.dh_debrief (dh_user_id, day desc);
-
--- Service-role only: RLS on, no policies (admin console + edge functions use the
--- service key; the app never reads these).
-alter table public.dh_persona enable row level security;
-alter table public.dh_match_memory enable row level security;
-alter table public.dh_diary enable row level security;
-alter table public.dh_debrief enable row level security;
+insert into public.digital_human_config (key, value, description)
+values (
+  'cooldown_message_threshold', '200',
+  'Total messages a user can send before auto-entering cooldown (top-2 DH conversations stay active). 0 or empty disables auto-entry.'
+)
+on conflict (key) do nothing;
 
 -- ── Agent tool registry ─────────────────────────────────────────────────────────
 -- Tools digital humans (and future agents) can call for fresh conversation

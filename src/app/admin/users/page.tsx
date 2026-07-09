@@ -189,6 +189,7 @@ export default function ManageUsers() {
   const [matchCounts, setMatchCounts] = React.useState<Record<string, number>>({})
   const [messageCounts, setMessageCounts] = React.useState<Record<string, number>>({})
   const [imageCounts, setImageCounts] = React.useState<Record<string, number>>({})
+  const [cooldowns, setCooldowns] = React.useState<Record<string, { active: boolean }>>({})
 
   const range = React.useMemo<DateRange>(() => {
     if (dateMode === "range" && customRange?.from) {
@@ -317,6 +318,22 @@ export default function ManageUsers() {
   React.useEffect(() => {
     void fetchImageCounts()
   }, [fetchImageCounts])
+
+  const fetchCooldowns = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/users/cooldowns')
+      const json = (await res.json()) as { data?: Record<string, { active: boolean }>; error?: string }
+      if (!res.ok) throw new Error(json.error || 'Failed to fetch cooldowns')
+      setCooldowns(json.data ?? {})
+    } catch (err: unknown) {
+      console.error(err)
+      setCooldowns({})
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void fetchCooldowns()
+  }, [fetchCooldowns])
 
   // Cohort conversion for the selected range: of the new real users created in
   // the window, the share who have ever paid (in the selected environment).
@@ -541,6 +558,7 @@ export default function ManageUsers() {
                   <TableHead>Matches</TableHead>
                   <TableHead>Messages</TableHead>
                   <TableHead>Images</TableHead>
+                  <TableHead>Cooldown</TableHead>
                   <TableHead>Joined</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -571,6 +589,19 @@ export default function ManageUsers() {
                     <TableCell className="text-muted-foreground tabular-nums">{matchCounts[u.userid] ?? 0}</TableCell>
                     <TableCell className="text-muted-foreground tabular-nums">{messageCounts[u.userid] ?? 0}</TableCell>
                     <TableCell className="text-muted-foreground tabular-nums">{imageCounts[u.userid] ?? 0}</TableCell>
+                    <TableCell>
+                      {cooldowns[u.userid]?.active ? (
+                        <Badge
+                          variant="outline"
+                          className="border-sky-500/50 text-sky-600 dark:text-sky-400"
+                          title="Only this user's top-2 digital-human conversations still reply"
+                        >
+                          Cooldown
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(u.created_at).toLocaleDateString()}
                     </TableCell>

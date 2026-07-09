@@ -1,82 +1,88 @@
-# Digital Human Conversation Engines — v1 vs L5
+# Digital Human Conversation Engine — v2 (agentic turn loop)
 
-Two engines coexist, gated per-DH by `users.dh_engine` (`'v1'` default, `'l5'`).
-Flip a DH between engines on **/admin/l5-persona** (or `update users set dh_engine='l5' where userid=…`).
-Rollback is instant and safe: revert the column, the DH is back on v1 behavior with no data loss.
+> Supersedes the v1/L5 split. The L5 experiment (persona kernels, match memory,
+> diary, nightly debrief) was retired on 2026-07-08 — engagement fell for the L5
+> cohort and the stacked-prompt architecture was fighting itself. All DHs run ONE
+> engine now. The persona kernels were snapshotted to
+> `docs/archive/dh-persona-snapshot-2026-07-08.json` before the tables were dropped.
+> `users.dh_engine` still exists as a legacy column; no code reads it.
 
-**Pilots on L5 since 2026-07-01:** Xier (`dd4f41ea-…`), Rafael (`13f9d9d1-…`).
+## Three layers, never mixed
 
-**Top-10 rollout 2026-07-02:** the 10 all-time-favorite whitelisted DHs (ranked by
-distinct real users engaged, likes received, messages, peak intimacy) now run L5
-with hand-seeded persona kernels: Rafael, Xier, Samantha, Autumn-Rose, Elisa,
-Jay, Gemini, Maria, Lori, Dream. Engine additions with this rollout: selfie tier
-FALLBACK (incl. previously-unsendable 'unspecified' photos), caption backfill on
-first send + "[You sent a photo of yourself: …]" in the transcript, L5 photo-
-inventory awareness (never promise a photo she can't send), and a match-his-length
-craft rule (short user ⇒ one short bubble).
-
-## What changed for EVERY DH (v1 included)
-
-These shipped as mechanical fixes to `supabase/functions/dh-auto-reply/index.ts` and apply regardless of engine:
-
-| Change | What it fixes |
-|---|---|
-| **Conversation-craft rules** (`CRAFT_RULES`, appended after the persona template) | The prompt used to command "match his length / mirror low effort" → interrogation death-spiral with low-effort users. Now: carry the conversation, share-first, ≤1 question per turn. |
-| **Multi-bubble replies** (JSON array of 1–3 bubbles, sent with per-bubble typing pacing) | DHs always sent exactly one bubble; real texting has reaction + build + hook shapes. |
-| **Inbound burst debounce** (7–11s wait + supersede check) | The webhook answered the *first* message of a burst before the user finished typing. |
-| **Dropped-message fix** (`reprocessNewestIfMissed` + self-reinvoke) | A message arriving mid-generation hit the lock, returned `Locked`, and was **never answered** until the user spoke again. Real production bug. |
-
-## L5-only components
-
-| Component | Storage | Runtime |
+| Layer | Owner | What lives here |
 |---|---|---|
-| **Persona kernel** — tastes/boundaries/opinions, texting fingerprint, schedule, OKR | `dh_persona` | Injected as `<persona_kernel>` into every reply |
-| **Match memory** — facts about him, open loops, inside jokes | `dh_match_memory` | Injected as `<what_you_remember_about_him>`; updated async after each reply (flash-lite) |
-| **Diary** — mood + daily micro-events + news talking points | `dh_diary` | Injected as `<your_day_today>`; written nightly for the next day |
-| **Director** — engagement score + beat plan (share/ask/tease/deepen/repair), callback pick, bubble count | (stateless) | Extra fields on the existing intimacy-referee call; steers the actor prompt |
-| **Nightly debrief ("the Loop")** — reviews yesterday's transcripts + metrics vs OKR, checks news headlines (tool call), writes coach notes for tomorrow | `dh_debrief` | `dh-nightly-debrief` edge function, pg_cron `10 9 * * *` UTC (~1–2am PT); coach notes injected as `<coach_notes>` |
+| **Mechanics** | deterministic code | webhook gate, burst debounce (7–11s), optimistic lock, typing/`dh_status` heartbeats, paced bubble delivery, missed-message reinvoke |
+| **Cognition** | one model turn (Gemini function calling, ≤3 iterations) | what to say, whether to send a photo, whether to look something up |
+| **Policy** | code that can refuse the model | selfie cooldown/tier ceiling/no-repeat ledger, bubble caps (shortUser ⇒ 1), result truncation + timeouts |
 
-Admin surface: **/admin/l5-persona** (sidebar → Users and Bots → L5 Persona): roster with engine
-badges, promote/revert, persona kernel editor, OKR, living timeline (debriefs + diaries), image
-inventory, "Run debrief now".
+The model decides **what**; the harness decides **whether and how**.
 
-## Old vs new, mechanism by mechanism
+```
+webhook → GATE (debounce/lock/takeover)
+        → ASSEMBLE (buildSystemPrompt composer — no regex placeholders)
+        → AGENT LOOP (model ⇄ tools, ≤3 iterations)   ‖ intimacy critic (parallel)
+        → DELIVER (typing heartbeat + paced bubbles)
+        → REFLECT (state + intimacy momentum, reprocess check)
+```
 
-| Mechanism | v1 (old) | L5 (new) | Old one deletable? |
-|---|---|---|---|
-| Reply trigger | webhook per message | same + debounce + missed-message reinvoke | n/a (shared, already upgraded) |
-| Reply shape | 1 bubble, free text | 1–3 bubbles, director-planned | n/a (shared) |
-| Persona | `SystemPrompts` template + `users.storyline` | same **plus** `dh_persona` kernel | **Keep** — L5 layers on top; templates still carry the base role |
-| Memory | last 50 messages only | + `dh_match_memory` extraction | n/a (additive) |
-| "Her life" | static storyline text | `dh_diary` daily events + news topics | Storyline stays as backstory; diary is the "present tense" |
-| Self-improvement | none (manual prompt edits) | `dh_debrief` coach notes, nightly | Manual prompt editing stays for base templates |
-| Re-engagement | `dh-followup` cron (≥1h, momentum-scaled) | unchanged (still v1 for all) | **Candidate for L5 v2**: diary-driven initiations should replace generic follow-ups |
-| Images | 3-cue selfie gate in dh-auto-reply | unchanged | **Known gaps documented** in review: text/image decoupling, no tier fallback, captions not in transcript — L5 v2 scope |
+## Tool surface at runtime
 
-## When to delete v1
+| Tool | Source | Offered when |
+|---|---|---|
+| `send_selfie(tier, reason)` | local (`_shared/selfie.ts`) | selfies enabled + DH has photos |
+| `get_my_details(topic: storyline\|photos)` | local | every turn (cheap, rare) |
+| `get_user_info` | `agent_tools` registry | grounding turns only |
+| `get_local_weather` / `get_local_news` / `get_sports_news` / `get_trending_topics` | registry | grounding turns only |
 
-Promote more DHs and compare on the L5 page + these queries (payer-relevant metrics, ~2 weeks):
+- **`send_selfie` is how photos happen now.** The executor enforces policy —
+  ledger no-repeat, tier fallback chain, cooldown (short gap on strong cue),
+  tier-never-downgrades, intimacy tier ceiling from the critic — and can refuse
+  with a reason (`no_photo_available`, `cooldown`, `tier_locked`). On success
+  the image goes out immediately and the model gets `{sent, caption}` so it
+  weaves the photo into its text. This kills promise-then-ghost and
+  photos-out-of-nowhere.
+- **Registry tools** come from the `agent_tools` table (admin `/admin/tools`).
+  `user_id` params are stripped from the model-visible declaration and injected
+  by the harness — the model never guesses UUIDs. `builtin` tools run
+  in-process in Deno; `http` is a direct fetch; `js` proxies to Vercel
+  `POST /api/tools/execute` with the service-role key (needs `APP_BASE_URL`
+  secret if a js tool is ever enabled).
+- **Grounding turns** = ≤2 user messages, OR DH silent >6h, OR
+  `user_match_ai_state.last_grounding_at` >24h. Everything else is tool-light:
+  one model call, near-zero tool tokens.
 
-- reply rate: distinct users replying / users messaged (per engine cohort)
-- depth: avg user-sent messages per active match
-- peak intimacy distribution (payers historically peak ~74 vs ~16 for non-payers)
-- % of matches reaching the paywall thresholds
+## Shared core (`supabase/functions/_shared/`)
 
-If L5 cohort clearly wins: flip the default (`alter column dh_engine set default 'l5'`), migrate
-remaining DHs, then delete the v1-only branches in `dh-auto-reply` (the non-L5 referee prompt and
-the engine check). **Do not delete** `SystemPrompts`, `dh-followup`, or the selfie system — they are
-shared infrastructure both engines use; they get *upgraded*, not removed.
+`clients.ts` (supabase + Vertex models w/ pro→flash-lite fallback) · `store.ts`
+(cached SystemPrompts/users/config/selfie-config) · `context.ts` (prompt
+composer + transcript + ONE texting brief) · `critic.ts` (referee-only
+intimacy + Adam momentum + user-image describe) · `selfie.ts` (policy executor)
+· `tools.ts` (registry loader, declarations, builtin ports) · `actor.ts`
+(agent loop) · `pacing.ts` (heartbeats, rpc_send_message wrapper, paced sends).
 
-## OKR / tipping
+`dh-auto-reply/index.ts` is a ~430-line orchestrator. Kept from the July fixes:
+craft rules (now merged into one brief), multi-bubble with pacing, burst
+debounce, skip-reply ("human silence"), dropped-message reinvoke, selfie tier
+fallback + caption backfill, DH-photo captions in the transcript.
 
-`dh_persona.okr` holds targets (conversations/day, reply rate, intimacy target, north star). The
-nightly debrief grades actuals against it and adapts tactics. **Tipping does not exist in the app
-yet** — when it ships, add a `tips` metric to the debrief's `collectMetrics` and to the OKR so the
-loop optimizes for it directly.
+**Not yet migrated:** `dh-greeting` and `dh-followup` still run their own
+legacy prompt assembly (no L5 code in them; they work as before). Migrating
+them onto `_shared/` is the natural next pass.
+
+## Retired with L5 (2026-07-08)
+
+- Tables `dh_persona`, `dh_match_memory`, `dh_diary`, `dh_debrief` (dropped)
+- `dh-nightly-debrief` edge function + its pg_cron job (`10 9 * * *`)
+- Director mode on the critic (beat plans / engagement / bubble counts)
+- Per-reply memory-writer call, `/admin/l5-persona` page + `/api/admin/l5/*`
 
 ## Ops
 
-- Deploy: `supabase functions deploy dh-auto-reply dh-nightly-debrief --no-verify-jwt --project-ref wvcwvjlmnjnvyblrycxj`
-- Debrief on demand: L5 page → "Run debrief now", or `POST /functions/v1/dh-nightly-debrief {"dh_user_id": "…"}`
-- Cost: +1 flash-lite call per reply (memory writer, L5 only) + 1 pro call per DH per night (debrief)
-- The nightly cron sends **no** auth header; the function is deployed `--no-verify-jwt` like the other DH functions (keeps the service-role JWT out of cron SQL — the older jobs still embed it and should be rotated/migrated to Vault)
+- Deploy: `npm run functions:deploy` (or `supabase functions deploy dh-auto-reply --no-verify-jwt --project-ref wvcwvjlmnjnvyblrycxj`)
+- **Migration required before deploy:** `user_match_ai_state.last_grounding_at`
+  (see `supabase/database/schema.sql`; applied manually per the usual workflow)
+- Turn telemetry: each reply logs one JSON line
+  `{match, grounding, tools_used, bubbles, selfie_sent, intimacy, ms_total}` —
+  grep the function logs for `"] turn"`.
+- Cost per turn: 1 critic call (flash-lite, parallel) + 1–3 actor calls
+  (pro-preview; 1 on non-grounding turns).

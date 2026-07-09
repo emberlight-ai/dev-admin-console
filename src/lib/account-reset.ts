@@ -202,7 +202,7 @@ export async function archiveUserContent(userId: string): Promise<ArchiveResult>
 /// tables (posts/matches/messages) or simply doesn't need preserving because
 /// it's pure gating/state (requests, swipes, invite tracking, boost ledger)
 /// rather than content. Deleting user_matches cascades messages,
-/// user_match_ai_state, dh_match_memory and dh_sent_images.
+/// user_match_ai_state and dh_sent_images.
 export async function purgeUserContent(userId: string) {
   const results = await Promise.all([
     supabaseAdmin.from('user_posts').delete().eq('userid', userId),

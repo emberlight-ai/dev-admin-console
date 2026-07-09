@@ -269,7 +269,7 @@ Deno.serve(async (req) => {
     // 3. Check the current ai state — ensure ai_state = 0 and not locked
     const stateResult = await supabase
       .from('user_match_ai_state')
-      .select('ai_state, ai_locked_until, ai_greeting_sent')
+      .select('ai_state, ai_locked_until, ai_greeting_sent, dh_muted')
       .eq('match_id', matchId)
       .single();
 
@@ -281,7 +281,7 @@ Deno.serve(async (req) => {
       await new Promise((r) => setTimeout(r, 1500));
       const { data: retryData } = await supabase
         .from('user_match_ai_state')
-        .select('ai_state, ai_locked_until, ai_greeting_sent')
+        .select('ai_state, ai_locked_until, ai_greeting_sent, dh_muted')
         .eq('match_id', matchId)
         .single();
       stateData = retryData;
@@ -294,6 +294,12 @@ Deno.serve(async (req) => {
 
     if (stateData.ai_greeting_sent || stateData.ai_state !== 0) {
       return new Response('Greeting already sent or wrong state', { status: 200 });
+    }
+
+    // Matches created during a user cooldown start muted — no greeting either.
+    if (stateData.dh_muted) {
+      console.log('[dh-greeting] DH muted for match (user cooldown), skip', matchId);
+      return new Response('Muted', { status: 200 });
     }
 
     if (stateData.ai_locked_until && new Date(stateData.ai_locked_until).getTime() > Date.now()) {

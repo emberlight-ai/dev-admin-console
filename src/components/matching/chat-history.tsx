@@ -2,13 +2,14 @@
 
 import * as React from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Loader2, Copy, Image as ImageIcon, LogIn, X } from 'lucide-react';
+import { Send, Loader2, Copy, Image as ImageIcon, LogIn, X, Volume2, VolumeX } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TakeoverDock } from '@/components/matching/takeover-dock';
 
 // Helper to get a client that definitely has the keys from the env
@@ -37,11 +38,21 @@ interface ChatHistoryProps {
   currentUserIsDigitalHuman?: boolean;
 }
 
-interface MatchedUser {
-  userid: string;
-  username: string;
-  is_digital_human?: boolean;
-  avatar?: string | null;
+/** One row from rpc_admin_user_conversations, already sorted by message count. */
+interface Conversation {
+  match_id: string;
+  partner_id: string;
+  username: string | null;
+  avatar: string | null;
+  is_digital_human: boolean;
+  message_count: number;
+  dh_muted: boolean;
+}
+
+interface CooldownStatus {
+  active: boolean;
+  reason: string;
+  entered_at: string;
 }
 
 function formatIntimacyScore(score?: number | null) {
@@ -405,111 +416,189 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
 }
 
 export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }: ChatHistoryProps) {
-  const [matchedUsers, setMatchedUsers] = React.useState<MatchedUser[]>([]);
-  const [selectedPartnerId, setSelectedPartnerId] = React.useState<string | null>(null);
-  const [matches, setMatches] = React.useState<Record<string, string>>({}); // partnerId -> matchId
+  const [conversations, setConversations] = React.useState<Conversation[]>([]);
+  const [cooldown, setCooldown] = React.useState<CooldownStatus | null>(null);
+  const [selectedMatchId, setSelectedMatchId] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [togglingMatchId, setTogglingMatchId] = React.useState<string | null>(null);
 
   // When set, the Messenger-style takeover dock is open for the selected partner.
   const [takeoverOpen, setTakeoverOpen] = React.useState(false);
 
-  const fetchMatches = React.useCallback(async () => {
+  // One service-role query server-side (rpc_admin_user_conversations) returns the
+  // partner list WITH per-conversation message counts + mute flags, sorted by
+  // count — the previous client-side match/user fan-out couldn't rank or count.
+  const fetchConversations = React.useCallback(async () => {
     setLoading(true);
-    const supabase = getSupabase();
-
-    // Fetch matches where current user is A or B
-    const { data: matchesData, error: matchesError } = await supabase
-      .from('user_matches')
-      .select('id, user_a, user_b')
-      .or(`user_a.eq.${currentUserId},user_b.eq.${currentUserId}`);
-
-    if (matchesError) {
-      console.error('Error fetching matches:', matchesError);
-      toast.error('Failed to fetch matches');
-      setLoading(false);
-      return;
-    }
-
-    if (!matchesData || matchesData.length === 0) {
-      setLoading(false);
-      return;
-    }
-
-    const partnerIds: string[] = [];
-    const matchesMap: Record<string, string> = {};
-
-    matchesData.forEach(match => {
-      const partnerId = match.user_a === currentUserId ? match.user_b : match.user_a;
-      partnerIds.push(partnerId);
-      matchesMap[partnerId] = match.id;
-    });
-
-    setMatches(matchesMap);
-
-    // Fetch user details for partners
-    if (partnerIds.length > 0) {
-      const { data: usersData, error: usersError } = await supabase
-        .from('users')
-        .select('userid, username, is_digital_human, avatar')
-        .in('userid', partnerIds);
-
-      if (usersError) {
-        console.error('Error fetching matched users:', usersError);
-        toast.error('Failed to fetch matched users details');
-      } else {
-        setMatchedUsers(usersData as MatchedUser[] || []);
-        // Select first match by default if available
-        if (usersData && usersData.length > 0) {
-          setSelectedPartnerId(usersData[0].userid);
-        }
-      }
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(currentUserId)}/conversations`);
+      const json = (await res.json()) as {
+        conversations?: Conversation[];
+        cooldown?: CooldownStatus | null;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error || 'Failed to fetch conversations');
+      const convs = json.conversations ?? [];
+      setConversations(convs);
+      setCooldown(json.cooldown ?? null);
+      setSelectedMatchId((prev) =>
+        prev && convs.some((c) => c.match_id === prev) ? prev : convs[0]?.match_id ?? null
+      );
+    } catch (err: unknown) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : 'Failed to fetch conversations');
+      setConversations([]);
+      setCooldown(null);
     }
     setLoading(false);
   }, [currentUserId]);
 
   React.useEffect(() => {
-    if (currentUserId) {
-      void fetchMatches();
-    }
-  }, [currentUserId, fetchMatches]);
+    if (currentUserId) void fetchConversations();
+  }, [currentUserId, fetchConversations]);
 
-  // Send-match-request moved to its own surface: SendMatchRequestPanel
-  // (rendered as a dedicated tab on the digital-human detail page).
+  // Mute/unmute the DH for one conversation (user_match_ai_state.dh_muted —
+  // dh-auto-reply skips muted matches). Optimistic-free: apply on success only,
+  // so the dot/toggle never lies about what the engine will do.
+  const toggleMute = async (conv: Conversation) => {
+    setTogglingMatchId(conv.match_id);
+    try {
+      const res = await fetch('/api/admin/chat/mute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ match_id: conv.match_id, muted: !conv.dh_muted }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to update');
+      setConversations((prev) =>
+        prev.map((c) => (c.match_id === conv.match_id ? { ...c, dh_muted: !conv.dh_muted } : c))
+      );
+      toast.success(
+        !conv.dh_muted
+          ? `${conv.username ?? 'DH'} muted — she will stop replying to this user`
+          : `${conv.username ?? 'DH'} unmuted — she can chat with this user again`
+      );
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update mute');
+    }
+    setTogglingMatchId(null);
+  };
 
   if (loading) {
-    return <div className="text-sm text-muted-foreground p-4">Loading matches...</div>;
+    return <div className="text-sm text-muted-foreground p-4">Loading conversations...</div>;
   }
 
-  const selectedPartner = matchedUsers.find((u) => u.userid === selectedPartnerId) ?? null;
+  if (conversations.length === 0) {
+    return <div className="text-sm text-muted-foreground p-4">No matches found for this user.</div>;
+  }
+
+  const selected = conversations.find((c) => c.match_id === selectedMatchId) ?? null;
+  const cooldownActive = Boolean(cooldown?.active);
   // "Take over" opens an in-place chat dock where the admin speaks AS the digital
   // human toward the real user and pauses the bot for that conversation. Requires a
   // digital human on one side of the match (the page user or the selected partner).
-  const canTakeOver = Boolean(
-    selectedPartner && (currentUserIsDigitalHuman || selectedPartner.is_digital_human)
-  );
+  const canTakeOver = Boolean(selected && (currentUserIsDigitalHuman || selected.is_digital_human));
 
   return (
-    <div className="space-y-4">
-      {matchedUsers.length > 0 ? (
-        <>
-          <div className="w-full max-w-md">
-            <label className="text-sm font-medium mb-1 block">Select Partner</label>
-            <div className="flex items-center gap-2">
-              <div className="flex-1">
-                <Select value={selectedPartnerId || ''} onValueChange={setSelectedPartnerId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a matched user" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {matchedUsers.map((user) => (
-                      <SelectItem key={user.userid} value={user.userid}>
-                        {user.username || 'Unknown User'}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {selectedPartner && (
+    <div className="space-y-3">
+      {cooldownActive ? (
+        <div className="flex items-center gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          <span>
+            User is in <span className="font-medium">cooldown</span> — only digital humans marked
+            with a green dot still reply. Use the toggles to change who chats.
+          </span>
+        </div>
+      ) : null}
+
+      <div className="flex gap-4">
+        {/* Conversation rail: every match, busiest first. */}
+        <div className="flex w-72 shrink-0 flex-col rounded-md border">
+          <div className="border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
+            Conversations · {conversations.length}
+          </div>
+          <ScrollArea className="h-[720px]">
+            <div className="p-1.5">
+              {conversations.map((conv) => {
+                const isSelected = conv.match_id === selectedMatchId;
+                const chatting = cooldownActive && conv.is_digital_human && !conv.dh_muted;
+                return (
+                  <div
+                    key={conv.match_id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedMatchId(conv.match_id)}
+                    onKeyDown={(e) => e.key === 'Enter' && setSelectedMatchId(conv.match_id)}
+                    className={cn(
+                      'flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors',
+                      isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
+                      conv.dh_muted && 'opacity-60'
+                    )}
+                  >
+                    <div className="relative shrink-0">
+                      <Avatar className="h-9 w-9">
+                        <AvatarImage src={`/api/avatar/${conv.partner_id}`} alt={conv.username ?? ''} />
+                        <AvatarFallback>{(conv.username ?? '??').slice(0, 2).toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                      {chatting ? (
+                        <span
+                          className="absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2 border-background bg-emerald-500"
+                          title="Still chatting with this user during cooldown"
+                        />
+                      ) : null}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">
+                        {conv.username || 'Unknown User'}
+                      </div>
+                      <div className="text-xs text-muted-foreground tabular-nums">
+                        {conv.message_count.toLocaleString()} message{conv.message_count === 1 ? '' : 's'}
+                        {!conv.is_digital_human ? ' · real user' : ''}
+                      </div>
+                    </div>
+                    {conv.is_digital_human ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        disabled={togglingMatchId === conv.match_id}
+                        title={
+                          conv.dh_muted
+                            ? 'Muted — click to let this digital human chat with the user'
+                            : 'Chatting — click to stop this digital human from replying'
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void toggleMute(conv);
+                        }}
+                      >
+                        {togglingMatchId === conv.match_id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : conv.dh_muted ? (
+                          <VolumeX className="h-3.5 w-3.5 text-muted-foreground" />
+                        ) : (
+                          <Volume2 className="h-3.5 w-3.5 text-emerald-600" />
+                        )}
+                      </Button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Selected conversation. */}
+        <div className="min-w-0 flex-1 space-y-2">
+          {selected ? (
+            <>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-medium">{selected.username || 'Unknown User'}</span>
+                  {selected.is_digital_human ? <Badge variant="outline">DH</Badge> : null}
+                  {selected.dh_muted ? <Badge variant="secondary">Muted</Badge> : null}
+                </div>
                 <Button
                   type="button"
                   variant="outline"
@@ -526,26 +615,21 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
                   <LogIn className="h-4 w-4 mr-1" />
                   Take over
                 </Button>
-              )}
-            </div>
-          </div>
+              </div>
+              <ChatInterface
+                matchId={selected.match_id}
+                currentUserId={currentUserId}
+                canSend={currentUserIsDigitalHuman}
+              />
+            </>
+          ) : null}
+        </div>
+      </div>
 
-          {selectedPartnerId && matches[selectedPartnerId] && (
-            <ChatInterface
-              matchId={matches[selectedPartnerId]}
-              currentUserId={currentUserId}
-              canSend={currentUserIsDigitalHuman}
-            />
-          )}
-        </>
-      ) : (
-        <div className="text-sm text-muted-foreground p-4">No matches found for this user.</div>
-      )}
-
-      {takeoverOpen && selectedPartner && selectedPartnerId && matches[selectedPartnerId] && (
+      {takeoverOpen && selected && (
         <TakeoverDock
-          matchId={matches[selectedPartnerId]}
-          participantIds={[currentUserId, selectedPartner.userid]}
+          matchId={selected.match_id}
+          participantIds={[currentUserId, selected.partner_id]}
           onClose={() => setTakeoverOpen(false)}
         />
       )}

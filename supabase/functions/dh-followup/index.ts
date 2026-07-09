@@ -294,7 +294,8 @@ Deno.serve(async (req) => {
       .in('ai_state', [2, 4])
       .lt('last_message_at', oneHourAgo)
       .is('ai_locked_until', null)
-      .not('last_message_id', 'is', null);
+      .not('last_message_id', 'is', null)
+      .eq('dh_muted', false); // cooldown / admin-muted conversations never re-engage
 
     if (error) {
       console.error('[dh-followup] Error fetching candidates', error);
