@@ -7,10 +7,29 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Loader2, Copy, Image as ImageIcon, LogIn, X, Volume2, VolumeX } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Send,
+  Loader2,
+  Copy,
+  Image as ImageIcon,
+  X,
+  Volume2,
+  VolumeX,
+  Bot,
+  ChevronLeft,
+  ExternalLink,
+  ImagePlus,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { TakeoverDock } from '@/components/matching/takeover-dock';
 
 // Helper to get a client that definitely has the keys from the env
 function getSupabase() {
@@ -33,8 +52,7 @@ interface Message {
 
 interface ChatHistoryProps {
   currentUserId: string;
-  /** Only digital humans can be "operated" by the admin. When false (a real
-   *  user), the chat composer is read-only so we never message on their behalf. */
+  /** Whether the profile this page belongs to is a digital human. */
   currentUserIsDigitalHuman?: boolean;
 }
 
@@ -53,6 +71,22 @@ interface CooldownStatus {
   active: boolean;
   reason: string;
   entered_at: string;
+}
+
+interface SelfieInventoryItem {
+  id: string;
+  public_url: string;
+  ordinal: number;
+  image_tier: 'casual' | 'tease' | 'reward' | 'unspecified';
+  caption: string | null;
+  already_sent: boolean;
+}
+
+/** Detail page for a partner: DHs have their own console section. */
+function partnerHref(partner: Pick<Conversation, 'partner_id' | 'is_digital_human'>) {
+  return partner.is_digital_human
+    ? `/admin/digital-humans/${partner.partner_id}`
+    : `/admin/users/${partner.partner_id}`;
 }
 
 function formatIntimacyScore(score?: number | null) {
@@ -109,26 +143,308 @@ const downsampleImage = (file: File, maxWidth = 1200): Promise<File> => {
   });
 };
 
-function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, currentUserId: string, canSend: boolean }) {
+const TIER_BADGE_CLASS: Record<SelfieInventoryItem['image_tier'], string> = {
+  casual: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+  tease: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
+  reward: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
+  unspecified: 'bg-muted text-muted-foreground border-border',
+};
+
+// ── Send-image picker: the DH's preserved selfies for this conversation ────────
+function SelfiePickerDialog({
+  open,
+  onOpenChange,
+  matchId,
+  dhName,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  matchId: string;
+  dhName: string;
+}) {
+  const [images, setImages] = React.useState<SelfieInventoryItem[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [sending, setSending] = React.useState(false);
+  const [tierFilter, setTierFilter] = React.useState<'all' | SelfieInventoryItem['image_tier']>('all');
+
+  React.useEffect(() => {
+    if (!open) return;
+    setSelectedId(null);
+    setTierFilter('all');
+    setLoading(true);
+    fetch(`/api/admin/chat/selfie?match_id=${encodeURIComponent(matchId)}`)
+      .then(async (res) => {
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to load images');
+        setImages((json.images ?? []) as SelfieInventoryItem[]);
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : 'Failed to load images');
+        setImages([]);
+      })
+      .finally(() => setLoading(false));
+  }, [open, matchId]);
+
+  const visible = images.filter((img) => tierFilter === 'all' || img.image_tier === tierFilter);
+  const selected = images.find((img) => img.id === selectedId) ?? null;
+
+  const handleSend = async () => {
+    if (!selected) return;
+    setSending(true);
+    try {
+      const res = await fetch('/api/admin/chat/selfie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ match_id: matchId, image_id: selected.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to send image');
+      toast.success(`Photo sent as ${dhName}`);
+      onOpenChange(false);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send image');
+    }
+    setSending(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Send a photo as {dhName}</DialogTitle>
+          <DialogDescription>
+            {dhName}&apos;s preserved selfies. Photos already sent in this conversation are marked —
+            sending records the ledger, so the bot never re-sends them either.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap gap-1.5">
+          {(['all', 'casual', 'tease', 'reward', 'unspecified'] as const).map((tier) => (
+            <button
+              key={tier}
+              type="button"
+              onClick={() => setTierFilter(tier)}
+              className={cn(
+                'rounded-full border px-2.5 py-0.5 text-xs capitalize transition-colors',
+                tierFilter === tier ? 'bg-primary text-primary-foreground border-primary' : 'text-muted-foreground hover:bg-muted'
+              )}
+            >
+              {tier}
+            </button>
+          ))}
+        </div>
+
+        <ScrollArea className="h-[46dvh]">
+          {loading ? (
+            <div className="flex justify-center py-16">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : visible.length === 0 ? (
+            <div className="py-16 text-center text-sm text-muted-foreground">
+              No {tierFilter === 'all' ? '' : `${tierFilter} `}photos in this digital human&apos;s inventory.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 p-1 sm:grid-cols-3">
+              {visible.map((img) => (
+                <button
+                  key={img.id}
+                  type="button"
+                  onClick={() => setSelectedId(img.id === selectedId ? null : img.id)}
+                  className={cn(
+                    'group relative overflow-hidden rounded-md border text-left transition-shadow',
+                    selectedId === img.id && 'ring-2 ring-primary'
+                  )}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.public_url}
+                    alt={img.caption ?? `pic ${img.ordinal}`}
+                    className={cn('aspect-square w-full object-cover', img.already_sent && 'opacity-45')}
+                  />
+                  <div className="absolute left-1.5 top-1.5 flex gap-1">
+                    <Badge variant="outline" className={cn('border text-[10px] capitalize backdrop-blur', TIER_BADGE_CLASS[img.image_tier])}>
+                      {img.image_tier}
+                    </Badge>
+                  </div>
+                  {img.already_sent && (
+                    <div className="absolute right-1.5 top-1.5">
+                      <Badge variant="secondary" className="text-[10px]">Sent</Badge>
+                    </div>
+                  )}
+                  {img.caption ? (
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-1.5 pt-4 text-[10px] leading-tight text-white line-clamp-2">
+                      {img.caption}
+                    </div>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          )}
+        </ScrollArea>
+
+        <DialogFooter className="items-center gap-2 sm:justify-between">
+          <div className="text-xs text-muted-foreground">
+            {selected
+              ? selected.already_sent
+                ? 'Heads up: this photo was already sent in this conversation.'
+                : `Sending a ${selected.image_tier} photo.`
+              : 'Pick a photo to send.'}
+          </div>
+          <Button type="button" disabled={!selected || sending} onClick={() => void handleSend()}>
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+            Send photo
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── The conversation pane: history + takeover-aware composer ───────────────────
+function ChatInterface({
+  matchId,
+  pageUserId,
+  pageUserIsDh,
+  partner,
+}: {
+  matchId: string;
+  pageUserId: string;
+  pageUserIsDh: boolean;
+  partner: Conversation;
+}) {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [inputText, setInputText] = React.useState('');
   const [sending, setSending] = React.useState(false);
   const [imageFile, setImageFile] = React.useState<File | null>(null);
+  const [dragging, setDragging] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const dragDepthRef = React.useRef(0);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Which side of the match do we operate? Always the digital human. On a DH's
+  // own page that's the page user; on a real user's page it's the DH partner.
+  const dhSideId = pageUserIsDh ? pageUserId : partner.is_digital_human ? partner.partner_id : null;
+  const receiverId = pageUserIsDh ? partner.partner_id : pageUserId;
+  const dhSideName = pageUserIsDh ? 'this digital human' : partner.username ?? 'the digital human';
+  const canSend = Boolean(dhSideId);
+
+  // Takeover: focusing the composer pauses the bot (human_takeover) so it never
+  // talks over the operator; leaving the conversation hands control back.
+  const [takeover, setTakeover] = React.useState(false);
+  const [togglingTakeover, setTogglingTakeover] = React.useState(false);
+  const takeoverRef = React.useRef(false);
+  const lastTypingAtRef = React.useRef(0);
+  const typingStopRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    takeoverRef.current = takeover;
+  }, [takeover]);
+
+  // Reflect any takeover already engaged elsewhere (another admin/tab).
+  React.useEffect(() => {
+    if (!canSend) return;
+    fetch(`/api/admin/chat/takeover?match_id=${encodeURIComponent(matchId)}`)
+      .then(async (res) => {
+        const json = await res.json();
+        if (res.ok) setTakeover(Boolean(json.state?.human_takeover));
+      })
+      .catch(() => {});
+  }, [matchId, canSend]);
+
+  const sendTyping = React.useCallback(
+    (typing: boolean) => {
+      if (!dhSideId) return;
+      void fetch('/api/admin/chat/typing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ match_id: matchId, dh_user_id: dhSideId, typing }),
+      }).catch(() => {});
+    },
+    [matchId, dhSideId]
+  );
+
+  const stopTyping = React.useCallback(() => {
+    if (typingStopRef.current) {
+      clearTimeout(typingStopRef.current);
+      typingStopRef.current = null;
+    }
+    if (lastTypingAtRef.current) {
+      lastTypingAtRef.current = 0;
+      sendTyping(false);
+    }
+  }, [sendTyping]);
+
+  const setTakeoverState = React.useCallback(
+    async (active: boolean) => {
+      if (!canSend) return;
+      setTogglingTakeover(true);
+      try {
+        const res = await fetch('/api/admin/chat/takeover', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ match_id: matchId, active }),
+        });
+        const json = (await res.json()) as { ok?: boolean; error?: string };
+        if (!res.ok) throw new Error(json.error || 'Failed to update takeover');
+        setTakeover(active);
+        if (!active) stopTyping();
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : 'Failed to update takeover');
+      } finally {
+        setTogglingTakeover(false);
+      }
+    },
+    [matchId, canSend, stopTyping]
+  );
+
+  // Leaving the conversation (switch/unmount) hands control back to the AI and
+  // clears any lingering typing indicator. Fire-and-forget: must land after
+  // unmount. beforeunload covers tab close, where cleanup never runs.
+  React.useEffect(() => {
+    const release = () => {
+      if (!takeoverRef.current) return;
+      const blob = new Blob([JSON.stringify({ match_id: matchId, active: false })], {
+        type: 'application/json',
+      });
+      navigator.sendBeacon('/api/admin/chat/takeover', blob);
+    };
+    window.addEventListener('beforeunload', release);
+    return () => {
+      window.removeEventListener('beforeunload', release);
+      if (typingStopRef.current) clearTimeout(typingStopRef.current);
+      release();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId]);
+
+  // Keystroke → throttled "typing" heartbeat (only while holding control).
+  const handleTypingActivity = () => {
+    if (!takeoverRef.current || !canSend) return;
+    const now = Date.now();
+    if (now - lastTypingAtRef.current >= 2000) {
+      sendTyping(true);
+      lastTypingAtRef.current = now;
+    }
+    if (typingStopRef.current) clearTimeout(typingStopRef.current);
+    typingStopRef.current = setTimeout(() => {
+      typingStopRef.current = null;
+      lastTypingAtRef.current = 0;
+      sendTyping(false);
+    }, 4000);
+  };
+
+  const acceptImageFile = async (file: File | undefined | null) => {
+    if (!file || !file.type.startsWith('image/')) return;
     try {
       const compressed = await downsampleImage(file);
       setImageFile(compressed);
+      if (!takeoverRef.current && canSend) void setTakeoverState(true);
     } catch (err) {
       toast.error('Failed to process image');
       console.error(err);
     }
-    e.target.value = '';
   };
 
   // Fetch the full history. The RPC returns newest-first pages capped at 100,
@@ -138,7 +454,6 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
       setLoading(true);
       const supabase = getSupabase();
       const allMessages: Message[] = [];
-
       try {
         for (let page = 0; page < MAX_MESSAGE_PAGES; page += 1) {
           const { data, error } = await supabase.rpc('rpc_get_messages', {
@@ -146,15 +461,11 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
             start_index: page * MESSAGE_PAGE_SIZE,
             limit_count: MESSAGE_PAGE_SIZE,
           });
-
           if (error) throw error;
-
           const pageMessages = (data ?? []) as Message[];
           allMessages.push(...pageMessages);
-
           if (pageMessages.length < MESSAGE_PAGE_SIZE) break;
         }
-
         setMessages(allMessages.reverse());
       } catch (err: unknown) {
         toast.error('Failed to load messages');
@@ -163,7 +474,6 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
         setLoading(false);
       }
     };
-
     fetchMessages();
   }, [matchId]);
 
@@ -174,24 +484,13 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
       .channel(`chat:${matchId}`)
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `match_id=eq.${matchId}`,
-        },
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `match_id=eq.${matchId}` },
         (payload) => {
           const newMsg = payload.new as Message;
-          setMessages((prev) => {
-            if (prev.some((msg) => msg.id === newMsg.id)) {
-              return prev;
-            }
-            return [...prev, newMsg];
-          });
+          setMessages((prev) => (prev.some((msg) => msg.id === newMsg.id) ? prev : [...prev, newMsg]));
         }
       )
       .subscribe();
-
     return () => {
       supabase.removeChannel(channel);
     };
@@ -205,28 +504,19 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
   }, [messages]);
 
   const handleSend = async () => {
-    // Guard: never send as a real user (only digital humans can be operated by
-    // the admin). The UI also disables the controls, but this protects against
-    // the Enter-key path too.
-    if (!canSend) return;
+    if (!canSend || !dhSideId) return;
     if (!inputText.trim() && !imageFile) return;
     setSending(true);
-
     try {
       let mediaUrl = null;
       if (imageFile) {
         const formData = new FormData();
-        formData.append("files", imageFile);
-        formData.append("match_id", matchId);
-
-        const res = await fetch("/api/admin/chat/media", {
-          method: "POST",
-          body: formData
-        });
-
+        formData.append('files', imageFile);
+        formData.append('match_id', matchId);
+        const res = await fetch('/api/admin/chat/media', { method: 'POST', body: formData });
         if (!res.ok) {
-           const errJson = await res.json();
-           throw new Error(errJson.error || "Failed to upload image");
+          const errJson = await res.json();
+          throw new Error(errJson.error || 'Failed to upload image');
         }
         const json = await res.json();
         mediaUrl = json.media_url;
@@ -237,22 +527,18 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
         match_id: matchId,
         content: inputText.trim() || null,
         media_url: mediaUrl,
-        sender_id: currentUserId,
+        sender_id: dhSideId,
+        receiver_id: receiverId,
       });
-
       if (error) throw error;
 
-      // Optimistically add message
-      setMessages(prev => {
+      setMessages((prev) => {
         const newMsg = data as Message;
-        if (prev.some((msg) => msg.id === newMsg.id)) {
-          return prev;
-        }
-        return [...prev, newMsg];
+        return prev.some((msg) => msg.id === newMsg.id) ? prev : [...prev, newMsg];
       });
-
       setInputText('');
       setImageFile(null);
+      stopTyping();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to send message.');
       console.error(err);
@@ -262,18 +548,50 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
   };
 
   return (
-    <div className="flex flex-col h-[760px] border rounded-md">
-      <div className="p-3 border-b bg-muted/30 flex items-center justify-between">
-        <span className="font-medium text-sm">
-          Chatting with <span className="text-primary">{/* We might want to pass username here if needed */}Partner</span>
+    <div
+      className="relative flex h-[70dvh] flex-col rounded-md border lg:h-[720px]"
+      onDragEnter={(e) => {
+        if (!canSend || !e.dataTransfer.types.includes('Files')) return;
+        e.preventDefault();
+        dragDepthRef.current += 1;
+        setDragging(true);
+      }}
+      onDragOver={(e) => {
+        if (!canSend) return;
+        e.preventDefault();
+      }}
+      onDragLeave={() => {
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+        if (dragDepthRef.current === 0) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!canSend) return;
+        e.preventDefault();
+        dragDepthRef.current = 0;
+        setDragging(false);
+        void acceptImageFile(e.dataTransfer.files?.[0]);
+      }}
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md border-2 border-dashed border-primary bg-background/80">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <ImageIcon className="h-5 w-5" />
+            Drop image to attach — it sends as {dhSideName}
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between border-b bg-muted/30 p-3">
+        <span className="text-sm font-medium">
+          Chatting with <span className="text-primary">{partner.username || 'Partner'}</span>
         </span>
-        <span className="text-xs text-muted-foreground flex items-center gap-1">
+        <span className="flex items-center gap-1 text-xs text-muted-foreground">
           Match ID
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="ml-1 w-5 h-5"
+            className="ml-1 h-5 w-5"
             title="Copy Match ID"
             onClick={() => {
               navigator.clipboard.writeText(matchId);
@@ -285,51 +603,37 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
         </span>
       </div>
 
-      <ScrollArea className="flex-1 min-h-0">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-4 p-4">
           {loading ? (
             <div className="flex justify-center p-4">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : messages.length === 0 ? (
-            <div className="text-center text-sm text-muted-foreground py-10">
-              No messages yet.
-            </div>
+            <div className="py-10 text-center text-sm text-muted-foreground">No messages yet.</div>
           ) : (
             messages.map((msg) => {
-              const isMe = msg.sender_id === currentUserId;
+              const isMe = msg.sender_id === pageUserId;
               const intimacyScore = formatIntimacyScore(msg.intimacy_score);
               const timestamp = formatMessageTimestamp(msg.created_at);
               return (
-                <div
-                  key={msg.id}
-                  className={cn(
-                    'flex w-full',
-                    isMe ? 'justify-end' : 'justify-start'
-                  )}
-                >
+                <div key={msg.id} className={cn('flex w-full', isMe ? 'justify-end' : 'justify-start')}>
                   <div
                     className={cn(
-                      'max-w-[80%] rounded-lg px-3 py-2 text-sm break-words flex flex-col gap-2',
-                      isMe
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted text-foreground'
+                      'flex max-w-[80%] flex-col gap-2 break-words rounded-lg px-3 py-2 text-sm',
+                      isMe ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground'
                     )}
                   >
                     {msg.media_url && (
                       <a href={msg.media_url} target="_blank" rel="noreferrer">
-                        <img src={msg.media_url} alt="attachment" className="rounded-md max-w-full max-h-48 object-cover" />
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={msg.media_url} alt="attachment" className="max-h-48 max-w-full rounded-md object-cover" />
                       </a>
                     )}
                     {msg.content && <div>{msg.content}</div>}
                     <div className="flex flex-wrap items-center gap-1.5">
                       {timestamp && (
-                        <span
-                          className={cn(
-                            'text-[10px] leading-none',
-                            isMe ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                          )}
-                        >
+                        <span className={cn('text-[10px] leading-none', isMe ? 'text-primary-foreground/70' : 'text-muted-foreground')}>
                           {timestamp}
                         </span>
                       )}
@@ -356,57 +660,100 @@ function ChatInterface({ matchId, currentUserId, canSend }: { matchId: string, c
         </div>
       </ScrollArea>
 
-      <div className="p-3 border-t bg-background flex flex-col gap-2 relative">
+      <div className="flex flex-col gap-2 border-t bg-background p-3">
         {imageFile && (
-          <div className="flex items-center gap-2 overflow-hidden rounded-md border p-2 w-max bg-muted/50 relative">
-            <img 
-              src={URL.createObjectURL(imageFile)} 
-              alt="Preview" 
-              className="h-10 w-10 object-cover rounded"
-            />
-            <span className="text-xs text-muted-foreground truncate max-w-[120px]">{imageFile.name}</span>
+          <div className="relative flex w-max items-center gap-2 overflow-hidden rounded-md border bg-muted/50 p-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={URL.createObjectURL(imageFile)} alt="Preview" className="h-10 w-10 rounded object-cover" />
+            <span className="max-w-[120px] truncate text-xs text-muted-foreground">{imageFile.name}</span>
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-6 w-6 ml-2 rounded-full hover:bg-destructive/10 hover:text-destructive absolute right-1 top-1"
+              className="absolute right-1 top-1 ml-2 h-6 w-6 rounded-full hover:bg-destructive/10 hover:text-destructive"
               onClick={() => setImageFile(null)}
             >
               <X className="h-3 w-3" />
             </Button>
           </div>
         )}
-        {!canSend && (
+
+        {canSend ? (
+          <button
+            type="button"
+            disabled={togglingTakeover}
+            onClick={() => void setTakeoverState(!takeover)}
+            className={cn(
+              'flex w-max items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors',
+              takeover
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                : 'text-muted-foreground hover:bg-muted'
+            )}
+            title={
+              takeover
+                ? 'The bot is paused for this conversation — click to hand control back'
+                : 'Pause the bot and chat as the digital human'
+            }
+          >
+            {togglingTakeover ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bot className="h-3 w-3" />}
+            {takeover ? `AI paused — you're chatting as ${dhSideName} · hand back` : `Take over as ${dhSideName}`}
+          </button>
+        ) : (
           <div className="text-xs text-muted-foreground">
-            Read-only — you can only send messages on behalf of a digital human, not a real user.
+            Read-only — takeover needs a digital human on one side of the match.
           </div>
         )}
-        <div className="flex gap-2 w-full">
+
+        <div className="flex w-full gap-2">
           <input
             type="file"
             accept="image/*"
             className="hidden"
             ref={fileInputRef}
-            onChange={handleFileChange}
+            onChange={(e) => {
+              void acceptImageFile(e.target.files?.[0]);
+              e.target.value = '';
+            }}
           />
           <Button
             variant="outline"
             size="icon"
             type="button"
+            className="shrink-0"
             disabled={sending || !canSend}
-            title={canSend ? "Attach image" : "Sending is disabled for real users"}
+            title={canSend ? 'Attach image (or drag & drop / paste)' : 'Unavailable'}
             onClick={() => fileInputRef.current?.click()}
           >
             <ImageIcon className="h-4 w-4" />
           </Button>
           <Input
             value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder={canSend ? "Type a message..." : "Read-only (real user)"}
+            onChange={(e) => {
+              setInputText(e.target.value);
+              handleTypingActivity();
+            }}
+            onFocus={() => {
+              // Touching the composer = intent to speak for the DH: engage
+              // takeover so the bot can't answer over you mid-conversation.
+              if (canSend && !takeoverRef.current && !togglingTakeover) void setTakeoverState(true);
+            }}
+            onPaste={(e) => {
+              const file = Array.from(e.clipboardData.files ?? []).find((f) => f.type.startsWith('image/'));
+              if (file) {
+                e.preventDefault();
+                void acceptImageFile(file);
+              }
+            }}
+            placeholder={canSend ? `Message as ${dhSideName}…` : 'Read-only'}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
             disabled={sending || !canSend}
           />
-          <Button size="icon" onClick={handleSend} disabled={sending || !canSend || (!inputText.trim() && !imageFile)}>
+          <Button
+            size="icon"
+            className="shrink-0"
+            onClick={handleSend}
+            disabled={sending || !canSend || (!inputText.trim() && !imageFile)}
+          >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
@@ -421,13 +768,12 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
   const [selectedMatchId, setSelectedMatchId] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [togglingMatchId, setTogglingMatchId] = React.useState<string | null>(null);
-
-  // When set, the Messenger-style takeover dock is open for the selected partner.
-  const [takeoverOpen, setTakeoverOpen] = React.useState(false);
+  const [selfieOpen, setSelfieOpen] = React.useState(false);
+  // Mobile master-detail: list OR chat below lg, side-by-side at lg+.
+  const [mobileView, setMobileView] = React.useState<'list' | 'chat'>('list');
 
   // One service-role query server-side (rpc_admin_user_conversations) returns the
-  // partner list WITH per-conversation message counts + mute flags, sorted by
-  // count — the previous client-side match/user fan-out couldn't rank or count.
+  // partner list WITH per-conversation message counts + mute flags, sorted by count.
   const fetchConversations = React.useCallback(async () => {
     setLoading(true);
     try {
@@ -458,8 +804,8 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
   }, [currentUserId, fetchConversations]);
 
   // Mute/unmute the DH for one conversation (user_match_ai_state.dh_muted —
-  // dh-auto-reply skips muted matches). Optimistic-free: apply on success only,
-  // so the dot/toggle never lies about what the engine will do.
+  // dh-auto-reply skips muted matches). Applied on success only, so the
+  // dot/toggle never lies about what the engine will do.
   const toggleMute = async (conv: Conversation) => {
     setTogglingMatchId(conv.match_id);
     try {
@@ -485,25 +831,22 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
   };
 
   if (loading) {
-    return <div className="text-sm text-muted-foreground p-4">Loading conversations...</div>;
+    return <div className="p-4 text-sm text-muted-foreground">Loading conversations...</div>;
   }
 
   if (conversations.length === 0) {
-    return <div className="text-sm text-muted-foreground p-4">No matches found for this user.</div>;
+    return <div className="p-4 text-sm text-muted-foreground">No matches found for this user.</div>;
   }
 
   const selected = conversations.find((c) => c.match_id === selectedMatchId) ?? null;
   const cooldownActive = Boolean(cooldown?.active);
-  // "Take over" opens an in-place chat dock where the admin speaks AS the digital
-  // human toward the real user and pauses the bot for that conversation. Requires a
-  // digital human on one side of the match (the page user or the selected partner).
-  const canTakeOver = Boolean(selected && (currentUserIsDigitalHuman || selected.is_digital_human));
+  const selectedIsDh = Boolean(selected?.is_digital_human) || currentUserIsDigitalHuman;
 
   return (
     <div className="space-y-3">
       {cooldownActive ? (
         <div className="flex items-center gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
           <span>
             User is in <span className="font-medium">cooldown</span> — only digital humans marked
             with a green dot still reply. Use the toggles to change who chats.
@@ -511,13 +854,19 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
         </div>
       ) : null}
 
-      <div className="flex gap-4">
-        {/* Conversation rail: every match, busiest first. */}
-        <div className="flex w-72 shrink-0 flex-col rounded-md border">
+      <div className="flex flex-col gap-4 lg:flex-row">
+        {/* Conversation rail: every match, busiest first. On mobile it IS the page
+            until a conversation is opened. */}
+        <div
+          className={cn(
+            'w-full shrink-0 flex-col rounded-md border lg:flex lg:w-72',
+            mobileView === 'chat' ? 'hidden lg:flex' : 'flex'
+          )}
+        >
           <div className="border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
             Conversations · {conversations.length}
           </div>
-          <ScrollArea className="h-[720px]">
+          <ScrollArea className="h-[70dvh] lg:h-[720px]">
             <div className="p-1.5">
               {conversations.map((conv) => {
                 const isSelected = conv.match_id === selectedMatchId;
@@ -527,8 +876,16 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
                     key={conv.match_id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => setSelectedMatchId(conv.match_id)}
-                    onKeyDown={(e) => e.key === 'Enter' && setSelectedMatchId(conv.match_id)}
+                    onClick={() => {
+                      setSelectedMatchId(conv.match_id);
+                      setMobileView('chat');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setSelectedMatchId(conv.match_id);
+                        setMobileView('chat');
+                      }
+                    }}
                     className={cn(
                       'flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors',
                       isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
@@ -542,15 +899,22 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
                       </Avatar>
                       {chatting ? (
                         <span
-                          className="absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2 border-background bg-emerald-500"
+                          className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-background bg-emerald-500"
                           title="Still chatting with this user during cooldown"
                         />
                       ) : null}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">
+                      <a
+                        href={partnerHref(conv)}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="block truncate text-sm font-medium hover:underline"
+                        title={`Open ${conv.username ?? 'profile'} in a new tab`}
+                      >
                         {conv.username || 'Unknown User'}
-                      </div>
+                      </a>
                       <div className="text-xs text-muted-foreground tabular-nums">
                         {conv.message_count.toLocaleString()} message{conv.message_count === 1 ? '' : 's'}
                         {!conv.is_digital_human ? ' · real user' : ''}
@@ -590,49 +954,74 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
         </div>
 
         {/* Selected conversation. */}
-        <div className="min-w-0 flex-1 space-y-2">
+        <div
+          className={cn(
+            'min-w-0 flex-1 space-y-2 lg:block',
+            mobileView === 'list' ? 'hidden lg:block' : 'block'
+          )}
+        >
           {selected ? (
             <>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="font-medium">{selected.username || 'Unknown User'}</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2 text-sm">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0 lg:hidden"
+                    title="Back to conversations"
+                    onClick={() => setMobileView('list')}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <a
+                    href={partnerHref(selected)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex min-w-0 items-center gap-1 font-medium hover:underline"
+                    title={`Open ${selected.username ?? 'profile'} in a new tab`}
+                  >
+                    <span className="truncate">{selected.username || 'Unknown User'}</span>
+                    <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  </a>
                   {selected.is_digital_human ? <Badge variant="outline">DH</Badge> : null}
                   {selected.dh_muted ? <Badge variant="secondary">Muted</Badge> : null}
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  disabled={!canTakeOver}
-                  title={
-                    canTakeOver
-                      ? 'Chat as the digital human and pause the bot for this conversation'
-                      : 'Takeover needs a digital human on one side of the match'
-                  }
-                  onClick={() => setTakeoverOpen(true)}
-                >
-                  <LogIn className="h-4 w-4 mr-1" />
-                  Take over
-                </Button>
+                {selectedIsDh ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    title="Send one of the digital human's preserved photos"
+                    onClick={() => setSelfieOpen(true)}
+                  >
+                    <ImagePlus className="h-4 w-4" />
+                    <span className="hidden sm:inline">Send image</span>
+                  </Button>
+                ) : null}
               </div>
               <ChatInterface
+                key={selected.match_id}
                 matchId={selected.match_id}
-                currentUserId={currentUserId}
-                canSend={currentUserIsDigitalHuman}
+                pageUserId={currentUserId}
+                pageUserIsDh={currentUserIsDigitalHuman}
+                partner={selected}
+              />
+              <SelfiePickerDialog
+                open={selfieOpen}
+                onOpenChange={setSelfieOpen}
+                matchId={selected.match_id}
+                dhName={
+                  currentUserIsDigitalHuman
+                    ? 'this digital human'
+                    : selected.username ?? 'the digital human'
+                }
               />
             </>
           ) : null}
         </div>
       </div>
-
-      {takeoverOpen && selected && (
-        <TakeoverDock
-          matchId={selected.match_id}
-          participantIds={[currentUserId, selected.partner_id]}
-          onClose={() => setTakeoverOpen(false)}
-        />
-      )}
     </div>
   );
 }
