@@ -905,16 +905,11 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
                       ) : null}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <a
-                        href={partnerHref(conv)}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="block truncate text-sm font-medium hover:underline"
-                        title={`Open ${conv.username ?? 'profile'} in a new tab`}
-                      >
+                      {/* Plain text on purpose: a link here is too easy to hit when
+                          tapping the row — the chat header carries the profile link. */}
+                      <div className="truncate text-sm font-medium">
                         {conv.username || 'Unknown User'}
-                      </a>
+                      </div>
                       <div className="text-xs text-muted-foreground tabular-nums">
                         {conv.message_count.toLocaleString()} message{conv.message_count === 1 ? '' : 's'}
                         {!conv.is_digital_human ? ' · real user' : ''}
