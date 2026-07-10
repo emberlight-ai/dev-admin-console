@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
   //   limit + offset  — paginate (only applied when `limit` is present)
   let q = supabaseAdmin
     .from('users')
-    .select('userid,username,gender,age,zipcode,location_name,avatar,created_at,profession,updated_at,is_digital_human,deleted_at')
+    .select('userid,username,gender,age,zipcode,location_name,avatar,created_at,profession,updated_at,is_digital_human,deleted_at,notification_enabled,location_enabled')
     .order('created_at', { ascending: false });
 
   if (isDigitalBool !== null) q = q.eq('is_digital_human', isDigitalBool);

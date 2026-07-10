@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { endOfDay, format, isSameDay, startOfDay, subDays } from "date-fns"
 import { CalendarDays, Eye, Trash2 } from "lucide-react"
 
@@ -32,6 +33,8 @@ type UserRow = {
   avatar?: string | null
   created_at: string
   deleted_at?: string | null
+  notification_enabled?: boolean | null
+  location_enabled?: boolean | null
 }
 
 import type { DateRange } from "react-day-picker"
@@ -167,6 +170,7 @@ function SubscriptionsCard({
 }
 
 export default function ManageUsers() {
+  const router = useRouter()
   const [users, setUsers] = React.useState<UserRow[]>([])
   const [loading, setLoading] = React.useState(true)
   const [dateMode, setDateMode] = React.useState<"day" | "range">("day")
@@ -582,13 +586,25 @@ export default function ManageUsers() {
                   <TableHead>Images</TableHead>
                   <TableHead>Boost</TableHead>
                   <TableHead>Cooldown</TableHead>
-                  <TableHead>Joined</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead>Geo</TableHead>
+                  <TableHead>Notifications</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {users.map((u) => (
-                  <TableRow key={u.userid} className={cn(u.deleted_at && "opacity-60")}>
+                  <TableRow
+                    key={u.userid}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => router.push(`/admin/users/${u.userid}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault()
+                        router.push(`/admin/users/${u.userid}`)
+                      }
+                    }}
+                    className={cn("cursor-pointer", u.deleted_at && "opacity-60")}
+                  >
                     <TableCell className="pl-4">
                       <Avatar className="h-9 w-9">
                         <AvatarImage src={`/api/avatar/${u.userid}`} alt={u.username} />
@@ -639,16 +655,15 @@ export default function ManageUsers() {
                         <span className="text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {new Date(u.created_at).toLocaleDateString()}
+                    <TableCell>
+                      <Badge variant={u.location_enabled ? "default" : "secondary"}>
+                        {u.location_enabled ? "Enabled" : "Disabled"}
+                      </Badge>
                     </TableCell>
-                    <TableCell className="text-left">
-                      <Button asChild variant="outline" size="sm">
-                        <Link href={`/admin/users/${u.userid}`} className="gap-2">
-                          <Eye className="h-4 w-4" />
-                          View
-                        </Link>
-                      </Button>
+                    <TableCell>
+                      <Badge variant={u.notification_enabled ? "default" : "secondary"}>
+                        {u.notification_enabled ? "Enabled" : "Disabled"}
+                      </Badge>
                     </TableCell>
                   </TableRow>
                 ))}
