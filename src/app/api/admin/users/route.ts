@@ -80,8 +80,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ data: data ?? [] });
   }
 
-  // mode=list — includes deleted users (so they're counted in "new customers" and
-  // shown with a red "Deleted" tag); `deleted_at` lets the UI distinguish them.
+  // mode=list — by default includes deleted users (so they're counted in "new
+  // customers" and shown with a red "Deleted" tag); `deleted_at` lets the UI
+  // distinguish them. Optional params (all opt-in, backward compatible):
+  //   q               — username prefix filter (Real Humans search)
+  //   include_deleted — 'false' hides soft-deleted accounts
+  //   limit + offset  — paginate (only applied when `limit` is present)
   let q = supabaseAdmin
     .from('users')
     .select('userid,username,gender,age,zipcode,location_name,avatar,created_at,profession,updated_at,is_digital_human,deleted_at')
@@ -89,11 +93,23 @@ export async function GET(req: NextRequest) {
 
   if (isDigitalBool !== null) q = q.eq('is_digital_human', isDigitalBool);
 
+  const nameQ = (url.searchParams.get('q') ?? '').trim();
+  if (nameQ) q = q.ilike('username', `${nameQ}%`);
+
+  if (url.searchParams.get('include_deleted') === 'false') q = q.is('deleted_at', null);
+
   // Optional account-creation window (used by the admin Users page date filter).
   const listCreatedFrom = url.searchParams.get('created_from');
   const listCreatedTo = url.searchParams.get('created_to');
   if (listCreatedFrom) q = q.gte('created_at', listCreatedFrom);
   if (listCreatedTo) q = q.lte('created_at', listCreatedTo);
+
+  const limitRaw = url.searchParams.get('limit');
+  if (limitRaw) {
+    const limit = Math.min(Math.max(Number(limitRaw) || 50, 1), 100);
+    const offset = Math.max(Number(url.searchParams.get('offset') ?? 0) || 0, 0);
+    q = q.range(offset, offset + limit - 1);
+  }
 
   const { data, error } = await q;
   if (error) return jsonError(error.message, 500);

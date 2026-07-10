@@ -16,7 +16,7 @@ import {
   Settings,
   SlidersHorizontal,
   Star,
-  UserX,
+  Users,
   Wrench,
 } from "lucide-react"
 
@@ -60,7 +60,7 @@ const dbManagementGroup = {
   title: "DB management",
   items: [
     { href: "/admin/digital-humans", label: "Digital Humans", icon: Bot },
-    { href: "/admin/deleted-users", label: "Deleted Users", icon: UserX },
+    { href: "/admin/real-humans", label: "Real Humans", icon: Users },
   ],
 }
 

@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { endOfDay, format, isSameDay, startOfDay, subDays } from "date-fns"
-import { CalendarDays, Eye } from "lucide-react"
+import { CalendarDays, Eye, Trash2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -425,6 +425,11 @@ export default function ManageUsers() {
               <TabsTrigger value="Sandbox">Sandbox</TabsTrigger>
             </TabsList>
           </Tabs>
+          <Button asChild variant="outline" size="icon" title="Deleted users (trash)">
+            <Link href="/admin/deleted-users" aria-label="Deleted users">
+              <Trash2 className="h-4 w-4" />
+            </Link>
+          </Button>
         </div>
       </div>
 
