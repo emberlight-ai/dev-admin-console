@@ -190,6 +190,7 @@ export default function ManageUsers() {
   const [messageCounts, setMessageCounts] = React.useState<Record<string, number>>({})
   const [imageCounts, setImageCounts] = React.useState<Record<string, number>>({})
   const [cooldowns, setCooldowns] = React.useState<Record<string, { active: boolean }>>({})
+  const [boosts, setBoosts] = React.useState<Record<string, { boosted: boolean; boosting: boolean }>>({})
 
   const range = React.useMemo<DateRange>(() => {
     if (dateMode === "range" && customRange?.from) {
@@ -334,6 +335,22 @@ export default function ManageUsers() {
   React.useEffect(() => {
     void fetchCooldowns()
   }, [fetchCooldowns])
+
+  const fetchBoosts = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/users/boosts')
+      const json = (await res.json()) as { data?: Record<string, { boosted: boolean; boosting: boolean }>; error?: string }
+      if (!res.ok) throw new Error(json.error || 'Failed to fetch boosts')
+      setBoosts(json.data ?? {})
+    } catch (err: unknown) {
+      console.error(err)
+      setBoosts({})
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void fetchBoosts()
+  }, [fetchBoosts])
 
   // Cohort conversion for the selected range: of the new real users created in
   // the window, the share who have ever paid (in the selected environment).
@@ -540,7 +557,7 @@ export default function ManageUsers() {
         </div>
         <div className="border-t">
           {loading ? (
-            <TableSkeleton columns={10} />
+            <TableSkeleton columns={12} />
           ) : users.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -563,6 +580,7 @@ export default function ManageUsers() {
                   <TableHead>Matches</TableHead>
                   <TableHead>Messages</TableHead>
                   <TableHead>Images</TableHead>
+                  <TableHead>Boost</TableHead>
                   <TableHead>Cooldown</TableHead>
                   <TableHead>Joined</TableHead>
                   <TableHead>Actions</TableHead>
@@ -594,6 +612,20 @@ export default function ManageUsers() {
                     <TableCell className="text-muted-foreground tabular-nums">{matchCounts[u.userid] ?? 0}</TableCell>
                     <TableCell className="text-muted-foreground tabular-nums">{messageCounts[u.userid] ?? 0}</TableCell>
                     <TableCell className="text-muted-foreground tabular-nums">{imageCounts[u.userid] ?? 0}</TableCell>
+                    <TableCell>
+                      {boosts[u.userid]?.boosting ? (
+                        <Badge className="gap-1.5 bg-emerald-500 text-emerald-950 hover:bg-emerald-600">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-950/70" />
+                          Boosting
+                        </Badge>
+                      ) : boosts[u.userid]?.boosted ? (
+                        <Badge variant="outline" className="border-emerald-500/50 text-emerald-600 dark:text-emerald-400">
+                          Boosted
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       {cooldowns[u.userid]?.active ? (
                         <Badge
