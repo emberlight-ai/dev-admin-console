@@ -866,7 +866,12 @@ export function ChatHistory({ currentUserId, currentUserIsDigitalHuman = false }
           <div className="border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
             Conversations · {conversations.length}
           </div>
-          <ScrollArea className="h-[70dvh] lg:h-[720px]">
+          {/* The Radix ScrollArea viewport wraps content in a `display:table;
+              min-width:100%` div that grows to the widest row's max-content
+              (a long DH username with `truncate`/nowrap), overflowing the rail
+              and pushing the mute toggle out of view. Force that wrapper to
+              `block` so it stays viewport-width and the toggle stays reachable. */}
+          <ScrollArea className="h-[70dvh] lg:h-[720px] [&>[data-slot=scroll-area-viewport]>div]:!block">
             <div className="p-1.5">
               {conversations.map((conv) => {
                 const isSelected = conv.match_id === selectedMatchId;
