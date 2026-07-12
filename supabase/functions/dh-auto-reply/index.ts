@@ -257,6 +257,7 @@ Deno.serve(async (req) => {
       const msgRows = (messages ?? []) as Array<{
         id: string; sender_id: string; content: string | null;
         media_url?: string | null; image_desc?: string | null; created_at?: string;
+        type?: string | null;
       }>;
       if (msgRows.length === 0) throw new Error('No messages found');
 

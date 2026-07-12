@@ -7,8 +7,24 @@ import type { UserRow } from './store.ts';
 // ── Transcript ─────────────────────────────────────────────────────────────────
 // `dhPhotoCaptions` maps message_id -> caption for photos the DH herself sent,
 // so she remembers sharing them.
+// Gift messages store their payload as JSON in content: {gift, name, cost}.
+// Render them as a human-readable beat so the model reacts to the gesture
+// (and its weight) instead of seeing raw JSON.
+function giftLine(content: string | null): string | null {
+  if (!content || !content.startsWith('{')) return null;
+  try {
+    const g = JSON.parse(content);
+    if (!g || typeof g.name !== 'string') return null;
+    const cost = Number(g.cost);
+    const worth = Number.isFinite(cost) ? ` (worth ${cost} tokens)` : '';
+    return `[User sent you a gift: ${g.name}${worth}]`;
+  } catch {
+    return null;
+  }
+}
+
 export function buildTranscript(
-  messages: Array<{ id?: string; sender_id: string; content: string | null; media_url?: string | null; image_desc?: string | null }>,
+  messages: Array<{ id?: string; sender_id: string; content: string | null; media_url?: string | null; image_desc?: string | null; type?: string | null }>,
   botUserId: string,
   botName: string,
   dhPhotoCaptions: Map<string, string | null> = new Map()
@@ -17,6 +33,10 @@ export function buildTranscript(
     .map((m) => {
       const isBot = m.sender_id === botUserId;
       const speaker = isBot ? botName : 'User';
+      if (m.type === 'gift') {
+        const line = giftLine(m.content) ?? '[User sent you a gift]';
+        return `${speaker}: ${line}`;
+      }
       let text = m.content || '';
       if (m.media_url) {
         if (isBot) {

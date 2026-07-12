@@ -257,13 +257,19 @@ function composeSystemText(template: string, bot: UserRow, human: UserRow): stri
 }
 
 function buildTranscript(
-  messages: Array<{ sender_id: string; content: string | null; media_url?: string | null }>,
+  messages: Array<{ sender_id: string; content: string | null; media_url?: string | null; type?: string | null }>,
   botUserId: string,
   botName: string
 ): string {
   return messages
     .map((m) => {
       const speaker = m.sender_id === botUserId ? botName : 'User';
+      if (m.type === 'gift' && m.content?.startsWith('{')) {
+        try {
+          const g = JSON.parse(m.content);
+          return `${speaker}: [User sent you a gift: ${g.name ?? 'a gift'}${Number.isFinite(Number(g.cost)) ? ` (worth ${g.cost} tokens)` : ''}]`;
+        } catch { /* fall through to raw content */ }
+      }
       const text = m.content || (m.media_url ? '[Image Sent]' : '');
       return `${speaker}: ${text}`;
     })
@@ -290,7 +296,7 @@ Deno.serve(async (req) => {
     // Find follow-up candidates: DH sent last message (state 2 or 4), not locked, enough time passed
     const { data, error } = await supabase
       .from('user_match_ai_state')
-      .select('match_id, last_message_id, last_message_at, ai_follow_up_count, ai_locked_until, dh_user_id, real_user_id, intimacy_m, intimacy_v')
+      .select('match_id, last_message_id, last_message_at, ai_follow_up_count, ai_locked_until, dh_user_id, real_user_id, intimacy_drive')
       .in('ai_state', [2, 4])
       .lt('last_message_at', oneHourAgo)
       .is('ai_locked_until', null)
@@ -318,7 +324,9 @@ Deno.serve(async (req) => {
       if (!promptConfig || !promptConfig.followUpEnabled || !promptConfig.followUpPrompt) continue;
 
       // Intimacy momentum drives cadence. drive ~ [-1, 1]: hot = warming fast.
-      const drive = (c.intimacy_m ?? 0) / (Math.sqrt(c.intimacy_v ?? 0) + 1e-3);
+      // Generated column on user_match_ai_state (m/(sqrt(v)+eps)) — the m/v
+      // moments are internal critic state; read the derived signal instead.
+      const drive = c.intimacy_drive ?? 0;
       const hot = proactiveCfg.enabled && drive >= proactiveCfg.driveThreshold;
       const cold = drive <= -proactiveCfg.driveThreshold;
 

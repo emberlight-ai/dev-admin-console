@@ -37,6 +37,33 @@ for each row
 execute function public.set_message_receiver_id();
 
 
+-- Derive messages.type ('text' | 'image' | 'gift') on every insert path so no
+-- caller has to know about it. 'gift' is only ever set explicitly (rpc_send_gift,
+-- see tokens.sql); media without a caption is 'image'; everything else 'text'.
+create or replace function public.set_message_type()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.type is null then
+    new.type := 'text';
+  end if;
+  if new.type <> 'gift'
+     and new.media_url is not null
+     and (new.content is null or btrim(new.content) = '') then
+    new.type := 'image';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists messages_set_type on public.messages;
+create trigger messages_set_type
+before insert on public.messages
+for each row
+execute function public.set_message_type();
+
+
 -- RPC: Get messages for a match with pagination
 create or replace function public.rpc_get_messages(
   match_id uuid,

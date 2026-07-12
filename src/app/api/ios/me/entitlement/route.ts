@@ -93,10 +93,13 @@ async function handleGET(req: NextRequest) {
       .gte('created_at', start)
       .lt('created_at', end);
 
+    // Gifts are token-metered (rpc_send_gift), so they don't consume the
+    // daily message quota.
     const messageCountPromise = supabase
       .from('messages')
       .select('id', { count: 'exact', head: true })
       .eq('sender_id', userId)
+      .neq('type', 'gift')
       .gte('created_at', start)
       .lt('created_at', end);
 
