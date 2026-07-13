@@ -118,8 +118,7 @@ $$;
 revoke execute on function public.rpc_set_my_interests(text[]) from public;
 grant execute on function public.rpc_set_my_interests(text[]) to authenticated;
 
--- Explore-page counts: non-deleted members per interest (DHs included — they
--- ARE the discoverable pool).
+-- Per-interest counts (Edit Profile / tag chips): members per interest key.
 create or replace function public.rpc_interest_counts()
 returns table (interest_key text, user_count bigint)
 language sql
@@ -134,3 +133,59 @@ as $$
 $$;
 
 grant execute on function public.rpc_interest_counts() to authenticated;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Two-level taxonomy (2026-07-12): interest_categories (iOS Explore tiles)
+-- CONTAIN interests (Edit Profile tags). See manual-migrations/
+-- 2026-07-12-interest-categories.sql for the applied migration + backfill.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+create table if not exists public.interest_categories (
+  key        text primary key,
+  name       text not null,
+  asset      text not null default 'explore_gothic',
+  sort_order integer not null default 0,
+  active     boolean not null default true,
+  admin_only boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- interests.category_key: ON DELETE SET DEFAULT reparents orphans to
+-- 'unspecified' at the DB level (survives raw SQL deletes, not just the API).
+alter table public.interests
+  add column if not exists category_key text not null default 'unspecified'
+  references public.interest_categories(key) on delete set default;
+create index if not exists interests_category_idx on public.interests (category_key);
+
+-- 'unspecified' is the FK default target — it must never be deleted.
+create or replace function public.protect_unspecified_category()
+returns trigger language plpgsql as $$
+begin
+  if old.key = 'unspecified' then
+    raise exception 'the unspecified category cannot be deleted';
+  end if;
+  return old;
+end;
+$$;
+drop trigger if exists interest_categories_protect_unspecified on public.interest_categories;
+create trigger interest_categories_protect_unspecified
+before delete on public.interest_categories
+for each row execute function public.protect_unspecified_category();
+
+alter table public.interest_categories enable row level security;
+drop policy if exists interest_categories_read on public.interest_categories;
+create policy interest_categories_read on public.interest_categories
+  for select to authenticated using (true);
+
+-- Explore tile counts: DISTINCT users tagged with any interest under a category.
+create or replace function public.rpc_category_counts()
+returns table (category_key text, user_count bigint)
+language sql security invoker stable as $$
+  select i.category_key, count(distinct ui.user_id)::bigint
+  from public.user_interests ui
+  join public.interests i on i.key = ui.interest_key
+  join public.users u on u.userid = ui.user_id
+  where u.deleted_at is null
+  group by i.category_key;
+$$;
+grant execute on function public.rpc_category_counts() to authenticated;

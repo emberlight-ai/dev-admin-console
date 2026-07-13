@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
 
   const { data: interests, error } = await supabaseAdmin
     .from('interests')
-    .select('key, name, asset, sort_order, active, admin_only, created_at')
+    .select('key, name, asset, sort_order, active, admin_only, category_key, created_at')
     .order('sort_order');
   if (error) return jsonError(error.message, 500);
 
@@ -33,6 +33,51 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     data: (interests ?? []).map((i) => ({ ...i, member_count: counts[i.key] ?? 0 })),
   });
+}
+
+/**
+ * PATCH /api/admin/interests — batch move/reorder from the kanban board.
+ * { updates: [{ key, category_key?, sort_order? }] }
+ * One request per drop: a drag renumbers every card whose position changed.
+ */
+export async function PATCH(req: NextRequest) {
+  if (!isAdminRequest(req)) return jsonError('Unauthorized', 401);
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonError('Invalid JSON body', 400);
+  }
+
+  const raw = (body as Record<string, unknown>).updates;
+  if (!Array.isArray(raw) || raw.length === 0) return jsonError('updates is required', 400);
+  if (raw.length > 200) return jsonError('Too many updates', 400);
+
+  const updates: { key: string; patch: Record<string, unknown> }[] = [];
+  for (const u of raw) {
+    const b = u as Record<string, unknown>;
+    if (typeof b.key !== 'string' || !b.key) return jsonError('Each update needs a key', 400);
+    const patch: Record<string, unknown> = {};
+    if (typeof b.category_key === 'string' && b.category_key.trim()) {
+      patch.category_key = b.category_key.trim();
+    }
+    if (typeof b.sort_order === 'number') patch.sort_order = b.sort_order;
+    if (Object.keys(patch).length === 0) return jsonError(`Nothing to update for "${b.key}"`, 400);
+    updates.push({ key: b.key, patch });
+  }
+
+  const results = await Promise.all(
+    updates.map(({ key, patch }) =>
+      supabaseAdmin.from('interests').update(patch).eq('key', key)
+    )
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) {
+    if (failed.error.code === '23503') return jsonError('Unknown category', 400);
+    return jsonError(failed.error.message, 500);
+  }
+  return NextResponse.json({ ok: true });
 }
 
 /** POST /api/admin/interests  { key, name, asset?, sort_order?, active? } */
@@ -74,8 +119,11 @@ export async function POST(req: NextRequest) {
       asset,
       sort_order: nextSort,
       active: b.active === false ? false : true,
+      category_key: typeof b.category_key === 'string' && b.category_key.trim()
+        ? b.category_key.trim()
+        : 'unspecified',
     })
-    .select('key, name, asset, sort_order, active')
+    .select('key, name, asset, sort_order, active, admin_only, category_key')
     .single();
 
   if (error) {

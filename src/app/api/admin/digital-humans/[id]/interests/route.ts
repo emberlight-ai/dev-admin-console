@@ -26,7 +26,7 @@ export async function GET(
   const [catalogRes, selectedRes] = await Promise.all([
     supabaseAdmin
       .from('interests')
-      .select('key, name, sort_order')
+      .select('key, name, sort_order, admin_only')
       .eq('active', true)
       .order('sort_order'),
     supabaseAdmin

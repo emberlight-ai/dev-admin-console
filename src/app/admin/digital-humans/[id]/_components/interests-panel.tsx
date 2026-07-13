@@ -1,12 +1,13 @@
 "use client"
 
 import * as React from "react"
+import { ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 
-type InterestRow = { key: string; name: string; sort_order: number }
+type InterestRow = { key: string; name: string; sort_order: number; admin_only?: boolean }
 
 /**
  * Explore-category assignment for a digital human: toggle chips backed by
@@ -83,7 +84,9 @@ export function InterestsPanel({ userid }: { userid: string }) {
         <div>
           <div className="text-sm font-semibold">Explore Interests</div>
           <div className="text-xs text-muted-foreground">
-            Categories this digital human appears under on the Explore page.
+            Categories this digital human appears under on the Explore page. Chips
+            with <ShieldCheck className="inline h-3 w-3 -translate-y-px" /> are
+            internal-only (Whitelist adds them to the home swipe deck).
           </div>
         </div>
         <Button size="sm" onClick={() => void save()} disabled={!dirty || saving || loading}>
@@ -103,12 +106,15 @@ export function InterestsPanel({ userid }: { userid: string }) {
                 type="button"
                 onClick={() => toggle(interest.key)}
                 className={
-                  "rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
+                  "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
                   (active
                     ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-background text-muted-foreground hover:border-primary/60")
+                    : interest.admin_only
+                      ? "border-amber-400/60 bg-amber-500/10 text-amber-700 hover:border-amber-500"
+                      : "border-border bg-background text-muted-foreground hover:border-primary/60")
                 }
               >
+                {interest.admin_only && <ShieldCheck className="h-3 w-3" />}
                 {interest.name}
               </button>
             )

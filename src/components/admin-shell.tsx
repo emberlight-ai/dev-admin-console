@@ -17,7 +17,6 @@ import {
   Settings,
   SlidersHorizontal,
   Sparkles,
-  Star,
   Users,
   Wrench,
 } from "lucide-react"
@@ -37,9 +36,8 @@ const navGroups = [
     title: "Users and Bots",
     items: [
       { href: "/admin/users", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/admin/matching/whitelist", label: "Whitelist", icon: Star },
       { href: "/admin/system-prompts", label: "System Prompts", icon: ScrollText },
-      { href: "/admin/interests", label: "Interests", icon: Sparkles },
+      { href: "/admin/categories", label: "Categories", icon: Sparkles },
       { href: "/admin/shared-images", label: "Chat Images", icon: Images },
       { href: "/admin/config", label: "Configuration", icon: SlidersHorizontal },
     ],

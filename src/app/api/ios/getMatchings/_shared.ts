@@ -80,6 +80,21 @@ export async function buildMatchingsFeed(opts: {
   const digitalHumansOnly = body.digitalHumansOnly === true;
   const categories = parseCategories(body.categories);
 
+  // The iOS Explore page filters by CATEGORY. Expand each category key to the
+  // interest keys under it (a card matches if the user has ANY of them). We
+  // also keep the raw keys in the set, so a legacy client still sending an
+  // interest key directly continues to work.
+  let interestFilter: string[] | null = categories
+  if (categories && categories.length > 0) {
+    const { data: rows } = await supabase
+      .from('interests')
+      .select('key')
+      .in('category_key', categories)
+    const expanded = new Set<string>(categories)
+    for (const r of rows ?? []) expanded.add((r as { key: string }).key)
+    interestFilter = [...expanded]
+  }
+
   const { data: users, error: usersErr } = await supabase.rpc(
     'rpc_get_matching_candidates',
     {
@@ -88,7 +103,7 @@ export async function buildMatchingsFeed(opts: {
       gender_filter: genderFilter,
       digital_humans_only: digitalHumansOnly,
       // NULL keeps the exact pre-interests behavior (defaulted param).
-      interest_filter: categories,
+      interest_filter: interestFilter,
     }
   );
 

@@ -35,6 +35,10 @@ export async function PATCH(
   if (typeof b.sort_order === 'number') patch.sort_order = b.sort_order;
   if (typeof b.active === 'boolean') patch.active = b.active;
   if (typeof b.admin_only === 'boolean') patch.admin_only = b.admin_only;
+  // Move an interest to a different category (validated against the FK).
+  if (typeof b.category_key === 'string' && b.category_key.trim()) {
+    patch.category_key = b.category_key.trim();
+  }
 
   if (Object.keys(patch).length === 0) return jsonError('Nothing to update', 400);
 
@@ -42,8 +46,10 @@ export async function PATCH(
     .from('interests')
     .update(patch)
     .eq('key', key)
-    .select('key, name, asset, sort_order, active, admin_only')
+    .select('key, name, asset, sort_order, active, admin_only, category_key')
     .maybeSingle();
+
+  if (error?.code === '23503') return jsonError('Unknown category', 400);
 
   if (error) return jsonError(error.message, 500);
   if (!data) return jsonError('Interest not found', 404);
@@ -61,6 +67,11 @@ export async function DELETE(
 ) {
   if (!isAdminRequest(req)) return jsonError('Unauthorized', 401);
   const { key } = await params;
+
+  // Internal-control interests must survive (Whitelist backs the home deck).
+  if (key === 'featured' || key === 'whitelist') {
+    return jsonError('This is an internal interest and cannot be deleted', 400);
+  }
 
   const { error } = await supabaseAdmin.from('interests').delete().eq('key', key);
   if (error) return jsonError(error.message, 500);
