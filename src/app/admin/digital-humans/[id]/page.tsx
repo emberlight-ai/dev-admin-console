@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { composeSystemPromptFromTemplate } from "@/lib/botProfile"
 
 import { ImageZoomDialog } from "./_components/image-zoom-dialog"
+import { InterestsPanel } from "./_components/interests-panel"
 import { ProfileCard } from "./_components/profile-card"
 import { ChatHistory } from "@/components/matching/chat-history"
 import { SendMatchRequestPanel } from "@/components/matching/send-match-request-panel"
@@ -181,7 +182,7 @@ export default function DigitalHumanDetail() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Left Column: User Info */}
-        <div>
+        <div className="space-y-4">
           <ProfileCard
             user={user}
             avatarSrc={avatarSrc}
@@ -192,6 +193,7 @@ export default function DigitalHumanDetail() {
             whitelistBusy={whitelistBusy}
             onSaved={(updates) => setUser((prev) => (prev ? { ...prev, ...updates } : prev))}
           />
+          <InterestsPanel userid={user.userid} />
         </div>
 
         {/* Right Column: Tabs (Chat & Posts) */}

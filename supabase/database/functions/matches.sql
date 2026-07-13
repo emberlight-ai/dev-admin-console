@@ -341,11 +341,18 @@ as $$
 $$;
 
 -- RPC: Get matching candidates (filtering enabled digital humans)
+-- interest_filter (optional): restrict the deck to users tagged with ANY of
+-- the given interest keys (Explore category pages). NULL = original behavior,
+-- so pre-interests clients are untouched. NOTE: adding a parameter changes the
+-- function signature — drop the old one first (CREATE OR REPLACE can't).
+drop function if exists public.rpc_get_matching_candidates(uuid, integer, text, boolean);
+
 create or replace function public.rpc_get_matching_candidates(
   viewer_user_id uuid,
   limit_count integer,
   gender_filter text default null,
-  digital_humans_only boolean default false
+  digital_humans_only boolean default false,
+  interest_filter text[] default null
 )
 returns setof public.users
 language sql
@@ -378,6 +385,15 @@ as $$
       and u.userid <> viewer_user_id
       and (nullif(btrim(gender_filter), '') is null or u.gender = btrim(gender_filter))
       and (not digital_humans_only or coalesce(u.is_digital_human, false) = true)
+      and (
+        interest_filter is null
+        or cardinality(interest_filter) = 0
+        or exists (
+          select 1 from public.user_interests ui
+          where ui.user_id = u.userid
+            and ui.interest_key = any(interest_filter)
+        )
+      )
       and (
         not exists (select 1 from green_mode_personalities)
         or lower(btrim(coalesce(u.personality, ''))) in (

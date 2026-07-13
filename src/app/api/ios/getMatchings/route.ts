@@ -8,6 +8,7 @@ type MatchingsRequestBody = {
   count?: unknown;
   image_count?: unknown;
   gender_filter?: unknown;
+  categories?: unknown;
 };
 
 const getUserSupabase = (req: NextRequest) => {
@@ -49,6 +50,7 @@ async function handlePOST(req: NextRequest) {
         count: requestBody.count,
         image_count: requestBody.image_count,
         gender_filter: requestBody.gender_filter,
+        categories: requestBody.categories,
       },
     });
 

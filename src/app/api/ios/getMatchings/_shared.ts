@@ -6,6 +6,8 @@ type Body = {
   imageCount?: unknown;
   gender_filter?: unknown;
   digitalHumansOnly?: unknown;
+  /** Optional interest keys (Explore category pages). Array or comma-separated string. */
+  categories?: unknown;
 };
 
 type Candidate = {
@@ -35,6 +37,8 @@ export type MatchingsCard = {
   // is kept as the raw alias for compatibility.
   whitelisted: boolean;
   is_vip: boolean;
+  /** Interest keys for the card's tag chips. Additive — old clients ignore it. */
+  interests: string[];
 };
 
 function clampInt(v: unknown, def: number, min: number, max: number) {
@@ -49,6 +53,21 @@ function optionalString(v: unknown) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/** ["a","b"], "a,b" or "a" → ["a","b"]; anything else → null (no filter). */
+function parseCategories(v: unknown): string[] | null {
+  const list = Array.isArray(v)
+    ? v
+    : typeof v === 'string'
+      ? v.split(',')
+      : null;
+  if (!list) return null;
+  const keys = list
+    .filter((k): k is string => typeof k === 'string')
+    .map((k) => k.trim().toLowerCase())
+    .filter((k) => k.length > 0 && k.length <= 64);
+  return keys.length > 0 ? keys : null;
+}
+
 export async function buildMatchingsFeed(opts: {
   supabase: SupabaseClient;
   viewerUserId: string;
@@ -59,6 +78,7 @@ export async function buildMatchingsFeed(opts: {
   const imageCount = clampInt(body.image_count ?? body.imageCount, 7, 1, 20);
   const genderFilter = optionalString(body.gender_filter);
   const digitalHumansOnly = body.digitalHumansOnly === true;
+  const categories = parseCategories(body.categories);
 
   const { data: users, error: usersErr } = await supabase.rpc(
     'rpc_get_matching_candidates',
@@ -67,12 +87,30 @@ export async function buildMatchingsFeed(opts: {
       limit_count: count,
       gender_filter: genderFilter,
       digital_humans_only: digitalHumansOnly,
+      // NULL keeps the exact pre-interests behavior (defaulted param).
+      interest_filter: categories,
     }
   );
 
   if (usersErr) throw new Error(usersErr.message);
 
   const candidates = (users as Candidate[]).slice(0, count);
+
+  // One batched read for every candidate's interest tags (card chips).
+  // Best-effort: a failure here must never break the deck.
+  const interestsByUser = new Map<string, string[]>();
+  if (candidates.length > 0) {
+    const { data: interestRows } = await supabase
+      .from('user_interests')
+      .select('user_id, interest_key')
+      .in('user_id', candidates.map((c) => c.userid));
+    for (const row of interestRows ?? []) {
+      const r = row as { user_id: string; interest_key: string };
+      const list = interestsByUser.get(r.user_id) ?? [];
+      list.push(r.interest_key);
+      interestsByUser.set(r.user_id, list);
+    }
+  }
 
   const cards: MatchingsCard[] = [];
   for (const u of candidates) {
@@ -113,6 +151,7 @@ export async function buildMatchingsFeed(opts: {
       postImages: images,
       whitelisted: isVip,
       is_vip: isVip,
+      interests: interestsByUser.get(u.userid) ?? [],
     });
   }
 
