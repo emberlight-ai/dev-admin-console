@@ -24,7 +24,7 @@ import {
 } from '../_shared/store.ts';
 import { buildSystemPrompt, buildTranscript, textingBrief } from '../_shared/context.ts';
 import { clampIntimacy } from '../_shared/intimacy.ts';
-import { adamStep, describeUserImageIfNeeded, scoreIntimacy } from '../_shared/critic.ts';
+import { describeUserImageIfNeeded, scoreIntimacy } from '../_shared/critic.ts';
 import type { IntimacyResult } from '../_shared/critic.ts';
 import {
   deliverBubbles,
@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
     await ensurePrompts();
 
     const AI_STATE_COLS =
-      'match_id, last_message_id, last_message_at, last_message_sender_id, ai_last_processed_message_id, ai_locked_until, dh_user_id, real_user_id, ai_state, intimacy_score, intimacy_m, intimacy_v, last_selfie_sent_at, last_grounding_at, human_takeover, dh_muted';
+      'match_id, last_message_id, last_message_at, last_message_sender_id, ai_last_processed_message_id, ai_locked_until, dh_user_id, real_user_id, ai_state, intimacy_score, last_selfie_sent_at, last_grounding_at, human_takeover, dh_muted';
     let { data: stateData, error: stateErr } = await supabase
       .from('user_match_ai_state')
       .select(AI_STATE_COLS)
@@ -386,9 +386,8 @@ Deno.serve(async (req) => {
           if (Math.random() < skipChance) {
             // Stay silent: mark processed, fold in intimacy, DON'T touch
             // ai_state (silence is not a sent reply; ai_state drives follow-ups).
-            const adamSkip = currIntimacy != null
-              ? adamStep(stateData.intimacy_score ?? null, stateData.intimacy_m ?? 0, stateData.intimacy_v ?? 0, currIntimacy)
-              : null;
+            // m/v (Adam moments) are no longer written — their only consumer,
+            // dh-followup's drive gate, was replaced by dh-outbound's bands.
             await supabase
               .from('user_match_ai_state')
               .update({
@@ -397,8 +396,6 @@ Deno.serve(async (req) => {
                 ...(currIntimacy != null
                   ? {
                       intimacy_score: currIntimacy,
-                      intimacy_m: adamSkip!.m,
-                      intimacy_v: adamSkip!.v,
                       intimacy_updated_at: new Date().toISOString(),
                     }
                   : {}),
@@ -562,13 +559,10 @@ Deno.serve(async (req) => {
       }
 
       // ── REFLECT: state update + missed-message check ────────────────────────
-      // The stored score is the CLAMPED value (deterministic warmup ceiling);
-      // m/v keep updating until Phase 3 swaps the followup drive gate for bands.
+      // The stored score is the CLAMPED value (deterministic warmup ceiling).
+      // m/v (Adam moments) are no longer written — dh-outbound gates on bands.
       const critic = await criticPromise;
       const storedIntimacy = clampedIntimacy(critic);
-      const adam = storedIntimacy != null
-        ? adamStep(stateData.intimacy_score ?? null, stateData.intimacy_m ?? 0, stateData.intimacy_v ?? 0, storedIntimacy)
-        : null;
       await supabase
         .from('user_match_ai_state')
         .update({
@@ -579,8 +573,6 @@ Deno.serve(async (req) => {
           ...(storedIntimacy != null
             ? {
                 intimacy_score: storedIntimacy,
-                intimacy_m: adam!.m,
-                intimacy_v: adam!.v,
                 intimacy_updated_at: new Date().toISOString(),
               }
             : {}),

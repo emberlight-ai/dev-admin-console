@@ -26,18 +26,22 @@ create extension if not exists pg_cron;
 
 -- ---- Unschedule any existing jobs (idempotent re-run) ------
 select cron.unschedule('dh-followup')          where exists (select 1 from cron.job where jobname = 'dh-followup');
+select cron.unschedule('dh-outbound')          where exists (select 1 from cron.job where jobname = 'dh-outbound');
 select cron.unschedule('dh-matching')          where exists (select 1 from cron.job where jobname = 'dh-matching');
 select cron.unschedule('dh-nearby-dispatch')   where exists (select 1 from cron.job where jobname = 'dh-nearby-dispatch');
 select cron.unschedule('dh-scheduled-replies') where exists (select 1 from cron.job where jobname = 'dh-scheduled-replies');
 select cron.unschedule('dh-nightly-debrief')   where exists (select 1 from cron.job where jobname = 'dh-nightly-debrief');
 
--- ---- 1. dh-followup: every 5 minutes -----------------------
+-- ---- 1. dh-outbound: every 5 minutes -----------------------
+-- The unified proactive scheduler (composition Phase 3): follow-up ladders +
+-- time-of-day check-ins, idempotent via dh_outbound_events. Replaced
+-- dh-followup (2026-07-14).
 select cron.schedule(
-  'dh-followup',
+  'dh-outbound',
   '*/5 * * * *',
   $$
   select net.http_post(
-    url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-followup',
+    url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-outbound',
     headers := jsonb_build_object('Content-Type', 'application/json'),
     body    := '{}'::jsonb
   );

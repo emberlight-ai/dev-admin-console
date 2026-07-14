@@ -23,8 +23,7 @@ type Strategy = {
   name: string
   description: string | null
   active_greeting_enabled: boolean
-  follow_up_delay: number
-  max_follow_ups: number
+  follow_up_ladder: number[]
   check_ins_per_day: number
   reply_min_delay_seconds: number
   reply_max_delay_seconds: number
@@ -52,9 +51,29 @@ const AUTO = "__auto__"
 const WARMUP_RATES = ["very_low", "low", "normal", "high", "very_high", "extreme"]
 
 function fmtDelay(seconds: number): string {
-  if (seconds < 3600) return `${Math.round(seconds / 60)} min`
-  if (seconds < 86400) return `${Math.round(seconds / 3600)} h`
-  return `${Math.round(seconds / 86400)} d`
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h`
+  return `${Math.round(seconds / 86400)}d`
+}
+
+// "10m, 30m, 45m, 12h, 3d" ⇄ seconds[]. Bare numbers read as minutes.
+function ladderToText(ladder: number[]): string {
+  return (ladder ?? []).map(fmtDelay).join(", ")
+}
+function textToLadder(text: string): number[] {
+  return text
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean)
+    .map((t) => {
+      const m = t.match(/^(\d+(?:\.\d+)?)\s*(m|min|h|hr|d)?$/)
+      if (!m) return NaN
+      const v = Number(m[1])
+      const unit = m[2] ?? "m"
+      return unit.startsWith("h") ? v * 3600 : unit.startsWith("d") ? v * 86400 : v * 60
+    })
+    .filter((v) => Number.isFinite(v) && v >= 60)
+    .map((v) => Math.round(v))
 }
 
 export default function StrategiesPage() {
@@ -69,6 +88,7 @@ export default function StrategiesPage() {
 
   const [editing, setEditing] = React.useState<Strategy | null>(null)
   const [draft, setDraft] = React.useState<Strategy | null>(null)
+  const [ladderText, setLadderText] = React.useState("")
   const [saving, setSaving] = React.useState(false)
 
   const load = React.useCallback(async () => {
@@ -136,7 +156,7 @@ export default function StrategiesPage() {
       const res = await fetch(`/api/admin/strategies/${encodeURIComponent(editing.key)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        body: JSON.stringify({ ...draft, follow_up_ladder: textToLadder(ladderText) }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || "Failed to save")
@@ -199,7 +219,7 @@ export default function StrategiesPage() {
           {strategy && (
             <Button
               variant="ghost" size="icon" className="h-7 w-7" title="Edit preset"
-              onClick={() => { setEditing(strategy); setDraft({ ...strategy }) }}
+              onClick={() => { setEditing(strategy); setDraft({ ...strategy }); setLadderText(ladderToText(strategy.follow_up_ladder)) }}
             >
               <Pencil className="h-3.5 w-3.5" />
             </Button>
@@ -298,9 +318,20 @@ export default function StrategiesPage() {
               {numField("Reply min delay (s)", "reply_min_delay_seconds")}
               {numField("Reply max delay (s)", "reply_max_delay_seconds")}
               {numField("Typing chars/sec", "reply_chars_per_second")}
-              {numField("Max follow-ups", "max_follow_ups", 1, "0 = never follows up")}
-              {numField("Follow-up delay (s)", "follow_up_delay", 60, `= ${fmtDelay(draft?.follow_up_delay ?? 0)}`)}
-              {numField("Check-ins / day", "check_ins_per_day", 1, "Proactive time-of-day pings")}
+              {numField("Check-ins / day", "check_ins_per_day", 1, "Time-of-day pings on warm matches")}
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Follow-up ladder</Label>
+              <Input
+                value={ladderText}
+                onChange={(e) => setLadderText(e.target.value)}
+                placeholder="10m, 30m, 45m, 12h, 3d"
+              />
+              <p className="text-[11px] text-muted-foreground/60">
+                Escalating gaps after no reply, measured from her last message — each entry is one
+                nudge (m/h/d units; bare numbers = minutes). Empty = never follows up.
+                Parsed: {textToLadder(ladderText).length ? textToLadder(ladderText).map(fmtDelay).join(" → ") : "—"}
+              </p>
             </div>
             <div className="space-y-2 rounded-lg border p-3">
               {boolField("Speaks first after a match (greeting)", "active_greeting_enabled")}

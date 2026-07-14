@@ -10,7 +10,7 @@ function jsonError(message: string, status = 400) {
 }
 
 const NUMERIC_FIELDS = [
-  'follow_up_delay', 'max_follow_ups', 'check_ins_per_day',
+  'check_ins_per_day',
   'reply_min_delay_seconds', 'reply_max_delay_seconds', 'reply_chars_per_second',
   'skip_reply_base_chance', 'skip_reply_intimacy_drop_chance',
   'skip_reply_intimacy_drop_delta', 'skip_reply_max_consecutive', 'sort_order',
@@ -47,6 +47,15 @@ export async function PATCH(
   }
   if (typeof b.intimacy_warmup_rate === 'string' && WARMUP_RATES.includes(b.intimacy_warmup_rate)) {
     patch.intimacy_warmup_rate = b.intimacy_warmup_rate;
+  }
+  // Escalating follow-up gaps, seconds; [] = never chases. Max 10 rungs.
+  if (Array.isArray(b.follow_up_ladder)) {
+    const ladder = b.follow_up_ladder
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v) && v >= 60 && v <= 30 * 86400)
+      .map((v) => Math.round(v))
+      .slice(0, 10);
+    patch.follow_up_ladder = ladder;
   }
 
   if (Object.keys(patch).length === 0) return jsonError('Nothing to update', 400);

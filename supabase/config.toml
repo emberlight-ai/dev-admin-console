@@ -15,3 +15,6 @@ verify_jwt = false
 
 [functions.dh-nearby-dispatch]
 verify_jwt = false
+
+[functions.dh-outbound]
+verify_jwt = false

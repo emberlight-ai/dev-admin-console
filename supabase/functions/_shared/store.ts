@@ -49,8 +49,9 @@ export interface UserRow {
 export interface Strategy {
   key: string;
   activeGreetingEnabled: boolean;
-  followUpDelay: number;
-  maxFollowUps: number;
+  /** Escalating re-engagement gaps in seconds, measured from the match's last
+   *  message; length = max follow-ups (empty = never chases). */
+  followUpLadder: number[];
   checkInsPerDay: number;
   replyMinDelaySeconds: number;
   replyMaxDelaySeconds: number;
@@ -214,8 +215,9 @@ export async function getStrategies(): Promise<Map<string, Strategy>> {
     map.set(row.key, {
       key: row.key,
       activeGreetingEnabled: row.active_greeting_enabled === true,
-      followUpDelay: numOr(row.follow_up_delay, 86400),
-      maxFollowUps: numOr(row.max_follow_ups, 3),
+      followUpLadder: Array.isArray(row.follow_up_ladder)
+        ? row.follow_up_ladder.map((s: unknown) => numOr(s, 0)).filter((s: number) => s > 0)
+        : [],
       checkInsPerDay: numOr(row.check_ins_per_day, 0),
       replyMinDelaySeconds: numOr(row.reply_min_delay_seconds, 2),
       replyMaxDelaySeconds: numOr(row.reply_max_delay_seconds, 18),
