@@ -79,12 +79,16 @@ export function describeLocalTime(timezone?: string | null): string {
 }
 
 // ── Identity / profile blocks ──────────────────────────────────────────────────
-function botProfileBlock(bot: UserRow): string {
+// `interests` are the DH's identity tags (already filtered: active, non-admin)
+// — the same tags that drive the iOS Explore categories, finally shaping the
+// conversation too.
+function botProfileBlock(bot: UserRow, interests: string[] = []): string {
+  const into = interests.length ? `\n**Into:** ${interests.join(', ')}` : '';
   return `<bot_profile>
 **Name:** ${bot.username || 'Unknown'}
 **Age:** ${bot.age ?? '—'}
 **Archetype:** ${bot.profession || 'Digital Human'}
-**Background:** ${bot.bio || '—'}
+**Background:** ${bot.bio || '—'}${into}
 </bot_profile>`;
 }
 
@@ -140,16 +144,26 @@ ${lengthLine}`;
 }
 
 // ── System prompt composer ─────────────────────────────────────────────────────
-// Cache-friendly order: static persona template first, then identity blocks,
-// then the per-turn dynamic tail (user profile with live local time + brief).
+// Cache-friendly order, static → dynamic: persona prose, then skill blocks
+// (static per character), then identity blocks, then the per-turn tail (user
+// profile with live local time + brief).
 export function buildSystemPrompt(input: {
   template: string;
   bot: UserRow;
   human: UserRow;
   brief: string;
   toolNotes?: string;
+  /** Skill prompt decorations, pre-sorted by skills.sort_order. */
+  skillBlocks?: string[];
+  /** DH identity tags (active, non-admin interests). */
+  botInterests?: string[];
 }): string {
-  const parts = [stripPlaceholders(input.template).trim(), botProfileBlock(input.bot)];
+  const parts = [stripPlaceholders(input.template).trim()];
+  for (const block of input.skillBlocks ?? []) {
+    const b = block.trim();
+    if (b) parts.push(b);
+  }
+  parts.push(botProfileBlock(input.bot, input.botInterests ?? []));
   const storyline = (input.bot.storyline ?? '').trim();
   if (storyline) parts.push(`<bot_storyline>\n${storyline}\n</bot_storyline>`);
   parts.push(userProfileBlock(input.human));

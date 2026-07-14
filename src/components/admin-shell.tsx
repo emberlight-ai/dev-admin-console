@@ -7,6 +7,7 @@ import {
   BookOpen,
   Bot,
   ChevronLeft,
+  Gauge,
   LogOut,
   ScrollText,
   Menu,
@@ -18,6 +19,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Users,
+  Wand2,
   Wrench,
 } from "lucide-react"
 
@@ -37,6 +39,8 @@ const navGroups = [
     items: [
       { href: "/admin/users", label: "Dashboard", icon: LayoutDashboard },
       { href: "/admin/system-prompts", label: "System Prompts", icon: ScrollText },
+      { href: "/admin/strategies", label: "Strategies", icon: Gauge },
+      { href: "/admin/skills", label: "Skills", icon: Wand2 },
       { href: "/admin/categories", label: "Categories", icon: Sparkles },
       { href: "/admin/shared-images", label: "Chat Images", icon: Images },
       { href: "/admin/config", label: "Configuration", icon: SlidersHorizontal },

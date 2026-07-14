@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { toast } from "sonner"
-import { Copy, Pencil, Settings2, CheckCircle2, CircleMinus, Star, X } from "lucide-react"
+import { Copy, Pencil, Settings2, CheckCircle2, CircleMinus, Sparkles, Star, X } from "lucide-react"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -70,6 +70,23 @@ export function ProfileCard({
   const [zipcode, setZipcode] = React.useState("")
   const [bio, setBio] = React.useState("")
   const [storyline, setStoryline] = React.useState("")
+  const [generatingStoryline, setGeneratingStoryline] = React.useState(false)
+
+  // First-person draft from persona + profile + interests (composition plan).
+  const generateStoryline = async () => {
+    setGeneratingStoryline(true)
+    try {
+      const res = await fetch(`/api/admin/digital-humans/${encodeURIComponent(user.userid)}/storyline`, { method: "POST" })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || "Generation failed")
+      setStoryline(json.draft ?? "")
+      toast.success("Draft generated — review, edit, then save")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Generation failed")
+    } finally {
+      setGeneratingStoryline(false)
+    }
+  }
   const [avatarFile, setAvatarFile] = React.useState<File | null>(null)
   const avatarFileRef = React.useRef<File | null>(null)
 
@@ -277,12 +294,24 @@ export function ProfileCard({
               <Textarea rows={3} value={bio} onChange={(e) => setBio(e.target.value)} />
             </div>
             <div className="space-y-2">
-              <Label>Storyline</Label>
+              <div className="flex items-center justify-between">
+                <Label>Storyline</Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={generatingStoryline}
+                  onClick={() => void generateStoryline()}
+                >
+                  <Sparkles className="mr-1 h-3.5 w-3.5" />
+                  {generatingStoryline ? "Generating…" : "Generate"}
+                </Button>
+              </div>
               <Textarea
-                rows={6}
+                rows={8}
                 value={storyline}
                 onChange={(e) => setStoryline(e.target.value)}
-                placeholder="The digital human's backstory / ongoing life narrative the AI can pull topics from (recent trip, new job, pet, hobby...). Injected into chats as <bot_storyline>."
+                placeholder="Her backstory + current beat, first person (&quot;I grew up in…&quot;). Generate a draft from her persona, profile and interests, then edit. Injected into chats as <bot_storyline>."
               />
               <p className="text-xs text-muted-foreground">
                 Used by auto-replies and follow-ups to keep conversations consistent and give the DH things to talk about.

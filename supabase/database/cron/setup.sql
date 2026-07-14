@@ -1,10 +1,20 @@
 -- ============================================================
 -- pg_cron: ALL JOBS SETUP (run this to register everything at once)
 --
--- Before running:
---   Replace ALL occurrences of <your-service-role-key> in this file
---   with your actual key from:
---   Supabase Dashboard → Project Settings → API → service_role (secret)
+-- SECURITY (2026-07-14): this file previously embedded the service-role JWT
+-- in the Authorization headers. Treat that key as EXPOSED (it is in git
+-- history) and rotate it: Dashboard → Project Settings → API → service_role →
+-- Roll. All DH functions are deployed with verify_jwt = false (config.toml +
+-- `npm run functions:deploy`), so cron calls need NO Authorization header at
+-- all — the jobs below carry none, and no secret ever belongs in this file.
+--
+-- Order of operations for the fix:
+--   1. Redeploy dh-nearby-dispatch once (it now has verify_jwt = false in
+--      config.toml; its old deployment verified JWTs):
+--        supabase functions deploy dh-nearby-dispatch --no-verify-jwt \
+--          --project-ref wvcwvjlmnjnvyblrycxj
+--   2. Re-run THIS file (replaces the header-carrying jobs).
+--   3. Rotate the service_role key in the dashboard.
 --
 -- This file is idempotent — safe to re-run anytime.
 -- Project: wvcwvjlmnjnvyblrycxj
@@ -19,6 +29,7 @@ select cron.unschedule('dh-followup')          where exists (select 1 from cron.
 select cron.unschedule('dh-matching')          where exists (select 1 from cron.job where jobname = 'dh-matching');
 select cron.unschedule('dh-nearby-dispatch')   where exists (select 1 from cron.job where jobname = 'dh-nearby-dispatch');
 select cron.unschedule('dh-scheduled-replies') where exists (select 1 from cron.job where jobname = 'dh-scheduled-replies');
+select cron.unschedule('dh-nightly-debrief')   where exists (select 1 from cron.job where jobname = 'dh-nightly-debrief');
 
 -- ---- 1. dh-followup: every 5 minutes -----------------------
 select cron.schedule(
@@ -27,10 +38,7 @@ select cron.schedule(
   $$
   select net.http_post(
     url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-followup',
-    headers := jsonb_build_object(
-      'Content-Type',  'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2Y3d2amxtbmpudnlibHJ5Y3hqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTgzNjcyMCwiZXhwIjoyMDgxNDEyNzIwfQ.9oeRPz5_q3DrPy-T3LZm5Fsdt-o-ZbKiqI1bqGzhqiI'
-    ),
+    headers := jsonb_build_object('Content-Type', 'application/json'),
     body    := '{}'::jsonb
   );
   $$
@@ -43,10 +51,7 @@ select cron.schedule(
   $$
   select net.http_post(
     url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-matching',
-    headers := jsonb_build_object(
-      'Content-Type',  'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2Y3d2amxtbmpudnlibHJ5Y3hqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTgzNjcyMCwiZXhwIjoyMDgxNDEyNzIwfQ.9oeRPz5_q3DrPy-T3LZm5Fsdt-o-ZbKiqI1bqGzhqiI'
-    ),
+    headers := jsonb_build_object('Content-Type', 'application/json'),
     body    := '{}'::jsonb
   );
   $$
@@ -55,45 +60,26 @@ select cron.schedule(
 -- ---- 3. dh-nearby-dispatch: every minute, deliver due nearby invites -----
 -- Per-invite run_at (set when find-nearby-people schedules them) is what makes
 -- arrivals feel random across a 1–3 min window; this is just the poll loop.
+-- (Folds into dh-outbound in the composition redesign, Phase 3.)
 select cron.schedule(
   'dh-nearby-dispatch',
   '* * * * *',
   $$
   select net.http_post(
     url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-nearby-dispatch',
-    headers := jsonb_build_object(
-      'Content-Type',  'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2Y3d2amxtbmpudnlibHJ5Y3hqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTgzNjcyMCwiZXhwIjoyMDgxNDEyNzIwfQ.9oeRPz5_q3DrPy-T3LZm5Fsdt-o-ZbKiqI1bqGzhqiI'
-    ),
+    headers := jsonb_build_object('Content-Type', 'application/json'),
     body    := '{}'::jsonb
   );
   $$
 );
 
 -- ---- 4. dh-scheduled-replies: REMOVED ----------------------
--- The fixed response-delay mechanism is gone — dh-auto-reply now applies a
--- natural typing delay inline (response length / ~40 WPM). The unschedule near
--- the top of this file drops the old job when re-run. To remove the live job
--- once, run:  select cron.unschedule('dh-scheduled-replies');
+-- The fixed response-delay mechanism is gone — dh-auto-reply applies a natural
+-- typing delay inline. The unschedule near the top drops the old job on re-run.
 
--- ---- 5. dh-nightly-debrief: 09:10 UTC (~1-2am Pacific) ------
--- The L5 loop: each L5 digital human reviews yesterday's conversations + OKR,
--- checks the news for talking points, writes coach notes for tomorrow's replies
--- and tomorrow's diary. See functions/dh-nightly-debrief.
--- Deployed with --no-verify-jwt (like the other DH functions), so the cron call
--- carries no Authorization header — no service-role JWT embedded in cron.
-select cron.unschedule('dh-nightly-debrief') where exists (select 1 from cron.job where jobname = 'dh-nightly-debrief');
-select cron.schedule(
-  'dh-nightly-debrief',
-  '10 9 * * *',
-  $$
-  select net.http_post(
-    url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-nightly-debrief',
-    headers := jsonb_build_object('Content-Type', 'application/json'),
-    body    := '{}'::jsonb
-  );
-  $$
-);
+-- ---- 5. dh-nightly-debrief: REMOVED (L5 retired 2026-07-08) --
+-- The unschedule near the top drops the job. Also delete the orphaned remote
+-- function:  supabase functions delete dh-nightly-debrief
 
 -- ---- Verify all jobs are registered -------------------------
 select jobname, schedule, active from cron.job order by jobname;

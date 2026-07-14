@@ -16,9 +16,14 @@ import {
   getCooldownMessageThreshold,
   getPromptConfig,
   getSelfieConfig,
+  getSkillsForUser,
+  getUserInterestNames,
   getUserRow,
+  isInCompositionCohort,
+  resolveStrategy,
 } from '../_shared/store.ts';
 import { buildSystemPrompt, buildTranscript, textingBrief } from '../_shared/context.ts';
+import { clampIntimacy } from '../_shared/intimacy.ts';
 import { adamStep, describeUserImageIfNeeded, scoreIntimacy } from '../_shared/critic.ts';
 import type { IntimacyResult } from '../_shared/critic.ts';
 import {
@@ -31,6 +36,7 @@ import {
   declarationForRegistryTool,
   executeRegistryTool,
   loadEnabledRegistryTools,
+  resolveAllowedRegistryTools,
 } from '../_shared/tools.ts';
 import { runAgentTurn } from '../_shared/actor.ts';
 
@@ -227,9 +233,35 @@ Deno.serve(async (req) => {
     }
     const promptConfig = getPromptConfig(bot);
 
+    // ── COMPOSITION (persona/skill/strategy) — cohort-gated during migration ──
+    // Off-cohort DHs keep running on the legacy SystemPrompts behavior columns.
+    const composed = await isInCompositionCohort(dhId);
+    const [strategy, skills, botInterests] = composed
+      ? await Promise.all([
+          resolveStrategy(bot, promptConfig),
+          getSkillsForUser(dhId),
+          getUserInterestNames(dhId),
+        ])
+      : [null, [], []];
+    // Effective cadence: the strategy preset overrides the legacy per-persona
+    // columns; every pacing/skip read below goes through `pacing`.
+    const pacing = composed && strategy
+      ? {
+          ...(promptConfig ?? {}),
+          replyMinDelaySeconds: strategy.replyMinDelaySeconds,
+          replyMaxDelaySeconds: strategy.replyMaxDelaySeconds,
+          replyCharsPerSecond: strategy.replyCharsPerSecond,
+          skipReplyEnabled: strategy.skipReplyEnabled,
+          skipReplyBaseChance: strategy.skipReplyBaseChance,
+          skipReplyIntimacyDropChance: strategy.skipReplyIntimacyDropChance,
+          skipReplyIntimacyDropDelta: strategy.skipReplyIntimacyDropDelta,
+          skipReplyMaxConsecutive: strategy.skipReplyMaxConsecutive,
+        }
+      : promptConfig;
+
     // Optimistic lock, sized to outlast generation + the configured max send
     // delay + inter-bubble gaps.
-    const configuredMaxDelaySec = Math.min(60, Math.max(0, promptConfig?.replyMaxDelaySeconds ?? 18));
+    const configuredMaxDelaySec = Math.min(60, Math.max(0, pacing?.replyMaxDelaySeconds ?? 18));
     const lockSeconds = Math.min(120, Math.max(LOCK_DURATION_SECONDS, configuredMaxDelaySec + 37));
     const lockTime = new Date(Date.now() + lockSeconds * 1000).toISOString();
     const { error: lockErr } = await supabase
@@ -317,48 +349,54 @@ Deno.serve(async (req) => {
         bot, human,
         brief: '',
       });
+      // Eagerness: the strategy's warmup wins on the composition path.
+      const warmupRate = composed && strategy ? strategy.intimacyWarmupRate : selfieCfg.warmupRate;
       const criticPromise: Promise<IntimacyResult | null> = scoreIntimacy(
-        systemForCritic, transcript, stateData.intimacy_score ?? null, selfieCfg.warmupRate
+        systemForCritic, transcript, stateData.intimacy_score ?? null, warmupRate
       );
+      // The critic's instruction-level warmup guidance is not a guarantee — the
+      // engine clamps the stored delta deterministically.
+      const clampedIntimacy = (critic: IntimacyResult | null): number | null =>
+        critic ? clampIntimacy(stateData.intimacy_score ?? null, critic.intimacy, warmupRate) : null;
 
       // ── Human-like silence (needs the critic → awaited only on this path) ──
-      if (promptConfig?.skipReplyEnabled) {
+      if (pacing?.skipReplyEnabled) {
         let trailingUserMsgs = 0; // msgRows is newest-first
         for (const m of msgRows) {
           if (m.sender_id === dhId) break;
           trailingUserMsgs += 1;
         }
         const dhHasSpoken = msgRows.some((m) => m.sender_id === dhId);
-        const maxConsecutive = Math.max(0, promptConfig.skipReplyMaxConsecutive);
+        const maxConsecutive = Math.max(0, pacing.skipReplyMaxConsecutive);
         const forceReply = !dhHasSpoken || trailingUserMsgs > maxConsecutive;
 
         if (!forceReply) {
           const critic = await criticPromise;
           const prevIntimacy = stateData.intimacy_score ?? null;
-          const currIntimacy = critic?.intimacy ?? null;
+          const currIntimacy = clampedIntimacy(critic);
           const intimacyDropped =
             prevIntimacy != null && currIntimacy != null &&
-            prevIntimacy - currIntimacy >= promptConfig.skipReplyIntimacyDropDelta;
+            prevIntimacy - currIntimacy >= pacing.skipReplyIntimacyDropDelta;
 
-          let skipChance = Math.max(0, Math.min(1, promptConfig.skipReplyBaseChance));
+          let skipChance = Math.max(0, Math.min(1, pacing.skipReplyBaseChance));
           if (intimacyDropped) {
-            skipChance = Math.max(skipChance, Math.max(0, Math.min(1, promptConfig.skipReplyIntimacyDropChance)));
+            skipChance = Math.max(skipChance, Math.max(0, Math.min(1, pacing.skipReplyIntimacyDropChance)));
           }
 
           if (Math.random() < skipChance) {
             // Stay silent: mark processed, fold in intimacy, DON'T touch
             // ai_state (silence is not a sent reply; ai_state drives follow-ups).
-            const adamSkip = critic
-              ? adamStep(stateData.intimacy_score ?? null, stateData.intimacy_m ?? 0, stateData.intimacy_v ?? 0, critic.intimacy)
+            const adamSkip = currIntimacy != null
+              ? adamStep(stateData.intimacy_score ?? null, stateData.intimacy_m ?? 0, stateData.intimacy_v ?? 0, currIntimacy)
               : null;
             await supabase
               .from('user_match_ai_state')
               .update({
                 ai_last_processed_message_id: checkpointId,
                 ai_locked_until: null,
-                ...(critic
+                ...(currIntimacy != null
                   ? {
-                      intimacy_score: critic.intimacy,
+                      intimacy_score: currIntimacy,
                       intimacy_m: adamSkip!.m,
                       intimacy_v: adamSkip!.v,
                       intimacy_updated_at: new Date().toISOString(),
@@ -408,12 +446,32 @@ Deno.serve(async (req) => {
           required: ['topic'],
         },
       });
-      const registryTools = grounding ? await loadEnabledRegistryTools() : [];
+      // Registry surface. Composition path: skills own their tools + core info
+      // tools on grounding turns. Legacy path: all enabled tools on grounding.
+      const registryTools = composed
+        ? await resolveAllowedRegistryTools({
+            skillToolIds: skills.flatMap((s) => s.tool_ids),
+            grounding,
+          })
+        : grounding
+          ? await loadEnabledRegistryTools()
+          : [];
       for (const tool of registryTools) declarations.push(declarationForRegistryTool(tool));
+
+      // The authorization boundary is enforced at EXECUTION, not just in the
+      // declarations: a call outside this set gets an in-band refusal the model
+      // can react to — never an execution.
+      const allowedToolNames = new Set<string>(['get_my_details']);
+      if (selfieToolAvailable) allowedToolNames.add('send_selfie');
+      for (const tool of registryTools) allowedToolNames.add(tool.name);
 
       // Tool executor: local tools handled here; everything else → registry.
       let selfieSentAt: string | null = null;
       const execute = async (name: string, args: Record<string, unknown>) => {
+        if (!allowedToolNames.has(name)) {
+          console.warn(`[${TAG}] rejected unauthorized tool call`, name, matchId);
+          return { ok: false, error: `Tool "${name}" is not available right now.` };
+        }
         if (name === 'send_selfie') {
           const requestedTier = args?.tier === 'tease' || args?.tier === 'reward' ? args.tier : 'casual';
           const attempt = await trySendSelfie({
@@ -469,6 +527,8 @@ Deno.serve(async (req) => {
         bot, human,
         brief: textingBrief({ stage, shortUser, lastUserWords }),
         toolNotes,
+        skillBlocks: skills.map((s) => s.prompt_block),
+        botInterests,
       });
 
       const userPrompt = `Conversation so far:\n${transcript}\n\nWrite your next message(s) as ${bot.username ?? 'the bot'}. Output ONLY the message text — separate bubbles with a blank line.`;
@@ -492,8 +552,8 @@ Deno.serve(async (req) => {
           matchId,
           senderId: bot.userid,
           bubbles,
-          intimacyScore: critic?.intimacy ?? stateData.intimacy_score ?? null,
-          promptConfig,
+          intimacyScore: clampedIntimacy(critic) ?? stateData.intimacy_score ?? null,
+          promptConfig: pacing,
           turnStartedAt: startTime,
           tag: TAG,
         });
@@ -502,9 +562,12 @@ Deno.serve(async (req) => {
       }
 
       // ── REFLECT: state update + missed-message check ────────────────────────
+      // The stored score is the CLAMPED value (deterministic warmup ceiling);
+      // m/v keep updating until Phase 3 swaps the followup drive gate for bands.
       const critic = await criticPromise;
-      const adam = critic
-        ? adamStep(stateData.intimacy_score ?? null, stateData.intimacy_m ?? 0, stateData.intimacy_v ?? 0, critic.intimacy)
+      const storedIntimacy = clampedIntimacy(critic);
+      const adam = storedIntimacy != null
+        ? adamStep(stateData.intimacy_score ?? null, stateData.intimacy_m ?? 0, stateData.intimacy_v ?? 0, storedIntimacy)
         : null;
       await supabase
         .from('user_match_ai_state')
@@ -513,9 +576,9 @@ Deno.serve(async (req) => {
           ai_locked_until: null,
           ai_follow_up_count: 0,
           ai_state: 2, // DH Sent
-          ...(critic
+          ...(storedIntimacy != null
             ? {
-                intimacy_score: critic.intimacy,
+                intimacy_score: storedIntimacy,
                 intimacy_m: adam!.m,
                 intimacy_v: adam!.v,
                 intimacy_updated_at: new Date().toISOString(),
@@ -538,11 +601,14 @@ Deno.serve(async (req) => {
       // Structured turn log for the rollout metrics.
       console.log(`[${TAG}] turn`, JSON.stringify({
         match: matchId,
+        composed,
+        strategy: composed ? (strategy?.key ?? null) : null,
+        skills: composed ? skills.map((s) => s.key) : undefined,
         grounding,
         tools_used: toolEvents.map((t) => t.name),
         bubbles: bubbles.length,
         selfie_sent: !!selfieSentAt,
-        intimacy: critic?.intimacy ?? null,
+        intimacy: storedIntimacy,
         ms_total: Date.now() - startTime,
       }));
       return new Response(JSON.stringify({ ok: true }), {

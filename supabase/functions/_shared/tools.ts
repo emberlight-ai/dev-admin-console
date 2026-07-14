@@ -28,6 +28,8 @@ export type AgentToolRow = {
   kind: 'builtin' | 'http' | 'js';
   config: Record<string, unknown>;
   enabled?: boolean;
+  /** Core info tools: offered to every DH on grounding turns (not skill-gated). */
+  is_core?: boolean;
 };
 
 export type ToolEvent = { name: string; args: Record<string, unknown>; ok: boolean; ms: number };
@@ -210,7 +212,7 @@ export async function loadEnabledRegistryTools(): Promise<AgentToolRow[]> {
   if (Date.now() < registryCache.exp) return registryCache.value;
   const { data, error } = await supabase
     .from('agent_tools')
-    .select('id, name, description, input_schema, kind, config, enabled')
+    .select('id, name, description, input_schema, kind, config, enabled, is_core')
     .eq('enabled', true);
   if (error) {
     console.error('[dh-tools] registry load failed', error);
@@ -219,6 +221,24 @@ export async function loadEnabledRegistryTools(): Promise<AgentToolRow[]> {
   registryCache = { value: (data ?? []) as AgentToolRow[], exp: Date.now() + REGISTRY_TTL_MS };
   g.__dhToolRegistry = registryCache;
   return registryCache.value;
+}
+
+/**
+ * The authorization boundary (composition path). A DH's registry tool surface:
+ *   core info tools (agent_tools.is_core) on GROUNDING turns only
+ *   ∪ tools owned by her assigned skills (skill_tools)
+ * `enabled=false` trumps everything (it's the global kill switch — the query
+ * above only loads enabled rows). The caller must gate EXECUTION on this same
+ * set, not just the declarations: a hallucinated tool name gets a refusal the
+ * model can react to, never an execution.
+ */
+export async function resolveAllowedRegistryTools(input: {
+  skillToolIds: string[];
+  grounding: boolean;
+}): Promise<AgentToolRow[]> {
+  const all = await loadEnabledRegistryTools();
+  const skillIds = new Set(input.skillToolIds);
+  return all.filter((t) => (input.grounding && t.is_core === true) || (t.id && skillIds.has(t.id)));
 }
 
 function isInjectedParam(spec: ToolParamSpec): boolean {

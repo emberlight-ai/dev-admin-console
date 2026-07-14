@@ -12,3 +12,6 @@ verify_jwt = false
 
 [functions.dh-matching]
 verify_jwt = false
+
+[functions.dh-nearby-dispatch]
+verify_jwt = false

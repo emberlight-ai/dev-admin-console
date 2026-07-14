@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { composeSystemPromptFromTemplate } from "@/lib/botProfile"
 
+import { CompositionPanel } from "./_components/composition-panel"
 import { ImageZoomDialog } from "./_components/image-zoom-dialog"
 import { InterestsPanel } from "./_components/interests-panel"
 import { ProfileCard } from "./_components/profile-card"
@@ -193,6 +194,7 @@ export default function DigitalHumanDetail() {
             whitelistBusy={whitelistBusy}
             onSaved={(updates) => setUser((prev) => (prev ? { ...prev, ...updates } : prev))}
           />
+          <CompositionPanel userid={user.userid} />
           <InterestsPanel userid={user.userid} />
         </div>
 
