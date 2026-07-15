@@ -20,7 +20,6 @@ import {
   Sparkles,
   Users,
   Wand2,
-  Wrench,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -35,40 +34,33 @@ import { PersonalityNav } from "@/components/personality-nav"
 
 const navGroups = [
   {
-    title: "Users and Bots",
+    title: "Users",
     items: [
       { href: "/admin/users", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/admin/personas", label: "Personas", icon: ScrollText },
-      { href: "/admin/strategies", label: "Strategies", icon: Gauge },
-      { href: "/admin/skills", label: "Skills", icon: Wand2 },
-      { href: "/admin/categories", label: "Categories", icon: Sparkles },
-      { href: "/admin/shared-images", label: "Chat Images", icon: Images },
-      { href: "/admin/config", label: "Configuration", icon: SlidersHorizontal },
+      { href: "/admin/matching/traffic", label: "Chat Traffic", icon: MessageSquare },
+      { href: "/admin/matching/reports", label: "Reports", icon: Flag },
+      { href: "/admin/real-humans", label: "Real Humans", icon: Users },
     ],
   },
   {
-    title: "Matching",
+    title: "Digital Humans",
     items: [
-      // Green Mode moved into Configuration → Matching tab.
-      { href: "/admin/matching/traffic", label: "Chat Traffic", icon: MessageSquare },
-      { href: "/admin/matching/reports", label: "Reports", icon: Flag },
+      { href: "/admin/digital-humans", label: "Profiles", icon: Bot },
+      { href: "/admin/personas", label: "Personas", icon: ScrollText },
+      { href: "/admin/strategies", label: "Strategies", icon: Gauge },
+      { href: "/admin/categories", label: "Categories", icon: Sparkles },
+      { href: "/admin/shared-images", label: "Chat Images", icon: Images },
+      { href: "/admin/config", label: "Global Configurations", icon: SlidersHorizontal },
     ],
   },
   {
     title: "Agents",
     items: [
-      { href: "/admin/tools", label: "Tools", icon: Wrench },
+      // Tools merged into Skills (a skill authorizes its tools).
+      { href: "/admin/skills", label: "Skills", icon: Wand2 },
     ],
   },
 ]
-
-const dbManagementGroup = {
-  title: "DB management",
-  items: [
-    { href: "/admin/digital-humans", label: "Digital Humans", icon: Bot },
-    { href: "/admin/real-humans", label: "Real Humans", icon: Users },
-  ],
-}
 
 const backendGroup = {
   title: "Backend",
@@ -211,17 +203,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         <div className="p-3 bg-sidebar space-y-4">
           <div>
             <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
-              {dbManagementGroup.title}
-            </div>
-            <div className="mt-2 space-y-1">
-              {dbManagementGroup.items.map((item) => (
-                <NavItem key={item.href} item={item} pathname={pathname} />
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
               {backendGroup.title}
             </div>
             <div className="mt-2 space-y-1">
@@ -305,21 +286,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   </nav>
 
                   <div className="p-3 border-t space-y-4">
-                    <div>
-                      <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">
-                        {dbManagementGroup.title}
-                      </div>
-                      <div className="mt-2 space-y-1">
-                        {dbManagementGroup.items.map((item) => (
-                          <NavItem
-                            key={item.href}
-                            item={item}
-                            pathname={pathname}
-                            onClick={() => setMobileNavOpen(false)}
-                          />
-                        ))}
-                      </div>
-                    </div>
 
                     <div>
                       <div className="px-2 text-xs font-medium tracking-wide text-muted-foreground">

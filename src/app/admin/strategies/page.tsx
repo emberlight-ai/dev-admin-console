@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { Gauge, Pencil, Search } from "lucide-react"
 import { toast } from "sonner"
 
@@ -82,6 +83,13 @@ export default function StrategiesPage() {
   const [personaDefaults, setPersonaDefaults] = React.useState<Record<string, string | null>>({})
   const [loading, setLoading] = React.useState(true)
   const [query, setQuery] = React.useState("")
+  const [genderFilter, setGenderFilter] = React.useState<"all" | "Female" | "Male">("all")
+  const [personaFilter, setPersonaFilter] = React.useState("all")
+
+  const personaOptions = React.useMemo(
+    () => [...new Set(dhs.map((d) => (d.personality ?? "").trim()).filter(Boolean))].sort(),
+    [dhs]
+  )
 
   const [dragId, setDragId] = React.useState<string | null>(null)
   const [dropCol, setDropCol] = React.useState<string | null>(null)
@@ -121,7 +129,12 @@ export default function StrategiesPage() {
 
   const columns = React.useMemo(() => {
     const q = query.trim().toLowerCase()
-    const visible = q ? dhs.filter((d) => (d.username ?? "").toLowerCase().includes(q)) : dhs
+    const visible = dhs.filter(
+      (d) =>
+        (!q || (d.username ?? "").toLowerCase().includes(q)) &&
+        (genderFilter === "all" || (d.gender ?? "").trim() === genderFilter) &&
+        (personaFilter === "all" || (d.personality ?? "").trim() === personaFilter)
+    )
     const byCol = new Map<string, DH[]>()
     byCol.set(AUTO, [])
     for (const s of strategies) byCol.set(s.key, [])
@@ -130,7 +143,7 @@ export default function StrategiesPage() {
       byCol.get(col)!.push(d)
     }
     return byCol
-  }, [dhs, strategies, query])
+  }, [dhs, strategies, query, genderFilter, personaFilter])
 
   const assign = async (dh: DH, strategyKey: string | null) => {
     const prev = dh.strategy_key
@@ -198,7 +211,7 @@ export default function StrategiesPage() {
     <div
       key={key}
       className={cn(
-        "flex w-64 shrink-0 flex-col rounded-xl border bg-muted/40",
+        "flex w-80 shrink-0 flex-col rounded-xl border bg-muted/40",
         dropCol === key && dragId && "ring-1 ring-ring"
       )}
       onDragOver={(e) => { e.preventDefault(); if (dropCol !== key) setDropCol(key) }}
@@ -246,21 +259,25 @@ export default function StrategiesPage() {
                 }}
                 onDragEnd={() => { setDragId(null); setDropCol(null) }}
                 className={cn(
-                  "flex cursor-grab items-center gap-2 rounded-lg border bg-card px-2 py-1.5 active:cursor-grabbing",
+                  "group flex cursor-grab items-center gap-3 rounded-lg border bg-card p-2.5 active:cursor-grabbing",
                   dragId === dh.userid && "border-dashed opacity-40"
                 )}
               >
-                <Avatar className="h-6 w-6 shrink-0">
+                <Avatar className="h-11 w-11 shrink-0">
                   <AvatarImage src={`/api/avatar/${dh.userid}?v=${encodeURIComponent(dh.updated_at || "")}`} alt={dh.username ?? ""} />
-                  <AvatarFallback className="text-[10px]">{(dh.username ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
+                  <AvatarFallback className="text-xs">{(dh.username ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium">{dh.username ?? "Unknown"}</div>
-                  <div className="truncate text-[10px] text-muted-foreground">
+                  <div className="truncate text-sm font-medium">{dh.username ?? "Unknown"}</div>
+                  <div className="truncate text-xs text-muted-foreground">
                     {dh.personality ?? "—"}
+                    {dh.gender ? ` · ${dh.gender}` : ""}
                     {autoTier ? ` → ${strategies.find((s) => s.key === autoTier)?.name ?? autoTier}` : ""}
                   </div>
                 </div>
+                <Button asChild size="sm" variant="outline" className="h-7 shrink-0 px-2 text-xs opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                  <Link href={`/admin/digital-humans/${dh.userid}`} draggable={false}>View</Link>
+                </Button>
               </div>
             )
           })
@@ -280,9 +297,35 @@ export default function StrategiesPage() {
             default tier (shown on the card). Edit a column to tune its preset.
           </p>
         </div>
-        <div className="relative shrink-0">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name…" className="h-9 w-56 pl-8" />
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="flex items-center rounded-full border p-0.5">
+            {(["all", "Female", "Male"] as const).map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setGenderFilter(g)}
+                className={cn(
+                  "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                  genderFilter === g ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {g === "all" ? "All" : g}
+              </button>
+            ))}
+          </div>
+          <select
+            value={personaFilter}
+            onChange={(e) => setPersonaFilter(e.target.value)}
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            title="Filter by persona"
+          >
+            <option value="all">All personas</option>
+            {personaOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name…" className="h-9 w-48 pl-8" />
+          </div>
         </div>
       </div>
 

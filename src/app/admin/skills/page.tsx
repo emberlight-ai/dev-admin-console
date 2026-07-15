@@ -5,6 +5,8 @@ import { Eye, EyeOff, MessageSquareQuote, Pencil, Plus, Trash2, Wand2, Wrench, X
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ToolsPanel } from "./_components/tools-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -151,6 +153,18 @@ export default function SkillsPage() {
         </Button>
       </div>
 
+      <Tabs defaultValue="skills">
+        <TabsList>
+          <TabsTrigger value="skills">Skills</TabsTrigger>
+          <TabsTrigger value="tools">Tool registry</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="tools" className="mt-4">
+          <ToolsPanel />
+        </TabsContent>
+
+        <TabsContent value="skills" className="mt-4 space-y-4">
+
       {/* Tool library tray */}
       <div className="rounded-xl border bg-muted/40 p-3">
         <div className="mb-2 flex items-center gap-1.5 text-xs font-medium tracking-wide text-muted-foreground">
@@ -282,6 +296,8 @@ export default function SkillsPage() {
           ))}
         </div>
       )}
+        </TabsContent>
+      </Tabs>
 
       {/* Skill editor */}
       <Dialog open={dialog.open} onOpenChange={(v) => setDialog((s) => ({ ...s, open: v }))}>

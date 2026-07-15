@@ -400,7 +400,7 @@ function AddToolDialog({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function ToolsPage() {
+export function ToolsPanel() {
   const [tools, setTools] = React.useState<Tool[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [addOpen, setAddOpen] = React.useState(false);
@@ -486,12 +486,10 @@ export default function ToolsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-            <Wrench className="h-6 w-6" /> Tools
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            What your digital humans can look up — news, weather, profiles, anything you add.
-            Agents call these through <code className="rounded bg-muted px-1 py-0.5 text-xs">/api/tools/execute</code>.
+          <p className="text-sm text-muted-foreground">
+            The tool registry: what digital humans can look up — news, weather, profiles, anything
+            you add. A tool reaches a DH only via a skill that authorizes it (or as a core
+            grounding tool). Executed through <code className="rounded bg-muted px-1 py-0.5 text-xs">/api/tools/execute</code>.
           </p>
         </div>
         <Button onClick={() => setAddOpen(true)}>
