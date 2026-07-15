@@ -4,7 +4,7 @@ import * as React from "react"
 import { toast } from "sonner"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { CheckCircle2, ChevronRight, SlidersHorizontal } from "lucide-react"
+import { ChevronRight, SlidersHorizontal } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -23,10 +23,6 @@ type KeyRow = {
   gender: string
   personality: string
   created_at: string
-  matching_enabled: boolean
-  immediate_match_enabled: boolean
-  follow_up_message_enabled: boolean
-  active_greeting_enabled: boolean
 }
 
 export default function SystemPromptsPage() {
@@ -64,7 +60,7 @@ export default function SystemPromptsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Personas</h1>
         <p className="text-sm text-muted-foreground">
-          Create versioned prompt templates by gender and personality. Each edit creates a new entry.
+          The persona is HOW SHE TALKS — prose only, versioned per edit. Availability, pacing and follow-ups live on Strategies.
         </p>
       </div>
 
@@ -110,10 +106,6 @@ export default function SystemPromptsPage() {
               <TableRow>
                 <TableHead>Gender</TableHead>
                 <TableHead>Personality</TableHead>
-                <TableHead>Matching Enabled</TableHead>
-                <TableHead>Immediate Match</TableHead>
-                <TableHead>Follow-up</TableHead>
-                <TableHead>Greeting</TableHead>
                 <TableHead className="w-10" aria-label="Open" />
               </TableRow>
             </TableHeader>
@@ -143,46 +135,6 @@ export default function SystemPromptsPage() {
                   >
                     <TableCell>{k.gender}</TableCell>
                     <TableCell className="font-medium">{k.personality}</TableCell>
-                    <TableCell>
-                      {k.matching_enabled ? (
-                        <div className="flex items-center gap-1.5 text-sm">
-                          <CheckCircle2 className="h-4 w-4 text-green-600" />
-                          <span className="text-muted-foreground">Enabled</span>
-                        </div>
-                      ) : (
-                        <span className="text-sm text-muted-foreground/60">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {k.immediate_match_enabled ? (
-                        <div className="flex items-center gap-1.5 text-sm">
-                          <CheckCircle2 className="h-4 w-4 text-green-600" />
-                          <span className="text-muted-foreground">Enabled</span>
-                        </div>
-                      ) : (
-                        <span className="text-sm text-muted-foreground/60">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {k.follow_up_message_enabled ? (
-                        <div className="flex items-center gap-1.5 text-sm">
-                          <CheckCircle2 className="h-4 w-4 text-green-600" />
-                          <span className="text-muted-foreground">Enabled</span>
-                        </div>
-                      ) : (
-                        <span className="text-sm text-muted-foreground/60">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {k.active_greeting_enabled ? (
-                        <div className="flex items-center gap-1.5 text-sm">
-                          <CheckCircle2 className="h-4 w-4 text-green-600" />
-                          <span className="text-muted-foreground">Enabled</span>
-                        </div>
-                      ) : (
-                        <span className="text-sm text-muted-foreground/60">—</span>
-                      )}
-                    </TableCell>
                     <TableCell className="text-right">
                       <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground" />
                     </TableCell>
