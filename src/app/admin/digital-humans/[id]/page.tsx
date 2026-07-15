@@ -40,10 +40,7 @@ export default function DigitalHumanDetail() {
   const [effectiveSystemPrompt, setEffectiveSystemPrompt] = React.useState<string | null>(null)
   const [systemPromptMeta, setSystemPromptMeta] = React.useState<{
     immediate_match_enabled: boolean
-    follow_up_message_enabled: boolean
     active_greeting_enabled: boolean
-    follow_up_delay: number
-    max_follow_ups: number
     created_at: string | null
     gender: string
     personality: string
@@ -112,10 +109,6 @@ export default function DigitalHumanDetail() {
           system_prompt: string
           created_at: string
           immediate_match_enabled?: boolean
-          follow_up_message_enabled?: boolean
-          follow_up_message_prompt?: string
-          follow_up_delay?: number
-          max_follow_ups?: number
           active_greeting_enabled?: boolean
           active_greeting_prompt?: string
         } | null
@@ -125,10 +118,7 @@ export default function DigitalHumanDetail() {
 
       setSystemPromptMeta({
         immediate_match_enabled: json.data?.immediate_match_enabled ?? false,
-        follow_up_message_enabled: json.data?.follow_up_message_enabled ?? false,
         active_greeting_enabled: json.data?.active_greeting_enabled ?? false,
-        follow_up_delay: json.data?.follow_up_delay ?? 86400,
-        max_follow_ups: json.data?.max_follow_ups ?? 3,
         created_at: json.data?.created_at ?? null,
         gender: g,
         personality: p,

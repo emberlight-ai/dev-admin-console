@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dialog"
 
 import type { DbUser } from "./types"
-import { SystemPromptForm } from "@/app/admin/system-prompts/manage/_components/system-prompt-form"
+import { SystemPromptForm } from "@/app/admin/personas/manage/_components/system-prompt-form"
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
 const ACCEPTED_MIME = new Set(["image/jpeg", "image/png"])
@@ -43,10 +43,7 @@ export function ProfileCard({
   onZoomAvatar: () => void
   systemPromptMeta?: {
     immediate_match_enabled: boolean
-    follow_up_message_enabled: boolean
     active_greeting_enabled: boolean
-    follow_up_delay: number
-    max_follow_ups: number
     created_at: string | null
     gender: string
     personality: string
@@ -405,21 +402,6 @@ export function ProfileCard({
             <dd>
               {systemPromptMeta?.immediate_match_enabled ? (
                 <CheckCircle2 className="h-4 w-4 text-green-600" />
-              ) : (
-                <CircleMinus className="h-4 w-4 text-gray-400" />
-              )}
-            </dd>
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <dt className="text-muted-foreground">Follow-up</dt>
-            <dd className="flex items-center gap-2">
-              {systemPromptMeta?.follow_up_message_enabled ? (
-                <>
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  <span className="text-xs text-muted-foreground">
-                    (delay {systemPromptMeta.follow_up_delay}s, max {systemPromptMeta.max_follow_ups})
-                  </span>
-                </>
               ) : (
                 <CircleMinus className="h-4 w-4 text-gray-400" />
               )}

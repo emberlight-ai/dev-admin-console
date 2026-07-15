@@ -59,7 +59,7 @@ export function PersonalityNav({ onNavigate }: { onNavigate?: () => void }) {
       <div className="flex items-center justify-between px-2">
         <span className="text-xs font-medium tracking-wide text-muted-foreground">Personalities</span>
         <Link
-          href={`/admin/system-prompts/manage?gender=${gender}`}
+          href={`/admin/personas/manage?gender=${gender}`}
           onClick={onNavigate}
           aria-label="New personality"
           title="New personality"
@@ -109,7 +109,7 @@ export function PersonalityNav({ onNavigate }: { onNavigate?: () => void }) {
             return (
               <Link
                 key={name}
-                href={`/admin/system-prompts/manage?gender=${gender}&personality=${encodeURIComponent(name)}`}
+                href={`/admin/personas/manage?gender=${gender}&personality=${encodeURIComponent(name)}`}
                 onClick={onNavigate}
                 title={name}
                 className={cn(

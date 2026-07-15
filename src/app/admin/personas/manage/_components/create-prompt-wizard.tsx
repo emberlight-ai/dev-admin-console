@@ -283,7 +283,7 @@ export function CreatePromptWizard({ initialGender = "Female" }: { initialGender
       const json = (await res.json()) as { data?: unknown; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to create personality")
       toast.success(`Personality "${trimmedName}" created`)
-      router.push("/admin/system-prompts")
+      router.push("/admin/personas")
     } catch (err: unknown) {
       console.error(err)
       toast.error(err instanceof Error ? err.message : "Failed to create personality")
@@ -309,7 +309,7 @@ export function CreatePromptWizard({ initialGender = "Female" }: { initialGender
   return (
     <div className="w-full space-y-6 pb-20">
       <div className="flex items-center gap-4">
-        <Link href="/admin/system-prompts">
+        <Link href="/admin/personas">
           <Button variant="ghost" size="icon">
             <ChevronLeft className="h-5 w-5" />
           </Button>
@@ -407,7 +407,7 @@ export function CreatePromptWizard({ initialGender = "Female" }: { initialGender
                   <div className="flex items-center justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
                     <span>A {gender} personality named “{trimmedName}” already exists.</span>
                     <Link
-                      href={`/admin/system-prompts/manage?gender=${encodeURIComponent(gender)}&personality=${encodeURIComponent(trimmedName)}`}
+                      href={`/admin/personas/manage?gender=${encodeURIComponent(gender)}&personality=${encodeURIComponent(trimmedName)}`}
                       className="shrink-0 font-medium underline"
                     >
                       Edit it instead

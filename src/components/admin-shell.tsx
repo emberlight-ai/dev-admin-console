@@ -38,7 +38,7 @@ const navGroups = [
     title: "Users and Bots",
     items: [
       { href: "/admin/users", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/admin/system-prompts", label: "System Prompts", icon: ScrollText },
+      { href: "/admin/personas", label: "Personas", icon: ScrollText },
       { href: "/admin/strategies", label: "Strategies", icon: Gauge },
       { href: "/admin/skills", label: "Skills", icon: Wand2 },
       { href: "/admin/categories", label: "Categories", icon: Sparkles },
@@ -143,7 +143,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const { changeNonce } = useThemeColor()
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false)
   const [settingsOpen, setSettingsOpen] = React.useState(false)
-  const showPersonalities = pathname.startsWith("/admin/system-prompts/manage")
+  const showPersonalities = pathname.startsWith("/admin/personas/manage")
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -191,11 +191,11 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
             <div className="w-1/2 shrink-0 overflow-y-auto p-3">
               <Link
-                href="/admin/system-prompts"
+                href="/admin/personas"
                 className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 <ChevronLeft className="h-4 w-4" />
-                System Prompts
+                Personas
               </Link>
               <div className="mt-3">
                 {showPersonalities ? (
@@ -270,12 +270,12 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                     {showPersonalities ? (
                       <div>
                         <Link
-                          href="/admin/system-prompts"
+                          href="/admin/personas"
                           onClick={() => setMobileNavOpen(false)}
                           className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         >
                           <ChevronLeft className="h-4 w-4" />
-                          System Prompts
+                          Personas
                         </Link>
                         <div className="mt-3">
                           <React.Suspense fallback={null}>

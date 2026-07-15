@@ -62,7 +62,7 @@ export default function SystemPromptsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">System Prompts</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Personas</h1>
         <p className="text-sm text-muted-foreground">
           Create versioned prompt templates by gender and personality. Each edit creates a new entry.
         </p>
@@ -88,7 +88,7 @@ export default function SystemPromptsPage() {
               Configuration
             </Button>
           </Link>
-          <Link href="/admin/system-prompts/manage">
+          <Link href="/admin/personas/manage">
             <Button>+ Personality</Button>
           </Link>
         </div>
@@ -137,7 +137,7 @@ export default function SystemPromptsPage() {
                     className="cursor-pointer hover:bg-muted/30"
                     onClick={() =>
                       router.push(
-                        `/admin/system-prompts/manage?gender=${encodeURIComponent(k.gender)}&personality=${encodeURIComponent(k.personality)}`
+                        `/admin/personas/manage?gender=${encodeURIComponent(k.gender)}&personality=${encodeURIComponent(k.personality)}`
                       )
                     }
                   >
