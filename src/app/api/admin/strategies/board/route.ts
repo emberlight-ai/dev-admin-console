@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
     await Promise.all([
       supabaseAdmin
         .from('users')
-        .select('userid, username, gender, personality, strategy_key, updated_at')
+        .select('userid, username, gender, personality, strategy_key, updated_at, whitelisted')
         .eq('is_digital_human', true)
         .is('deleted_at', null)
         .order('username'),
@@ -38,6 +38,10 @@ export async function GET(req: NextRequest) {
       // whitelist page did) rather than a giant OR filter.
       supabaseAdmin.from('user_matches').select('user_a, user_b'),
     ]);
+  const [{ data: posts }, { data: featuredRows }] = await Promise.all([
+    supabaseAdmin.from('user_posts').select('userid').is('deleted_at', null),
+    supabaseAdmin.from('user_interests').select('user_id').eq('interest_key', 'featured'),
+  ]);
   if (dhErr) return jsonError(dhErr.message, 500);
   if (pErr) return jsonError(pErr.message, 500);
 
@@ -52,6 +56,12 @@ export async function GET(req: NextRequest) {
     matchCounts[a] = (matchCounts[a] ?? 0) + 1;
     matchCounts[b] = (matchCounts[b] ?? 0) + 1;
   }
+  const postCounts: Record<string, number> = {};
+  for (const p of posts ?? []) {
+    const id = (p as { userid: string }).userid;
+    postCounts[id] = (postCounts[id] ?? 0) + 1;
+  }
+  const featured = new Set((featuredRows ?? []).map((r) => (r as { user_id: string }).user_id));
 
   // Newest row per gender:personality wins (SystemPrompts is version history).
   const personaDefaults: Record<string, string | null> = {};
@@ -65,6 +75,8 @@ export async function GET(req: NextRequest) {
       ...d,
       match_count: matchCounts[d.userid] ?? 0,
       chat_image_count: imgCounts[d.userid] ?? 0,
+      post_count: postCounts[d.userid] ?? 0,
+      featured: featured.has(d.userid),
     })),
     personaDefaults,
   });

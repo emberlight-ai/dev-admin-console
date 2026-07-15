@@ -2,11 +2,11 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { Gauge, HeartHandshake, ImageIcon, Pencil, Search } from "lucide-react"
+import { Gauge, Pencil, Search } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { DhMiniCard } from "@/components/dh-mini-card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -39,16 +39,9 @@ type Strategy = {
   sort_order: number
 }
 
-type DH = {
-  userid: string
-  username: string | null
-  gender: string | null
-  personality: string | null
-  strategy_key: string | null
-  updated_at: string | null
-  match_count: number
-  chat_image_count: number
-}
+import type { DhMiniCardData } from "@/components/dh-mini-card"
+
+type DH = DhMiniCardData & { strategy_key: string | null }
 
 const AUTO = "__auto__"
 const WARMUP_RATES = ["very_low", "low", "normal", "high", "very_high", "extreme"]
@@ -251,8 +244,10 @@ export default function StrategiesPage() {
           list.map((dh) => {
             const autoTier = key === AUTO ? personaDefaultFor(dh) : null
             return (
-              <div
+              <DhMiniCard
                 key={dh.userid}
+                dh={dh}
+                subtitleSuffix={autoTier ? ` → ${strategies.find((s) => s.key === autoTier)?.name ?? autoTier}` : undefined}
                 draggable
                 onDragStart={(e) => {
                   e.dataTransfer.setData("text/plain", dh.userid)
@@ -261,40 +256,15 @@ export default function StrategiesPage() {
                 }}
                 onDragEnd={() => { setDragId(null); setDropCol(null) }}
                 className={cn(
-                  "group flex cursor-grab items-center gap-3 rounded-lg border bg-card p-2.5 active:cursor-grabbing",
+                  "cursor-grab active:cursor-grabbing",
                   dragId === dh.userid && "border-dashed opacity-40"
                 )}
-              >
-                <Avatar className="h-11 w-11 shrink-0">
-                  {/* loading="lazy": only viewport-visible avatars fetch — a
-                      574-card board must not fire 574 /api/avatar requests. */}
-                  <AvatarImage
-                    loading="lazy"
-                    src={`/api/avatar/${dh.userid}?v=${encodeURIComponent(dh.updated_at || "")}`}
-                    alt={dh.username ?? ""}
-                  />
-                  <AvatarFallback className="text-xs">{(dh.username ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
-                </Avatar>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{dh.username ?? "Unknown"}</div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {dh.personality ?? "—"}
-                    {dh.gender ? ` · ${dh.gender}` : ""}
-                    {autoTier ? ` → ${strategies.find((s) => s.key === autoTier)?.name ?? autoTier}` : ""}
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-2.5 text-[11px] text-muted-foreground tabular-nums">
-                    <span className="inline-flex items-center gap-1" title="Matches">
-                      <HeartHandshake className="h-3 w-3" /> {dh.match_count ?? 0}
-                    </span>
-                    <span className="inline-flex items-center gap-1" title="Chat images">
-                      <ImageIcon className="h-3 w-3" /> {dh.chat_image_count ?? 0}
-                    </span>
-                  </div>
-                </div>
-                <Button asChild size="sm" variant="outline" className="h-7 shrink-0 px-2 text-xs opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-                  <Link href={`/admin/digital-humans/${dh.userid}`} draggable={false}>View</Link>
-                </Button>
-              </div>
+                actions={
+                  <Button asChild size="sm" variant="outline" className="h-7 px-2 text-xs opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                    <Link href={`/admin/digital-humans/${dh.userid}`} draggable={false}>View</Link>
+                  </Button>
+                }
+              />
             )
           })
         )}

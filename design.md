@@ -249,6 +249,30 @@ person). Status uses a colored dot, not a heavy badge.
 
 ## Patterns
 
+- **DH mini-card** — [`dh-mini-card.tsx`](src/components/dh-mini-card.tsx). THE
+  way a digital human appears in any list, board, or picker. Never hand-roll a
+  DH row — render `<DhMiniCard>` so every surface shows the same anatomy:
+
+  ```
+  ┌──────────────────────────────────────┐
+  │ (avatar)  Aitana ●●            [View]│   name + status dots · actions slot
+  │  44px     General · Female           │   persona · gender (+ optional suffix)
+  │           ♡ 12   🖼 4   📷 9          │   matches · chat images · posts
+  └──────────────────────────────────────┘
+  ```
+
+  - **Avatar**: `h-11 w-11`, `/api/avatar/[id]?v=updated_at`, ALWAYS
+    `loading="lazy"` — a 500-card board must not fire 500 avatar requests.
+  - **Status dots** (colored dot, never a badge): **blue** `bg-blue-500` =
+    Featured (Explore spotlight) · **orange** `bg-amber-500` = Whitelisted
+    (home swipe deck). Tooltips carry the meaning.
+  - **Counts row**, always all three, `tabular-nums`: `HeartHandshake` matches ·
+    `ImageIcon` chat images · `Camera` posts. A zero is information (an ultra
+    DH with 0 chat images can't send selfies) — never hide it.
+  - The card is presentational: drag handlers spread onto the root, actions
+    (View / remove / …) go in the `actions` slot, usually
+    `opacity-0 group-hover:opacity-100`.
+
 - **Glanceable rail as tabs** — a horizontal row of status chips (each: icon,
   label, status dot, one-line summary) doubles as the section switcher. One
   control gives both the overview and the navigation. See the system-prompt
