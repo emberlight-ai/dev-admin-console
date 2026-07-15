@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { Gauge, Pencil, Search } from "lucide-react"
+import { Gauge, HeartHandshake, ImageIcon, Pencil, Search } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
@@ -46,6 +46,8 @@ type DH = {
   personality: string | null
   strategy_key: string | null
   updated_at: string | null
+  match_count: number
+  chat_image_count: number
 }
 
 const AUTO = "__auto__"
@@ -264,7 +266,13 @@ export default function StrategiesPage() {
                 )}
               >
                 <Avatar className="h-11 w-11 shrink-0">
-                  <AvatarImage src={`/api/avatar/${dh.userid}?v=${encodeURIComponent(dh.updated_at || "")}`} alt={dh.username ?? ""} />
+                  {/* loading="lazy": only viewport-visible avatars fetch — a
+                      574-card board must not fire 574 /api/avatar requests. */}
+                  <AvatarImage
+                    loading="lazy"
+                    src={`/api/avatar/${dh.userid}?v=${encodeURIComponent(dh.updated_at || "")}`}
+                    alt={dh.username ?? ""}
+                  />
                   <AvatarFallback className="text-xs">{(dh.username ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1">
@@ -273,6 +281,14 @@ export default function StrategiesPage() {
                     {dh.personality ?? "—"}
                     {dh.gender ? ` · ${dh.gender}` : ""}
                     {autoTier ? ` → ${strategies.find((s) => s.key === autoTier)?.name ?? autoTier}` : ""}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-2.5 text-[11px] text-muted-foreground tabular-nums">
+                    <span className="inline-flex items-center gap-1" title="Matches">
+                      <HeartHandshake className="h-3 w-3" /> {dh.match_count ?? 0}
+                    </span>
+                    <span className="inline-flex items-center gap-1" title="Chat images">
+                      <ImageIcon className="h-3 w-3" /> {dh.chat_image_count ?? 0}
+                    </span>
                   </div>
                 </div>
                 <Button asChild size="sm" variant="outline" className="h-7 shrink-0 px-2 text-xs opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
