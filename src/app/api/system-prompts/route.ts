@@ -12,14 +12,6 @@ export async function POST(req: NextRequest) {
     const gender = typeof body?.gender === "string" ? body.gender.trim() : ""
     const personality = typeof body?.personality === "string" ? body.personality.trim() : ""
     const system_prompt = typeof body?.system_prompt === "string" ? body.system_prompt : ""
-    const matching_enabled =
-      typeof body?.matching_enabled === "boolean" ? body.matching_enabled : true
-    const immediate_match_enabled =
-      typeof body?.immediate_match_enabled === "boolean" ? body.immediate_match_enabled : false
-    const active_greeting_enabled =
-      typeof body?.active_greeting_enabled === "boolean" ? body.active_greeting_enabled : false
-    const active_greeting_prompt =
-      typeof body?.active_greeting_prompt === "string" ? body.active_greeting_prompt : ""
     // Persona's default effort tier; pacing/skip/follow-up cadence live on the
     // strategies table now — this route stopped writing those legacy columns.
     const default_strategy_key =
@@ -31,20 +23,12 @@ export async function POST(req: NextRequest) {
     if (!personality) return jsonError("Missing required field: personality", 400)
     if (!system_prompt.trim()) return jsonError("Missing required field: system_prompt", 400)
 
-    if (active_greeting_enabled && !active_greeting_prompt.trim()) {
-      return jsonError("active_greeting_prompt is required when active_greeting_enabled is true", 400)
-    }
-
     const { data, error } = await supabaseAdmin
       .from("SystemPrompts")
       .insert({
         gender,
         personality,
         system_prompt,
-        matching_enabled,
-        immediate_match_enabled,
-        active_greeting_enabled,
-        active_greeting_prompt: active_greeting_prompt.trim() || null,
         default_strategy_key
       })
       .select("id,gender,personality,created_at,matching_enabled")

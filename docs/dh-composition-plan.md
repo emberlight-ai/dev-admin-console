@@ -415,6 +415,27 @@ opener variety = atomic per-recipient signature ledger (covers concurrent
 greetings AND nearby invites; static `hey 👋` fallback deleted) · consolidate
 functions (`dh-outbound` absorbs followup + nearby-dispatch; delete debrief remnant).
 
+**2026-07-14 (round 4 — persona goes PROSE-ONLY):** Carl rejected keeping
+Availability on the persona: ALL interaction toggles move to Strategy.
+Verified against prod: the 13 personas' (matching, instant, greeting) values
+cluster into exactly 4 escalating profiles (hidden ×4 → quiet ×3 → greets ×3 →
+greets+instant ×3) — an effort ladder, not identity. Target:
+- `personas` = gender:personality + system_prompt + default_strategy_key. Nothing else.
+- `strategies` gains `matching_enabled` + `immediate_match_enabled`
+  (`active_greeting_enabled` is already there); a new **`dormant`** preset
+  (matching off, everything off) absorbs the 4 hidden personas' DHs.
+- Seeds: instant-match on max/ultra (eager = no pending request); greeting off
+  only on min/dormant.
+- `matches.sql` rewires: candidate pool + instant-match join
+  `users.strategy_key → strategies` (body-only changes, no signature change)
+  instead of the SystemPrompts lateral join.
+- Greeting prose column DIES (round-1 decision executed): dh-greeting migrates
+  to `_shared/store` + strategy gate + ONE global opener instruction composed
+  with persona voice/storyline/interests — natural moment to add the variety
+  ledger. dh-nearby-dispatch's greeting-prompt read goes with the outbound fold.
+- Persona form then shrinks to prose + default effort (Availability and
+  Greeting stages deleted); persona behavior columns drop.
+
 **2026-07-14 (round 3):** `intimacy_score` is the single relationship axis —
 drop `intimacy_m`/`intimacy_v`/`intimacy_drive` + the drive-threshold config
 (verified: their only job is dh-followup's proactive gate; the critic already

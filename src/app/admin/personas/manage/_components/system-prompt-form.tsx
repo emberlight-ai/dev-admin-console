@@ -46,10 +46,6 @@ const PLACEHOLDER_RE = /<bot_profile>[\s\r\n]*BOT_PROFILE_DETAILS[\s\r\n]*<\/bot
 export type SystemPromptLatest = {
   system_prompt: string
   created_at: string
-  matching_enabled: boolean
-  immediate_match_enabled: boolean
-  active_greeting_enabled: boolean
-  active_greeting_prompt: string
   default_strategy_key: string | null
 }
 
@@ -63,7 +59,7 @@ type SystemPromptVersion = {
   follow_up_message_prompt: string | null
 }
 
-type StageId = "persona" | "matching" | "greeting"
+type StageId = "persona"
 type PendingNavigation =
   | { type: "back" }
   | { type: "cancel" }
@@ -94,10 +90,6 @@ export function SystemPromptForm({
   const [personality, setPersonality] = React.useState(initialPersonality || "")
   const [systemPrompt, setSystemPrompt] = React.useState("")
 
-  const [matchingEnabled, setMatchingEnabled] = React.useState(true)
-  const [immediateMatchEnabled, setImmediateMatchEnabled] = React.useState(false)
-  const [activeGreetingEnabled, setActiveGreetingEnabled] = React.useState(false)
-  const [activeGreetingPrompt, setActiveGreetingPrompt] = React.useState("")
   // The persona's default effort tier (strategies.key) — used by DHs whose
   // strategy_key is null ("Auto" on the Strategies board). Pacing, skip-reply
   // and follow-ups all live on the strategy now, not here.
@@ -115,10 +107,6 @@ export function SystemPromptForm({
     gender: string
     personality: string
     systemPrompt: string
-    matchingEnabled: boolean
-    immediateMatchEnabled: boolean
-    activeGreetingEnabled: boolean
-    activeGreetingPrompt: string
     defaultStrategyKey: string
   }
 
@@ -163,19 +151,11 @@ export function SystemPromptForm({
       gender: gender.trim(),
       personality: personality.trim(),
       systemPrompt,
-      matchingEnabled,
-      immediateMatchEnabled,
-      activeGreetingEnabled,
-      activeGreetingPrompt,
       defaultStrategyKey,
     }),
     [
-      activeGreetingEnabled,
-      activeGreetingPrompt,
       defaultStrategyKey,
       gender,
-      immediateMatchEnabled,
-      matchingEnabled,
       personality,
       systemPrompt,
     ]
@@ -194,10 +174,6 @@ export function SystemPromptForm({
         if (json.data) {
           const d = json.data as Partial<SystemPromptLatest>
           setSystemPrompt(d.system_prompt ?? "")
-          setMatchingEnabled(d.matching_enabled ?? true)
-          setImmediateMatchEnabled(d.immediate_match_enabled ?? false)
-          setActiveGreetingEnabled(d.active_greeting_enabled ?? false)
-          setActiveGreetingPrompt(d.active_greeting_prompt ?? "")
           setDefaultStrategyKey(d.default_strategy_key ?? "high_effort")
         }
       })
@@ -325,10 +301,6 @@ export function SystemPromptForm({
     const g = gender.trim()
     const p = personality.trim()
     const sp = systemPrompt
-    const me = Boolean(matchingEnabled)
-    const imm = Boolean(immediateMatchEnabled)
-    const age = Boolean(activeGreetingEnabled)
-    const agp = activeGreetingPrompt
 
     if (!g) {
       toast.error("Gender is required")
@@ -349,11 +321,6 @@ export function SystemPromptForm({
       setActiveStage("persona")
       return false
     }
-    if (age && !agp.trim()) {
-      toast.error("Greeting prompt is required when active greeting is enabled")
-      setActiveStage("greeting")
-      return false
-    }
 
     setSaving(true)
     try {
@@ -364,10 +331,6 @@ export function SystemPromptForm({
           gender: g,
           personality: p,
           system_prompt: sp,
-          matching_enabled: me,
-          immediate_match_enabled: imm,
-          active_greeting_enabled: age,
-          active_greeting_prompt: agp,
           default_strategy_key: defaultStrategyKey,
         }),
       })
@@ -491,24 +454,6 @@ export function SystemPromptForm({
       on: true,
       summary: systemPrompt.trim() ? `${systemPrompt.trim().length.toLocaleString()} chars` : "No prose yet",
     },
-    {
-      id: "matching",
-      label: "Availability",
-      icon: Users,
-      on: matchingEnabled,
-      summary: matchingEnabled
-        ? immediateMatchEnabled
-          ? "In feed · instant"
-          : "In feed · manual"
-        : "Hidden from feed",
-    },
-    {
-      id: "greeting",
-      label: "Greeting",
-      icon: Hand,
-      on: activeGreetingEnabled,
-      summary: activeGreetingEnabled ? "Sends first message" : "No auto greeting",
-    },
   ]
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
@@ -607,86 +552,6 @@ export function SystemPromptForm({
 
       {/* Inline editor for the selected stage. */}
       <Card className="p-5 md:p-6">
-        {activeStage === "matching" ? (
-          <div className="space-y-4">
-            <StageHeading
-              title="Availability"
-              description="How this persona shows up in matching, and the default effort tier its digital humans inherit."
-            />
-            <ToggleRow
-              title="Matching enabled"
-              description="Appears in the swipe feed and on the map, and can send / accept requests. Off = hidden from discovery."
-              checked={matchingEnabled}
-              onChange={setMatchingEnabled}
-            />
-            <ToggleRow
-              title="Immediate match"
-              description="When a real user invites this personality (swipe or map), skip the pending request and create the match instantly. Off = the user's invite waits as a request."
-              checked={immediateMatchEnabled}
-              onChange={setImmediateMatchEnabled}
-            />
-            <div className="space-y-2 rounded-lg border p-4">
-              <div className="text-sm font-medium">Default effort</div>
-              <div className="text-xs text-muted-foreground">
-                Digital humans on this persona without an explicit tier (&ldquo;Auto&rdquo; on the
-                Strategies board) use this. Pacing, silence and follow-up ladders are configured on
-                the tier itself.
-              </div>
-              <select
-                value={defaultStrategyKey}
-                onChange={(e) => setDefaultStrategyKey(e.target.value)}
-                className="h-9 w-full max-w-xs rounded-md border bg-background px-2 text-sm"
-              >
-                {strategyOptions.length === 0 ? (
-                  <option value={defaultStrategyKey}>{defaultStrategyKey}</option>
-                ) : (
-                  strategyOptions.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)
-                )}
-              </select>
-            </div>
-          </div>
-        ) : null}
-
-        {activeStage === "greeting" ? (
-          <div className="space-y-4">
-            <StageHeading
-              title="Greeting / outreach (the 'say hi')"
-              description="This single switch controls whether the personality initiates: it proactively reaches out to nearby real users on the map (nearby invitations) AND sends the first message when a match is created. Off = it never initiates; it only replies."
-            />
-            <ToggleRow
-              title="Active greeting & nearby outreach"
-              description="ON: this personality says hi first — reaches out to nearby users and opens new matches. OFF: no nearby outreach, no auto first message."
-              checked={activeGreetingEnabled}
-              onChange={setActiveGreetingEnabled}
-            />
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <Label>Greeting prompt (nearby opener)</Label>
-                {isEdit ? (
-                  <PromptHistoryButton
-                    title="Greeting prompt"
-                    versions={versions}
-                    loading={versionsLoading}
-                    onOpen={fetchVersions}
-                    extract={(v) => v.active_greeting_prompt ?? ""}
-                    onRestore={setActiveGreetingPrompt}
-                  />
-                ) : null}
-              </div>
-              <Textarea
-                rows={10}
-                value={activeGreetingPrompt}
-                onChange={(e) => setActiveGreetingPrompt(e.target.value)}
-                placeholder="e.g. Notice you're nearby and send a short, warm 'say hi' opener to start the conversation."
-                disabled={!activeGreetingEnabled}
-              />
-              <div className="text-xs text-muted-foreground">
-                Used by nearby invitations (find-nearby-people → dh-nearby-dispatch) to generate each &quot;say hi&quot; opener.
-              </div>
-            </div>
-          </div>
-        ) : null}
-
         {activeStage === "persona" ? (
           <div className="space-y-5">
             <StageHeading
@@ -718,6 +583,25 @@ export function SystemPromptForm({
               <div className="text-xs text-muted-foreground">
                 Required placeholder: <code className="rounded bg-muted px-1 py-0.5">BOT_PROFILE_DETAILS</code>
               </div>
+            </div>
+            <div className="space-y-2 rounded-lg border p-4">
+              <div className="text-sm font-medium">Default effort</div>
+              <div className="text-xs text-muted-foreground">
+                Digital humans on this persona without an explicit tier (&ldquo;Auto&rdquo; on the
+                Strategies board) use this. Pacing, silence and follow-up ladders are configured on
+                the tier itself.
+              </div>
+              <select
+                value={defaultStrategyKey}
+                onChange={(e) => setDefaultStrategyKey(e.target.value)}
+                className="h-9 w-full max-w-xs rounded-md border bg-background px-2 text-sm"
+              >
+                {strategyOptions.length === 0 ? (
+                  <option value={defaultStrategyKey}>{defaultStrategyKey}</option>
+                ) : (
+                  strategyOptions.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)
+                )}
+              </select>
             </div>
 
           </div>
@@ -758,8 +642,6 @@ export function SystemPromptForm({
           <div className="min-h-0 flex-1 overflow-auto px-4 pb-6">
             <ChatPanel
               systemPrompt={testSystemPrompt}
-              activeGreetingEnabled={activeGreetingEnabled}
-              activeGreetingPrompt={activeGreetingPrompt}
             />
           </div>
         </SheetContent>

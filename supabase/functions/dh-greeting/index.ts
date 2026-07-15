@@ -254,9 +254,23 @@ Deno.serve(async (req) => {
       return new Response('No DH in match', { status: 200 });
     }
 
-    // 2. Check prompt config
+    // 2. Check prompt config. "Speaks first" is STRATEGY-owned now (round 4):
+    // users.strategy_key → strategies.active_greeting_enabled. The persona
+    // column is legacy and no longer consulted. All DHs carry explicit keys;
+    // medium_effort is the defensive fallback.
     const promptConfig = getPromptConfig(botUser);
-    if (!promptConfig || !promptConfig.activeGreetingEnabled) {
+    const { data: stratRow } = await supabase
+      .from('users')
+      .select('strategy_key')
+      .eq('userid', botUser.userid)
+      .maybeSingle();
+    const { data: strat } = await supabase
+      .from('strategies')
+      .select('active_greeting_enabled')
+      .eq('key', stratRow?.strategy_key ?? 'medium_effort')
+      .maybeSingle();
+    const greetingEnabled = strat?.active_greeting_enabled === true;
+    if (!promptConfig || !greetingEnabled) {
       // Greeting disabled — move to state 1 so we don't loop
       await supabase
         .from('user_match_ai_state')
