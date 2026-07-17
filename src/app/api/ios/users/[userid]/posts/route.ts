@@ -66,26 +66,48 @@ async function handleGET(
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    // DH profiles get synthetic like counts (see syntheticLikes above).
+    // Display likes = synthetic popularity (DH profiles only) + REAL likes
+    // (post_likes), plus whether the caller already liked each post.
     let posts = data;
     try {
       if (Array.isArray(posts) && posts.length > 0) {
-        const { data: target } = await supabaseAdmin
-          .from('users')
-          .select('is_digital_human')
-          .eq('userid', userid)
-          .maybeSingle();
+        const postIds = posts.map((p: { id: string }) => String(p.id));
+        const { data: auth } = await supabase.auth.getUser();
+        const me = auth?.user?.id ?? null;
+
+        const [{ data: target }, { data: likeRows }, { data: mine }] = await Promise.all([
+          supabaseAdmin.from('users').select('is_digital_human').eq('userid', userid).maybeSingle(),
+          supabaseAdmin.from('post_likes').select('post_id').in('post_id', postIds),
+          me
+            ? supabaseAdmin.from('post_likes').select('post_id').in('post_id', postIds).eq('user_id', me)
+            : Promise.resolve({ data: [] as Array<{ post_id: string }> }),
+        ]);
+
+        let matches = 0;
         if (target?.is_digital_human) {
           const [{ count: asA }, { count: asB }] = await Promise.all([
             supabaseAdmin.from('user_matches').select('id', { count: 'exact', head: true }).eq('user_a', userid),
             supabaseAdmin.from('user_matches').select('id', { count: 'exact', head: true }).eq('user_b', userid),
           ]);
-          const matches = (asA ?? 0) + (asB ?? 0);
-          posts = posts.map((p: { id: string }) => ({
-            ...p,
-            likes: syntheticLikes(String(p.id), userid, matches),
-          }));
+          matches = (asA ?? 0) + (asB ?? 0);
         }
+
+        const realCounts: Record<string, number> = {};
+        for (const r of likeRows ?? []) {
+          const id = (r as { post_id: string }).post_id;
+          realCounts[id] = (realCounts[id] ?? 0) + 1;
+        }
+        const likedByMe = new Set((mine ?? []).map((r) => (r as { post_id: string }).post_id));
+
+        posts = posts.map((p: { id: string }) => {
+          const id = String(p.id);
+          const synthetic = target?.is_digital_human ? syntheticLikes(id, userid, matches) : 0;
+          return {
+            ...p,
+            likes: synthetic + (realCounts[id] ?? 0),
+            liked_by_me: likedByMe.has(id),
+          };
+        });
       }
     } catch {
       // Social proof is decoration — never let it break the posts feed.
