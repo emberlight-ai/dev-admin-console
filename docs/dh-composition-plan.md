@@ -400,7 +400,38 @@ They stay on the persona as its **Availability policy**.
 
 ---
 
-## 6 · Decisions log (Carl)
+## 6 · Skills v2 — data-collecting skills (designed 2026-07-17, not built)
+
+Driver: "Health Coach" (meal-time prompts in the user's local time, food-photo
+calorie tracking) — and generally, DHs that ELICIT AND TRACK declared
+datapoints. Verdict on v1: chassis right (tools/authorization/outbound/vision
+all reusable), missing exactly three things:
+
+1. **Declared datapoints** — `skill_datapoints (skill_key, key, value_schema
+   jsonb, cadence)` + append-only `user_datapoints (user_id, dh_id, skill_key,
+   key, value jsonb, observed_at, source_message_id)`. Ops declares fields;
+   the engine elicits, extracts, stores. Scales to any coach-type skill with
+   zero per-skill engine code.
+2. **Extractor referee** — the intimacy-critic pattern reused: a parallel cheap
+   model call per turn with a JSON schema assembled from the DH's declared
+   datapoints, scanning the user message + skill-directed photo analysis
+   (skills gain `image_analysis_prompt`; vision runs it instead of generic
+   "describe" and the result feeds both the actor and the extractor). The
+   actor chats; the referee records — never trust mid-flirt tool-call
+   discipline for data capture.
+3. **Skill-owned scheduling + computed context** — skills gain optional
+   `check_in_slots` + per-slot prompts; dh-outbound Pass B consults the DH's
+   skills before the strategy default. `buildSystemPrompt` gains a computed
+   (not generated) per-skill state block: "Today: breakfast 420 kcal, lunch
+   missing — ask when natural." Deterministic totals, never model arithmetic.
+
+Guard rails: this is BOUNDED memory — ops-declared fields only (the opposite
+of the rejected L5 diary); the "no per-skill config" rule relaxes for exactly
+these three declarative fields; per-DH overrides stay forbidden. Health
+framing: calorie estimates are motivational-companion content, NEVER medical
+advice (App Store risk).
+
+## 6b · Decisions log (Carl)
 
 **2026-07-14 (round 1):** effort-slider strategies (5 notches, full config each) ·
 launch skills incl. riddle + emotional companionship · first-person storylines ·
