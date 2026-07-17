@@ -20,8 +20,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-// active=false → hidden from users but still valid image-curation vocabulary.
-type InterestRow = { key: string; name: string; active: boolean }
+import { isAdminTag, tagChipClass } from "./tag-pane"
+
+// active=false / admin_only → admin tag: curation vocabulary, hidden from users.
+type InterestRow = { key: string; name: string; active: boolean; admin_only?: boolean }
 
 type Selected = { file: File; url: string; description: string }
 
@@ -60,8 +62,8 @@ export function UploadDialog({
         if (!res.ok) return
         // ALL rows, hidden included — new tags are born hidden and must still
         // be applicable to uploads (they go user-visible via Categories).
-        const rows = ((await res.json()).data ?? []) as Array<InterestRow & { active?: boolean }>
-        setCatalog(rows.map((i) => ({ key: i.key, name: i.name, active: i.active !== false })))
+        const rows = ((await res.json()).data ?? []) as Array<InterestRow & { active?: boolean; admin_only?: boolean }>
+        setCatalog(rows.map((i) => ({ key: i.key, name: i.name, active: i.active !== false, admin_only: i.admin_only === true })))
       } catch {
         /* tags optional */
       }
@@ -226,14 +228,12 @@ export function UploadDialog({
                     key={c.key}
                     type="button"
                     onClick={() => toggleInterest(c.key)}
-                    title={c.active ? c.name : `${c.name} — hidden from users (enable on Categories)`}
+                    title={isAdminTag(c) ? `${c.name} — admin tag, hidden from users` : `${c.name} — public interest tag`}
                     className={
-                      "rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
+                      "rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:border-primary/60 " +
                       (active
                         ? "border-primary bg-primary text-primary-foreground"
-                        : c.active
-                          ? "border-border bg-background text-muted-foreground hover:border-primary/60"
-                          : "border-dashed bg-background text-muted-foreground/70 hover:border-primary/60")
+                        : tagChipClass(isAdminTag(c)))
                     }
                   >
                     {c.name}

@@ -3,14 +3,14 @@
 import * as React from "react"
 import Link from "next/link"
 import { use } from "react"
-import { ArrowLeft, Plus, Trash2, X } from "lucide-react"
+import { ArrowLeft, EyeOff, Plus, Trash2, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { UploadDialog } from "./upload-dialog"
-import { TagPane, type TagRow } from "./tag-pane"
+import { TagPane, isAdminTag, tagChipClass, type TagRow } from "./tag-pane"
 
 type SharedImage = {
   id: string
@@ -64,6 +64,12 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
     return m
   }, [catalog])
 
+  const tagByKey = React.useMemo(() => {
+    const m = new Map<string, TagRow>()
+    for (const t of catalog) m.set(t.key, t)
+    return m
+  }, [catalog])
+
   const loadMore = React.useCallback(async () => {
     if (loading || !hasMore) return
     setLoading(true)
@@ -98,8 +104,8 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
       try {
         const res = await fetch("/api/admin/interests")
         if (!res.ok) return
-        const rows = ((await res.json()).data ?? []) as Array<TagRow & { active?: boolean }>
-        setCatalog(rows.map((i) => ({ key: i.key, name: i.name, active: i.active !== false })))
+        const rows = ((await res.json()).data ?? []) as Array<TagRow & { active?: boolean; admin_only?: boolean }>
+        setCatalog(rows.map((i) => ({ key: i.key, name: i.name, active: i.active !== false, admin_only: i.admin_only === true })))
       } catch {
         /* tags optional */
       }
@@ -192,7 +198,7 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
   }
 
   /** Create a new interest via the pane's "+" and add it to the catalog. */
-  const createTag = async (name: string): Promise<boolean> => {
+  const createTag = async (name: string, hidden: boolean): Promise<boolean> => {
     // The interest key must slugify to something; a name with no [a-z0-9]
     // (e.g. "旅行", "🎉") would 400 server-side with a cryptic "key is required".
     const slug = slugifyKey(name)
@@ -204,10 +210,9 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
       const res = await fetch("/api/admin/interests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Born HIDDEN: tags minted here are image-curation vocabulary first.
-        // They reach users (profile picker, card chips, matching boost) only
-        // after being enabled on /admin/categories.
-        body: JSON.stringify({ key: slug, name, active: false }),
+        // Interest section mints PUBLIC tags; Admin section mints HIDDEN ones
+        // (curation vocabulary until the eye toggle on /admin/categories).
+        body: JSON.stringify({ key: slug, name, active: !hidden }),
       })
       const json = await res.json()
 
@@ -226,9 +231,15 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
       if (!res.ok) throw new Error(json.error || "Failed to create tag")
       const row = json.data as TagRow
       setCatalog((prev) =>
-        prev.some((t) => t.key === row.key) ? prev : [...prev, { key: row.key, name: row.name, active: false }]
+        prev.some((t) => t.key === row.key)
+          ? prev
+          : [...prev, { key: row.key, name: row.name, active: !hidden, admin_only: false }]
       )
-      toast.success(`Tag "${row.name}" created (hidden) — enable it on Categories when it's ready for users`)
+      toast.success(
+        hidden
+          ? `Admin tag "${row.name}" created (hidden) — enable it on Categories when it's ready for users`
+          : `Interest tag "${row.name}" created (public)`
+      )
       return true
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create tag")
@@ -241,9 +252,11 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
     try {
       const res = await fetch("/api/admin/interests")
       if (!res.ok) return null
-      const rows = ((await res.json()).data ?? []) as Array<TagRow & { active?: boolean }>
+      const rows = ((await res.json()).data ?? []) as Array<TagRow & { active?: boolean; admin_only?: boolean }>
       const found = rows.find((r) => r.key === key)
-      return found ? { key: found.key, name: found.name, active: found.active !== false } : null
+      return found
+        ? { key: found.key, name: found.name, active: found.active !== false, admin_only: found.admin_only === true }
+        : null
     } catch {
       return null
     }
@@ -334,11 +347,19 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
                       </p>
                       {im.interests.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
-                          {im.interests.map((k) => (
+                          {im.interests.map((k) => {
+                            const t = tagByKey.get(k)
+                            const admin = t ? isAdminTag(t) : false
+                            return (
                             <span
                               key={k}
-                              className="group/tag inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium"
+                              title={admin ? "Admin tag — hidden from users" : "Public interest tag"}
+                              className={cn(
+                                "group/tag inline-flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+                                t ? tagChipClass(admin) : "bg-muted"
+                              )}
                             >
+                              {t && !t.active && <EyeOff className="h-2.5 w-2.5" />}
                               {nameByKey.get(k) ?? k}
                               <button
                                 type="button"
@@ -349,7 +370,8 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
                                 <X className="h-2.5 w-2.5" />
                               </button>
                             </span>
-                          ))}
+                            )
+                          })}
                         </div>
                       ) : (
                         <p className="text-[10px] text-muted-foreground/60">
