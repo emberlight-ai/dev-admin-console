@@ -407,23 +407,46 @@ calorie tracking) — and generally, DHs that ELICIT AND TRACK declared
 datapoints. Verdict on v1: chassis right (tools/authorization/outbound/vision
 all reusable), missing exactly three things:
 
-1. **Declared datapoints** — `skill_datapoints (skill_key, key, value_schema
-   jsonb, cadence)` + append-only `user_datapoints (user_id, dh_id, skill_key,
-   key, value jsonb, observed_at, source_message_id)`. Ops declares fields;
-   the engine elicits, extracts, stores. Scales to any coach-type skill with
-   zero per-skill engine code.
+**GENERIC TRACKERS (refined 2026-07-17 — Carl: "it could be calories for Jack,
+tarot readings for Andy, project-idea coaching for Yossi"). Nothing in the
+engine may know what "health" is; the whole domain lives in declarations:**
+
+1. **Declared trackers** — `skill_trackers (skill_key, key, title,
+   value_schema jsonb, cadence, aggregate)` + append-only `tracker_entries
+   (user_id, dh_id, skill_key, tracker_key, subject text null, value jsonb,
+   source, observed_at, source_message_id)`. Two fields carry the generality:
+   - `subject` — entity continuity: Yossi's `idea` entries share a subject
+     ("meal-prep app"), so latest-per-subject IS the idea's current state
+     while history stays append-only. Null for point facts (a meal).
+   - `source ∈ user_message | dh_reply | photo_analysis` — Andy's `reading
+     {card, topic, takeaway}` is captured from the DH'S OWN reply (she pulled
+     the card); Jack's `meal` from photo analysis; Yossi's `idea` from either
+     side of the exchange. Elicitation AND production are both journaled.
+   - `aggregate ∈ none | latest | latest_per_subject | sum_today | count_7d`
+     (+ `value_path` for numeric aggregates) — declarative hint that lets ONE
+     generic renderer compute each skill's context: sum_today(calories) →
+     "420 kcal so far"; latest(reading) → "last pull: The Tower, about his
+     job"; latest_per_subject(idea) → one line per living idea.
 2. **Extractor referee** — the intimacy-critic pattern reused: a parallel cheap
-   model call per turn with a JSON schema assembled from the DH's declared
-   datapoints, scanning the user message + skill-directed photo analysis
-   (skills gain `image_analysis_prompt`; vision runs it instead of generic
-   "describe" and the result feeds both the actor and the extractor). The
-   actor chats; the referee records — never trust mid-flirt tool-call
-   discipline for data capture.
+   model call per turn whose JSON schema is assembled from the DH's declared
+   trackers, scanning BOTH sides of the turn (user message, DH reply, tool
+   events) + skill-directed photo analysis (skills gain
+   `image_analysis_prompt`; vision runs it instead of generic "describe").
+   The actor chats; the referee records — never trust mid-conversation
+   tool-call discipline for data capture.
 3. **Skill-owned scheduling + computed context** — skills gain optional
    `check_in_slots` + per-slot prompts; dh-outbound Pass B consults the DH's
-   skills before the strategy default. `buildSystemPrompt` gains a computed
-   (not generated) per-skill state block: "Today: breakfast 420 kcal, lunch
-   missing — ask when natural." Deterministic totals, never model arithmetic.
+   skills before the strategy default. `buildSystemPrompt` gains a per-skill
+   context block rendered by the generic aggregator (never model arithmetic),
+   plus a "collect when natural" line for trackers whose cadence is unmet.
+
+Proof of genericity — the three launch declarations, same tables, zero
+engine branches:
+| DH | Skill | Trackers |
+|---|---|---|
+| Jack's coach | health_coach | `meal {type, items, calories}` cadence per-meal, sum_today · `weight {kg}` weekly, latest |
+| Andy's mystic | fortune_telling | `reading {card, topic, takeaway}` source dh_reply, latest |
+| Yossi's muse | project_coach | `idea {name→subject, stage, next_step}` latest_per_subject |
 
 Guard rails: this is BOUNDED memory — ops-declared fields only (the opposite
 of the rejected L5 diary); the "no per-skill config" rule relaxes for exactly
