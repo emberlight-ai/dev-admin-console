@@ -2,35 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { withLogging } from '@/lib/with-logging';
 import { supabaseAdmin } from '@/lib/supabase';
-
-// Same deterministic synthetic-likes recipe as the profile posts endpoint:
-// popularity (matches) × hash(post+author) in 0.4..2.0. Stable everywhere.
-function hash01(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return ((h >>> 0) % 10000) / 10000;
-}
-function syntheticLikes(postId: string, dhId: string, matches: number): number {
-  if (matches <= 0) return 0;
-  return Math.floor(matches * (0.4 + 1.6 * hash01(postId + dhId)));
-}
-
-type FeedRow = {
-  id: string;
-  userid: string;
-  description: string | null;
-  photos: string[] | null;
-  location_name: string | null;
-  occurred_at: string | null;
-  created_at: string;
-  users: {
-    userid: string; username: string | null; avatar: string | null;
-    age: number | null; personality: string | null;
-  };
-};
+import { syntheticLikes } from '@/lib/synthetic-likes';
 
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
@@ -43,56 +15,94 @@ const getUserSupabase = (req: NextRequest) => {
 };
 
 /**
- * GET /api/ios/feed?cursor=<created_at>&limit=10
+ * GET /api/ios/feed?category=<key>&cursor=<created_at>&limit=10
  *
- * The Explore feed: recent posts from visible digital humans (dormant tier
- * excluded), keyset-paginated, each with its author card, display like count
- * (synthetic popularity + real likes) and whether the caller liked it.
+ * Category post feed: posts from digital humans tagged with any interest
+ * under the given Explore category (same expansion getMatchings uses),
+ * dormant tier excluded, keyset-paginated. Each post carries its author card,
+ * display like count (synthetic popularity + real likes) and liked_by_me.
+ * Without `category` it serves all visible DHs (reserved for a future
+ * global feed).
+ *
+ * Deliberately NO embedded-resource filters: author eligibility is resolved
+ * first (users ∩ user_interests), then posts are fetched by author id — the
+ * `or(..., { foreignTable })` construct silently no-ops on newer supabase-js
+ * (renamed to referencedTable), which is exactly the bug that shipped an
+ * empty feed v1.
  */
 async function handleGET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '10', 10) || 10, 1), 30);
     const cursor = searchParams.get('cursor');
+    const category = (searchParams.get('category') || '').trim().toLowerCase();
 
-    // Caller identity (for liked_by_me) — feed content itself is public-ish.
     const userClient = getUserSupabase(req);
     const { data: auth } = await userClient.auth.getUser();
     const me = auth?.user?.id;
     if (!me) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    let q = supabaseAdmin
+    // 1. Eligible authors: visible DHs (not deleted, not dormant), optionally
+    //    narrowed to the category's tagged members.
+    let taggedIds: string[] | null = null;
+    if (category) {
+      const { data: interestRows } = await supabaseAdmin
+        .from('interests')
+        .select('key')
+        .eq('category_key', category);
+      const keys = new Set<string>([category]);
+      for (const r of interestRows ?? []) keys.add((r as { key: string }).key);
+
+      const { data: tagRows } = await supabaseAdmin
+        .from('user_interests')
+        .select('user_id')
+        .in('interest_key', [...keys]);
+      taggedIds = [...new Set((tagRows ?? []).map((r) => (r as { user_id: string }).user_id))];
+      if (taggedIds.length === 0) {
+        return NextResponse.json({ posts: [], nextCursor: null, hasMore: false });
+      }
+    }
+
+    let authorsQ = supabaseAdmin
+      .from('users')
+      .select('userid, username, avatar, age, strategy_key')
+      .eq('is_digital_human', true)
+      .is('deleted_at', null);
+    if (taggedIds) authorsQ = authorsQ.in('userid', taggedIds.slice(0, 500));
+    const { data: authorRows, error: authorsErr } = await authorsQ;
+    if (authorsErr) return NextResponse.json({ error: authorsErr.message }, { status: 400 });
+
+    const authors = (authorRows ?? []).filter(
+      (a) => (a.strategy_key ?? '') !== 'dormant'
+    );
+    const authorById = new Map(authors.map((a) => [a.userid as string, a]));
+    const authorIds = authors.map((a) => a.userid as string);
+    if (authorIds.length === 0) {
+      return NextResponse.json({ posts: [], nextCursor: null, hasMore: false });
+    }
+
+    // 2. Their posts, newest first, keyset on created_at.
+    let postsQ = supabaseAdmin
       .from('user_posts')
-      .select(
-        'id, userid, description, photos, location_name, occurred_at, created_at, ' +
-          'users!inner(userid, username, avatar, age, personality, is_digital_human, deleted_at, strategy_key)'
-      )
+      .select('id, userid, description, photos, location_name, occurred_at, created_at')
+      .in('userid', authorIds.slice(0, 500))
       .is('deleted_at', null)
-      .eq('users.is_digital_human', true)
-      .is('users.deleted_at', null)
-      // Dormant = the hidden shelf; its DHs don't appear anywhere user-facing.
-      .or('strategy_key.neq.dormant,strategy_key.is.null', { foreignTable: 'users' })
       .order('created_at', { ascending: false })
       .limit(limit + 1);
-    if (cursor) q = q.lt('created_at', cursor);
+    if (cursor) postsQ = postsQ.lt('created_at', cursor);
+    const { data: postRows, error: postsErr } = await postsQ;
+    if (postsErr) return NextResponse.json({ error: postsErr.message }, { status: 400 });
 
-    const { data: rowsRaw, error } = await q;
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    const page = (postRows ?? []).slice(0, limit);
+    const hasMore = (postRows ?? []).length > limit;
+    const postIds = page.map((p) => p.id as string);
+    const pageAuthorIds = [...new Set(page.map((p) => p.userid as string))];
 
-    // The embedded-select string defeats supabase-js type inference — the
-    // shape is exactly FeedRow (users!inner = single parent object).
-    const rows = (rowsRaw ?? []) as unknown as FeedRow[];
-    const page = rows.slice(0, limit);
-    const hasMore = rows.length > limit;
-    const postIds = page.map((p) => p.id);
-    const authorIds = [...new Set(page.map((p) => p.userid))];
-
-    // Popularity (synthetic base): count match participations per author.
-    // user_matches is small — count in JS, same as the whitelist page did.
+    // 3. Popularity (synthetic base) for this page's authors.
     const matchCounts: Record<string, number> = {};
-    if (authorIds.length > 0) {
+    if (pageAuthorIds.length > 0) {
       const { data: matches } = await supabaseAdmin.from('user_matches').select('user_a, user_b');
-      const wanted = new Set(authorIds);
+      const wanted = new Set(pageAuthorIds);
       for (const m of matches ?? []) {
         const { user_a: a, user_b: b } = m as { user_a: string; user_b: string };
         if (wanted.has(a)) matchCounts[a] = (matchCounts[a] ?? 0) + 1;
@@ -100,7 +110,7 @@ async function handleGET(req: NextRequest) {
       }
     }
 
-    // Real likes on this page + which the caller already liked.
+    // 4. Real likes + the caller's own.
     const realCounts: Record<string, number> = {};
     const likedByMe = new Set<string>();
     if (postIds.length > 0) {
@@ -116,9 +126,9 @@ async function handleGET(req: NextRequest) {
     }
 
     const posts = page.map((p) => {
-      const author = p.users;
-      const id = p.id;
-      const authorId = p.userid;
+      const id = p.id as string;
+      const authorId = p.userid as string;
+      const author = authorById.get(authorId);
       return {
         id,
         userid: authorId,
@@ -130,10 +140,10 @@ async function handleGET(req: NextRequest) {
         likes: syntheticLikes(id, authorId, matchCounts[authorId] ?? 0) + (realCounts[id] ?? 0),
         liked_by_me: likedByMe.has(id),
         author: {
-          userid: author.userid,
-          username: author.username,
-          avatar: author.avatar,
-          age: author.age,
+          userid: authorId,
+          username: author?.username ?? null,
+          avatar: author?.avatar ?? null,
+          age: author?.age ?? null,
         },
       };
     });

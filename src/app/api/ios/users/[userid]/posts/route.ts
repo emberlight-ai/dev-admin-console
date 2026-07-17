@@ -2,30 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { withLogging } from '@/lib/with-logging';
 import { supabaseAdmin } from '@/lib/supabase';
-
-// Deterministic 0..1 from a string (FNV-1a). Same post always hashes the same,
-// so like counts are STABLE across visits and pagination — believability rule #1.
-function hash01(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return ((h >>> 0) % 10000) / 10000;
-}
-
-/**
- * Social-proof likes for DIGITAL HUMAN posts: popularity (total matches) sets
- * the budget, the post-id hash spreads it — likes_i = matches × (0.4..2.0).
- * A 200-match DH shows 80–400 likes per post; a fresh DH shows a handful;
- * numbers grow naturally as her match count grows. Real users' posts get no
- * synthetic likes (there is no real like system yet — additive field, old
- * clients ignore it).
- */
-function syntheticLikes(postId: string, dhId: string, matches: number): number {
-  if (matches <= 0) return 0;
-  return Math.floor(matches * (0.4 + 1.6 * hash01(postId + dhId)));
-}
+import { syntheticLikes } from '@/lib/synthetic-likes';
 
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');

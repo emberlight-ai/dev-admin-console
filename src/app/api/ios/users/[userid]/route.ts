@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import tzlookup from 'tz-lookup';
 import { supabaseAdmin } from '@/lib/supabase';
 import { archiveUserContent, FRESH_PROFILE_FIELDS, purgeUserContent } from '@/lib/account-reset';
+import { syntheticLikes } from '@/lib/synthetic-likes';
 import { withLogging } from '@/lib/with-logging';
 
 /// Best-effort archive-before-purge for the restore path. Going forward every
@@ -220,6 +221,32 @@ async function handleGET(
         }
       }
       return NextResponse.json(unknownUser(userid), { status: 200 });
+    }
+
+    // RedNote-style social proof for DH profiles: followers = her match count,
+    // total_likes = the same per-post numbers the posts endpoint shows, summed
+    // (synthetic popularity + real post_likes) — the two surfaces always agree.
+    if (data.is_digital_human === true) {
+      try {
+        const [{ count: asA }, { count: asB }, { data: postRows }] = await Promise.all([
+          supabaseAdmin.from('user_matches').select('id', { count: 'exact', head: true }).eq('user_a', userid),
+          supabaseAdmin.from('user_matches').select('id', { count: 'exact', head: true }).eq('user_b', userid),
+          supabaseAdmin.from('user_posts').select('id').eq('userid', userid).is('deleted_at', null),
+        ]);
+        const followers = (asA ?? 0) + (asB ?? 0);
+        const postIds = (postRows ?? []).map((p) => p.id as string);
+        let totalLikes = postIds.reduce((sum, id) => sum + syntheticLikes(id, userid, followers), 0);
+        if (postIds.length > 0) {
+          const { count: real } = await supabaseAdmin
+            .from('post_likes')
+            .select('post_id', { count: 'exact', head: true })
+            .in('post_id', postIds);
+          totalLikes += real ?? 0;
+        }
+        return NextResponse.json({ ...data, followers, total_likes: totalLikes });
+      } catch {
+        // Social proof is decoration — fall through to the plain profile.
+      }
     }
 
     return NextResponse.json(data);
