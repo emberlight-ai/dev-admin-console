@@ -223,6 +223,35 @@ async function handleGET(
       return NextResponse.json(unknownUser(userid), { status: 200 });
     }
 
+    // Relationship + content-volume facts for the caller: `connected` gates
+    // the Moments section (non-friends see one post) and drives the Connect
+    // button; post_count lets the client show "N more moments locked".
+    let connected = false;
+    let postCount = 0;
+    try {
+      const { data: callerAuth } = await supabase.auth.getUser();
+      const callerId = callerAuth?.user?.id ?? null;
+      if (callerId && callerId !== userid) {
+        const [a, b] = callerId < userid ? [callerId, userid] : [userid, callerId];
+        const { count } = await supabaseAdmin
+          .from('user_matches')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_a', a)
+          .eq('user_b', b);
+        connected = (count ?? 0) > 0;
+      } else if (callerId === userid) {
+        connected = true; // your own profile is never gated
+      }
+      const { count: pc } = await supabaseAdmin
+        .from('user_posts')
+        .select('id', { count: 'exact', head: true })
+        .eq('userid', userid)
+        .is('deleted_at', null);
+      postCount = pc ?? 0;
+    } catch {
+      // Best-effort; defaults (not connected, 0) fail safe.
+    }
+
     // RedNote-style social proof for DH profiles: followers = her match count,
     // total_likes = the same per-post numbers the posts endpoint shows, summed
     // (synthetic popularity + real post_likes) — the two surfaces always agree.
@@ -243,13 +272,13 @@ async function handleGET(
             .in('post_id', postIds);
           totalLikes += real ?? 0;
         }
-        return NextResponse.json({ ...data, followers, total_likes: totalLikes });
+        return NextResponse.json({ ...data, followers, total_likes: totalLikes, connected, post_count: postCount });
       } catch {
         // Social proof is decoration — fall through to the plain profile.
       }
     }
 
-    return NextResponse.json(data);
+    return NextResponse.json({ ...data, connected, post_count: postCount });
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : 'Internal Server Error';

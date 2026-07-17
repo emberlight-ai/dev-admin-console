@@ -43,9 +43,30 @@ async function handleGET(
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    // Display likes = synthetic popularity (DH profiles only) + REAL likes
-    // (post_likes), plus whether the caller already liked each post.
+    // FRIEND GATE (server-enforced, works for old clients too): a caller who
+    // isn't matched with the target sees only the FIRST moment — the rest
+    // unlock by CONNECTING, not by paying. Own profile is never gated.
     let posts = data;
+    try {
+      if (Array.isArray(posts) && posts.length > 0) {
+        const { data: callerAuth } = await supabase.auth.getUser();
+        const callerId = callerAuth?.user?.id ?? null;
+        if (callerId && callerId !== userid) {
+          const [a, b] = callerId < userid ? [callerId, userid] : [userid, callerId];
+          const { count } = await supabaseAdmin
+            .from('user_matches')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_a', a)
+            .eq('user_b', b);
+          const connected = (count ?? 0) > 0;
+          if (!connected) {
+            posts = startIndex === 0 ? posts.slice(0, 1) : [];
+          }
+        }
+      }
+    } catch {
+      // Fail open on the gate check — a transient error must not blank profiles.
+    }
     try {
       if (Array.isArray(posts) && posts.length > 0) {
         const postIds = posts.map((p: { id: string }) => String(p.id));
