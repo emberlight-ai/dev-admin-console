@@ -39,6 +39,12 @@ import {
   resolveAllowedRegistryTools,
 } from '../_shared/tools.ts';
 import { runAgentTurn } from '../_shared/actor.ts';
+import {
+  extractTrackerEntries,
+  loadTrackers,
+  recordEntries,
+  renderTrackerContext,
+} from '../_shared/trackers.ts';
 
 const TAG = 'dh-auto-reply';
 
@@ -243,6 +249,11 @@ Deno.serve(async (req) => {
           getUserInterestNames(dhId),
         ])
       : [null, [], []];
+    // Skills v2: what this DH's skills track for this user (generic — the
+    // engine only knows aggregates, never domains).
+    const trackers = composed && skills.length > 0
+      ? await loadTrackers(skills.map((s) => s.key))
+      : [];
     // Effective cadence: the strategy preset overrides the legacy per-persona
     // columns; every pacing/skip read below goes through `pacing`.
     const pacing = composed && strategy
@@ -518,6 +529,10 @@ Deno.serve(async (req) => {
         ? `<your_photos>\nYou have ${photoCount} real photos of yourself. YOU decide when one goes out, by calling the send_selfie tool — never describe or promise a photo without calling it, and never claim you can't send photos.\n</your_photos>`
         : `<your_photos>\nYou have NO photos you can send. If he asks for one, deflect playfully and in character — never promise a photo or say one is coming.\n</your_photos>`;
 
+      const trackerContext = trackers.length > 0
+        ? await renderTrackerContext({ trackers, userId: realId, dhId, timezone: human.timezone })
+        : null;
+
       const systemInstruction = buildSystemPrompt({
         template: promptConfig?.template ??
           `You are ${bot.username ?? 'a digital human'}. Personality: ${bot.personality ?? 'Friendly'}. Bio: ${bot.bio ?? 'N/A'}. Reply as this character. Keep it engaging, short, and natural.`,
@@ -526,6 +541,7 @@ Deno.serve(async (req) => {
         toolNotes,
         skillBlocks: skills.map((s) => s.prompt_block),
         botInterests,
+        trackerContext,
       });
 
       const userPrompt = `Conversation so far:\n${transcript}\n\nWrite your next message(s) as ${bot.username ?? 'the bot'}. Output ONLY the message text — separate bubbles with a blank line.`;
@@ -588,6 +604,25 @@ Deno.serve(async (req) => {
         const cooldownP = maybeEnterCooldown(realId);
         const rt = (globalThis as any).EdgeRuntime;
         if (rt?.waitUntil) rt.waitUntil(cooldownP); else await cooldownP;
+      }
+
+      // Skills v2 extractor referee: record declared tracker facts from BOTH
+      // sides of this exchange. Off the hot path; failures are silent.
+      if (trackers.length > 0) {
+        const extractP = (async () => {
+          const entries = await extractTrackerEntries({
+            trackers,
+            userMessage: latestUserMsg?.content ?? null,
+            userImageDesc: latestUserMsg?.image_desc ?? null,
+            dhReply: bubbles.join('\n'),
+          });
+          await recordEntries({ entries, userId: realId, dhId, sourceMessageId: latestUserMsg?.id ?? null });
+          if (entries.length > 0) {
+            console.log(`[${TAG}] trackers recorded`, entries.map((e) => `${e.skill_key}/${e.tracker_key}`));
+          }
+        })();
+        const rt = (globalThis as any).EdgeRuntime;
+        if (rt?.waitUntil) rt.waitUntil(extractP); else await extractP;
       }
 
       // Structured turn log for the rollout metrics.

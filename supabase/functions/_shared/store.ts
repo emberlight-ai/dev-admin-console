@@ -73,6 +73,9 @@ export interface SkillRow {
   opener_prompt: string | null;
   sort_order: number;
   tool_ids: string[];
+  /** Skill-owned check-in slots (morning|lunch|evening) + custom prompt. */
+  check_in_slots: string[];
+  check_in_prompt: string | null;
 }
 
 const PROMPT_TTL_MS = 60 * 60 * 1000;
@@ -261,7 +264,7 @@ export async function getSkillsForUser(userid: string): Promise<SkillRow[]> {
 
   const { data, error } = await supabase
     .from('dh_skills')
-    .select('skill_key, skills!inner(key, name, prompt_block, opener_prompt, sort_order, active, skill_tools(tool_id))')
+    .select('skill_key, skills!inner(key, name, prompt_block, opener_prompt, sort_order, active, check_in_slots, check_in_prompt, skill_tools(tool_id))')
     .eq('user_id', userid);
   if (error) {
     console.error('[dh-store] skills load failed', userid, error);
@@ -278,6 +281,8 @@ export async function getSkillsForUser(userid: string): Promise<SkillRow[]> {
       opener_prompt: s.opener_prompt ?? null,
       sort_order: numOr(s.sort_order, 100),
       tool_ids: (s.skill_tools ?? []).map((t: { tool_id: string }) => t.tool_id),
+      check_in_slots: Array.isArray(s.check_in_slots) ? s.check_in_slots : [],
+      check_in_prompt: s.check_in_prompt ?? null,
     });
   }
   rows.sort((a, b) => a.sort_order - b.sort_order || a.key.localeCompare(b.key));

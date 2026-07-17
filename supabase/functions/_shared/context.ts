@@ -157,6 +157,8 @@ export function buildSystemPrompt(input: {
   skillBlocks?: string[];
   /** DH identity tags (active, non-admin interests). */
   botInterests?: string[];
+  /** Computed tracker state (Skills v2) — trusted numbers, never re-derived. */
+  trackerContext?: string | null;
 }): string {
   const parts = [stripPlaceholders(input.template).trim()];
   for (const block of input.skillBlocks ?? []) {
@@ -166,6 +168,7 @@ export function buildSystemPrompt(input: {
   parts.push(botProfileBlock(input.bot, input.botInterests ?? []));
   const storyline = (input.bot.storyline ?? '').trim();
   if (storyline) parts.push(`<bot_storyline>\n${storyline}\n</bot_storyline>`);
+  if (input.trackerContext) parts.push(input.trackerContext);
   parts.push(userProfileBlock(input.human));
   if (input.toolNotes) parts.push(input.toolNotes);
   parts.push(input.brief);

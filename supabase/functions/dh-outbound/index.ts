@@ -35,6 +35,7 @@ import { buildSystemPrompt, buildTranscript, describeLocalTime } from '../_share
 import { bandFor } from '../_shared/intimacy.ts';
 import { deliverBubbles, startTypingHeartbeat } from '../_shared/pacing.ts';
 import { runAgentTurn } from '../_shared/actor.ts';
+import { loadTrackers, renderTrackerContext } from '../_shared/trackers.ts';
 
 const TAG = 'dh-outbound';
 
@@ -68,13 +69,17 @@ function localParts(timezone: string | null): { day: string; hour: number } {
   }
 }
 
-// Check-in slot windows by allowance: 1/day = lunch; 2 adds evening; 3 adds morning.
-function inCheckInSlot(hour: number, perDay: number): 'lunch' | 'evening' | 'morning' | null {
-  if (perDay >= 1 && hour >= 12 && hour <= 13) return 'lunch';
-  if (perDay >= 2 && hour >= 19 && hour <= 21) return 'evening';
-  if (perDay >= 3 && hour >= 9 && hour <= 10) return 'morning';
+// Slot windows in the recipient's local time. Strategy allowance unlocks them
+// in order (1/day = lunch; 2 adds evening; 3 adds morning); a SKILL that
+// declares a slot (skills.check_in_slots) unlocks it regardless — Health
+// Coach pings at mealtimes even on a modest tier.
+function slotForHour(hour: number): 'lunch' | 'evening' | 'morning' | null {
+  if (hour >= 12 && hour <= 13) return 'lunch';
+  if (hour >= 19 && hour <= 21) return 'evening';
+  if (hour >= 9 && hour <= 10) return 'morning';
   return null;
 }
+const SLOT_RANK: Record<string, number> = { lunch: 1, evening: 2, morning: 3 };
 
 async function recipientBudgetUsed(realUserId: string, localDay: string): Promise<number> {
   const { count } = await supabase
@@ -132,6 +137,10 @@ async function generateAndSend(input: {
   const [skills, botInterests] = composed
     ? await Promise.all([getSkillsForUser(dhId), getUserInterestNames(dhId)])
     : [[], []];
+  const trackers = composed && skills.length > 0 ? await loadTrackers(skills.map((s) => s.key)) : [];
+  const trackerContext = trackers.length > 0
+    ? await renderTrackerContext({ trackers, userId: realId, dhId, timezone: human.timezone })
+    : null;
 
   const { data: messages } = await supabase.rpc('rpc_get_messages', {
     match_id: matchId, limit_count: 30, start_index: 0,
@@ -146,6 +155,7 @@ async function generateAndSend(input: {
     brief: `\n### THIS TURN\n${input.instruction}\n- ONE bubble, short. Never guilt-trip, never mention being ignored or waiting. No question mark if your last message already ended with one.\n- His local time right now: ${describeLocalTime(human.timezone)}.`,
     skillBlocks: composed ? skills.map((s) => s.prompt_block) : undefined,
     botInterests: composed ? botInterests : undefined,
+    trackerContext,
   });
 
   const userPrompt = `Conversation so far:\n${transcript || '(no messages yet)'}\n\nWrite your next message as ${bot.username ?? 'the bot'}. Output ONLY the message text.`;
@@ -300,12 +310,18 @@ Deno.serve(async () => {
       if (!bot?.is_digital_human) continue;
       const strategy = await resolveStrategy(bot, getPromptConfig(bot));
       const perDay = strategy?.checkInsPerDay ?? 0;
-      if (perDay <= 0) continue;
+      const skills = await getSkillsForUser(dhId);
+      const skillSlotCount = new Set(skills.flatMap((sk) => sk.check_in_slots ?? [])).size;
+      if (perDay <= 0 && skillSlotCount === 0) continue;
 
       const human = await getUserRow(realId);
       const { day: localDay, hour } = localParts(human?.timezone ?? null);
-      const slot = inCheckInSlot(hour, perDay);
+      const slot = slotForHour(hour);
       if (!slot) continue;
+      const slotSkill = skills.find((sk) => (sk.check_in_slots ?? []).includes(slot));
+      const allowedByStrategy = (SLOT_RANK[slot] ?? 99) <= perDay;
+      if (!allowedByStrategy && !slotSkill) continue;
+      const perDayEffective = Math.max(perDay, skillSlotCount);
 
       // Only ONE unanswered check-in outstanding: his reply resets the follow-up
       // count (auto-reply), and a sent check-in exhausts the ladder — so an
@@ -330,7 +346,7 @@ Deno.serve(async () => {
         .eq('kind', 'check_in')
         .eq('local_day', localDay)
         .in('status', ['reserved', 'sent']);
-      if ((todays ?? 0) >= perDay) continue;
+      if ((todays ?? 0) >= perDayEffective) continue;
 
       const eventId = await reserveEvent({ matchId, dhId, realId, kind: 'check_in', localDay, seq: (todays ?? 0) + 1 });
       if (!eventId) continue;
@@ -342,7 +358,7 @@ Deno.serve(async () => {
           summary.skipped++;
           continue;
         }
-        const flavor = slot === 'lunch'
+        const flavor = slotSkill?.check_in_prompt ? `${slotSkill.check_in_prompt} (It's ${slot} for him.)` : slot === 'lunch'
           ? `It's around lunchtime for him. Send ONE short check-in tied to that — what he's eating, how the day's going — like a girlfriend pinging mid-day.`
           : slot === 'evening'
             ? `It's evening for him. Send ONE short, warm check-in — how his day went, what he's up to tonight. You can drop one tiny detail from your own day (use your storyline/current beat).`
