@@ -20,7 +20,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-type InterestRow = { key: string; name: string }
+// active=false → hidden from users but still valid image-curation vocabulary.
+type InterestRow = { key: string; name: string; active: boolean }
 
 type Selected = { file: File; url: string; description: string }
 
@@ -57,9 +58,10 @@ export function UploadDialog({
       try {
         const res = await fetch("/api/admin/interests")
         if (!res.ok) return
-        // GET returns { data: [...] } including hidden rows; show active only.
+        // ALL rows, hidden included — new tags are born hidden and must still
+        // be applicable to uploads (they go user-visible via Categories).
         const rows = ((await res.json()).data ?? []) as Array<InterestRow & { active?: boolean }>
-        setCatalog(rows.filter((i) => i.active !== false).map((i) => ({ key: i.key, name: i.name })))
+        setCatalog(rows.map((i) => ({ key: i.key, name: i.name, active: i.active !== false })))
       } catch {
         /* tags optional */
       }
@@ -224,11 +226,14 @@ export function UploadDialog({
                     key={c.key}
                     type="button"
                     onClick={() => toggleInterest(c.key)}
+                    title={c.active ? c.name : `${c.name} — hidden from users (enable on Categories)`}
                     className={
                       "rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
                       (active
                         ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border bg-background text-muted-foreground hover:border-primary/60")
+                        : c.active
+                          ? "border-border bg-background text-muted-foreground hover:border-primary/60"
+                          : "border-dashed bg-background text-muted-foreground/70 hover:border-primary/60")
                     }
                   >
                     {c.name}

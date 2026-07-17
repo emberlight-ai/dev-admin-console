@@ -23,7 +23,7 @@ async function handleGET(req: NextRequest) {
       supabase.rpc('rpc_get_token_balance'),
       supabase
         .from('gift_catalog')
-        .select('key, name, asset, cost_tokens, sort_order')
+        .select('key, name, asset, cost_tokens, sort_order, image_url')
         .eq('active', true)
         .order('sort_order'),
       supabase
