@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Eye, EyeOff, MessageSquareQuote, Pencil, Plus, Trash2, Wand2, Wrench, X } from "lucide-react"
+import { AlarmClock, Eye, EyeOff, LineChart, MessageSquareQuote, Pencil, Plus, Trash2, Wand2, Wrench, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
@@ -21,6 +21,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
+type Tracker = {
+  key: string
+  title: string
+  value_schema: Record<string, string>
+  cadence: string
+  aggregate: string
+  value_path: string | null
+}
+
 type Skill = {
   key: string
   name: string
@@ -29,13 +38,73 @@ type Skill = {
   opener_prompt: string | null
   sort_order: number
   active: boolean
+  check_in_slots: string[]
+  check_in_prompt: string | null
   tool_ids: string[]
   dh_count: number
+  trackers: Tracker[]
 }
 
 type Tool = { id: string; name: string; description: string; is_core: boolean; enabled: boolean }
 
-const EMPTY_DRAFT = { key: "", name: "", description: "", prompt_block: "", opener_prompt: "" }
+// Dialog-side tracker shape: fields as an ordered list so ops can edit rows.
+type TrackerDraft = {
+  key: string
+  title: string
+  fields: { name: string; desc: string }[]
+  cadence: string
+  aggregate: string
+  value_path: string
+}
+
+const AGGREGATES: { value: string; label: string; hint: string }[] = [
+  { value: "latest", label: "Latest", hint: "she remembers the most recent one" },
+  { value: "latest_per_subject", label: "Per thing", hint: "current state of each named thing (ideas, goals…)" },
+  { value: "sum_today", label: "Daily total", hint: "adds up a number field across today" },
+  { value: "count_7d", label: "Weekly count", hint: "how many were logged in the last 7 days" },
+  { value: "none", label: "Log only", hint: "recorded for analytics, never shown to her" },
+]
+
+const SLOTS: { value: string; label: string }[] = [
+  { value: "morning", label: "Morning 9–10am" },
+  { value: "lunch", label: "Lunch 12–1pm" },
+  { value: "evening", label: "Evening 7–9pm" },
+]
+
+const EMPTY_DRAFT = {
+  key: "",
+  name: "",
+  description: "",
+  prompt_block: "",
+  opener_prompt: "",
+  check_in_slots: [] as string[],
+  check_in_prompt: "",
+  trackers: [] as TrackerDraft[],
+}
+
+function toTrackerDraft(t: Tracker): TrackerDraft {
+  return {
+    key: t.key,
+    title: t.title,
+    fields: Object.entries(t.value_schema).map(([name, desc]) => ({ name, desc })),
+    cadence: t.cadence,
+    aggregate: t.aggregate,
+    value_path: t.value_path ?? "",
+  }
+}
+
+function fromTrackerDraft(t: TrackerDraft) {
+  return {
+    key: t.key,
+    title: t.title,
+    value_schema: Object.fromEntries(
+      t.fields.filter((f) => f.name.trim()).map((f) => [f.name.trim(), f.desc.trim()])
+    ),
+    cadence: t.cadence,
+    aggregate: t.aggregate,
+    value_path: t.aggregate === "sum_today" ? t.value_path : null,
+  }
+}
 
 export default function SkillsPage() {
   const [skills, setSkills] = React.useState<Skill[]>([])
@@ -98,21 +167,25 @@ export default function SkillsPage() {
     setSaving(true)
     try {
       const editing = dialog.editing
+      const payload = {
+        name: draft.name,
+        description: draft.description,
+        prompt_block: draft.prompt_block,
+        opener_prompt: draft.opener_prompt,
+        check_in_slots: draft.check_in_slots,
+        check_in_prompt: draft.check_in_prompt,
+        trackers: draft.trackers.map(fromTrackerDraft),
+      }
       const res = editing
         ? await fetch(`/api/admin/skills/${encodeURIComponent(editing)}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: draft.name,
-              description: draft.description,
-              prompt_block: draft.prompt_block,
-              opener_prompt: draft.opener_prompt,
-            }),
+            body: JSON.stringify(payload),
           })
         : await fetch("/api/admin/skills", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(draft),
+            body: JSON.stringify({ ...payload, key: draft.key }),
           })
       if (!res.ok) throw new Error((await res.json()).error || "Failed to save")
       toast.success(editing ? "Skill updated" : "Skill created")
@@ -251,6 +324,9 @@ export default function SkillsPage() {
                         description: skill.description ?? "",
                         prompt_block: skill.prompt_block,
                         opener_prompt: skill.opener_prompt ?? "",
+                        check_in_slots: skill.check_in_slots ?? [],
+                        check_in_prompt: skill.check_in_prompt ?? "",
+                        trackers: (skill.trackers ?? []).map(toTrackerDraft),
                       })
                       setDialog({ open: true, editing: skill.key })
                     }}>
@@ -292,6 +368,31 @@ export default function SkillsPage() {
                   })
                 )}
               </div>
+
+              {((skill.trackers?.length ?? 0) > 0 || (skill.check_in_slots?.length ?? 0) > 0) && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {(skill.trackers ?? []).map((t) => (
+                    <span
+                      key={t.key}
+                      title={`Fields: ${Object.keys(t.value_schema).join(", ")}`}
+                      className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-400"
+                    >
+                      <LineChart className="h-3 w-3" />
+                      {t.title}
+                      <span className="opacity-60">· {AGGREGATES.find((a) => a.value === t.aggregate)?.label ?? t.aggregate}</span>
+                    </span>
+                  ))}
+                  {(skill.check_in_slots?.length ?? 0) > 0 && (
+                    <span
+                      title={skill.check_in_prompt ?? undefined}
+                      className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-700 dark:text-sky-400"
+                    >
+                      <AlarmClock className="h-3 w-3" />
+                      {skill.check_in_slots.join(" · ")}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -301,7 +402,7 @@ export default function SkillsPage() {
 
       {/* Skill editor */}
       <Dialog open={dialog.open} onOpenChange={(v) => setDialog((s) => ({ ...s, open: v }))}>
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{dialog.editing ? "Edit skill" : "New skill"}</DialogTitle>
             <DialogDescription>
@@ -345,6 +446,177 @@ export default function SkillsPage() {
               <p className="text-[11px] text-muted-foreground/60">
                 If a digital human has several opener skills, the one with the lowest sort order wins.
               </p>
+            </div>
+
+            {/* Datapoints — what this skill keeps track of */}
+            <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+              <div className="flex items-center justify-between">
+                <Label className="flex items-center gap-1.5"><LineChart className="h-3.5 w-3.5" /> Datapoints she keeps track of</Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() =>
+                    setDraft((d) => ({
+                      ...d,
+                      trackers: [
+                        ...d.trackers,
+                        { key: "", title: "", fields: [{ name: "", desc: "" }], cadence: "free", aggregate: "latest", value_path: "" },
+                      ],
+                    }))
+                  }
+                >
+                  <Plus className="mr-1 h-3 w-3" /> Add datapoint
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground/60">
+                A silent recorder watches every exchange and logs anything matching a datapoint —
+                calories from a food photo, a tarot reading she gave, a project idea he mentioned.
+                She then sees the computed summary in her head and never has to do the math.
+              </p>
+              {draft.trackers.length === 0 && (
+                <p className="text-xs text-muted-foreground/60">Nothing tracked — this skill only changes how she talks.</p>
+              )}
+              {draft.trackers.map((t, ti) => {
+                const patchTracker = (patch: Partial<TrackerDraft>) =>
+                  setDraft((d) => ({
+                    ...d,
+                    trackers: d.trackers.map((x, i) => (i === ti ? { ...x, ...patch } : x)),
+                  }))
+                const agg = AGGREGATES.find((a) => a.value === t.aggregate)
+                return (
+                  <div key={ti} className="space-y-2 rounded-md border bg-card p-2.5">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={t.title}
+                        placeholder="Meals"
+                        className="h-8 text-sm"
+                        onChange={(e) => patchTracker({ title: e.target.value })}
+                      />
+                      {t.key && <span className="shrink-0 font-mono text-[10px] text-muted-foreground/60">{t.key}</span>}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        title="Remove datapoint (history is kept)"
+                        onClick={() => setDraft((d) => ({ ...d, trackers: d.trackers.filter((_, i) => i !== ti) }))}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
+                    </div>
+                    <div className="space-y-1.5">
+                      {t.fields.map((f, fi) => (
+                        <div key={fi} className="flex items-center gap-1.5">
+                          <Input
+                            value={f.name}
+                            placeholder="calories"
+                            className="h-7 w-32 shrink-0 font-mono text-xs"
+                            onChange={(e) =>
+                              patchTracker({ fields: t.fields.map((x, i) => (i === fi ? { ...x, name: e.target.value } : x)) })
+                            }
+                          />
+                          <Input
+                            value={f.desc}
+                            placeholder="what the recorder should put here, e.g. rough estimate, integer"
+                            className="h-7 text-xs"
+                            onChange={(e) =>
+                              patchTracker({ fields: t.fields.map((x, i) => (i === fi ? { ...x, desc: e.target.value } : x)) })
+                            }
+                          />
+                          <button
+                            className="text-muted-foreground hover:text-destructive disabled:opacity-30"
+                            disabled={t.fields.length <= 1}
+                            title="Remove field"
+                            onClick={() => patchTracker({ fields: t.fields.filter((_, i) => i !== fi) })}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-1.5 text-[11px] text-muted-foreground"
+                        onClick={() => patchTracker({ fields: [...t.fields, { name: "", desc: "" }] })}
+                      >
+                        <Plus className="mr-1 h-3 w-3" /> Field
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={t.aggregate}
+                        className="h-7 rounded-md border bg-background px-2 text-xs"
+                        onChange={(e) => patchTracker({ aggregate: e.target.value })}
+                      >
+                        {AGGREGATES.map((a) => (
+                          <option key={a.value} value={a.value}>{a.label}</option>
+                        ))}
+                      </select>
+                      {t.aggregate === "sum_today" && (
+                        <select
+                          value={t.value_path}
+                          className="h-7 rounded-md border bg-background px-2 text-xs"
+                          onChange={(e) => patchTracker({ value_path: e.target.value })}
+                        >
+                          <option value="">field to add up…</option>
+                          {t.fields.filter((f) => f.name.trim()).map((f) => (
+                            <option key={f.name} value={f.name.trim()}>{f.name.trim()}</option>
+                          ))}
+                        </select>
+                      )}
+                      {agg && <span className="text-[11px] text-muted-foreground/60">{agg.hint}</span>}
+                    </div>
+                    {t.aggregate === "latest_per_subject" && (
+                      <p className="text-[11px] text-muted-foreground/60">
+                        Tell the recorder which field names the thing — mention it in that field&apos;s
+                        description, e.g. &quot;short idea name (use as subject)&quot;.
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Check-ins — skill-owned proactive slots */}
+            <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+              <Label className="flex items-center gap-1.5"><AlarmClock className="h-3.5 w-3.5" /> Check-ins</Label>
+              <p className="text-[11px] text-muted-foreground/60">
+                Pick the times of day (his local time) this skill should reach out — Health Coach pings
+                at mealtimes. These unlock regardless of the digital human&apos;s effort tier; the chat
+                still has to be warm and idle.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {SLOTS.map((s) => {
+                  const on = draft.check_in_slots.includes(s.value)
+                  return (
+                    <button
+                      key={s.value}
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-xs",
+                        on ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground"
+                      )}
+                      onClick={() =>
+                        setDraft((d) => ({
+                          ...d,
+                          check_in_slots: on
+                            ? d.check_in_slots.filter((x) => x !== s.value)
+                            : [...d.check_in_slots, s.value],
+                        }))
+                      }
+                    >
+                      {s.label}
+                    </button>
+                  )
+                })}
+              </div>
+              {draft.check_in_slots.length > 0 && (
+                <Textarea
+                  value={draft.check_in_prompt}
+                  onChange={(e) => setDraft((d) => ({ ...d, check_in_prompt: e.target.value }))}
+                  placeholder="What she should do at those times, e.g. Ask what he ate this meal and get him to send a photo of it."
+                  className="min-h-16 font-mono text-xs"
+                />
+              )}
             </div>
           </div>
           <DialogFooter>

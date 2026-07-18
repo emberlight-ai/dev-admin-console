@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { isAdminRequest } from '@/lib/admin-auth';
+import { parseCheckIns, parseTrackers } from '@/lib/skill-trackers';
 import { supabaseAdmin } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
@@ -11,8 +12,9 @@ function jsonError(message: string, status = 400) {
 
 /**
  * PATCH /api/admin/skills/[key]
- * { name?, description?, prompt_block?, opener_prompt?, active?, sort_order?, tool_ids? }
- * tool_ids is replace-all on skill_tools (the authorization boundary).
+ * { name?, description?, prompt_block?, opener_prompt?, active?, sort_order?, tool_ids?,
+ *   check_in_slots?, check_in_prompt?, trackers? }
+ * tool_ids and trackers are replace-all (skill_tools / skill_trackers).
  */
 export async function PATCH(
   req: NextRequest,
@@ -38,6 +40,9 @@ export async function PATCH(
   }
   if (typeof b.active === 'boolean') patch.active = b.active;
   if (typeof b.sort_order === 'number') patch.sort_order = b.sort_order;
+  const checkIns = parseCheckIns(b);
+  if ('error' in checkIns) return jsonError(checkIns.error, 400);
+  Object.assign(patch, checkIns.patch);
 
   if (Object.keys(patch).length > 0) {
     patch.updated_at = new Date().toISOString();
@@ -62,6 +67,33 @@ export async function PATCH(
         .insert(toolIds.map((tool_id) => ({ skill_key: key, tool_id })));
       if (insErr) return jsonError(insErr.message, 500);
     }
+  }
+
+  // Replace-all tracker declarations, as upsert-then-prune so a failed write
+  // never leaves the skill trackerless. Past tracker_entries keep their
+  // tracker_key strings, so a removed datapoint stops rendering but its
+  // history survives.
+  if ('trackers' in b) {
+    const trackers = parseTrackers(b.trackers);
+    if ('error' in trackers) return jsonError(trackers.error, 400);
+    if (Object.keys(patch).length === 0) {
+      // Nothing above touched the skills row — confirm the key exists so a
+      // bad key 404s instead of surfacing as an FK violation.
+      const { data: exists } = await supabaseAdmin.from('skills').select('key').eq('key', key).maybeSingle();
+      if (!exists) return jsonError('Skill not found', 404);
+    }
+    if (trackers.rows.length > 0) {
+      const { error: upErr } = await supabaseAdmin
+        .from('skill_trackers')
+        .upsert(trackers.rows.map((t) => ({ ...t, skill_key: key })), { onConflict: 'skill_key,key' });
+      if (upErr) return jsonError(upErr.message, 500);
+    }
+    let prune = supabaseAdmin.from('skill_trackers').delete().eq('skill_key', key);
+    if (trackers.rows.length > 0) {
+      prune = prune.not('key', 'in', `(${trackers.rows.map((t) => `"${t.key}"`).join(',')})`);
+    }
+    const { error: delErr } = await prune;
+    if (delErr) return jsonError(delErr.message, 500);
   }
 
   return NextResponse.json({ ok: true });
