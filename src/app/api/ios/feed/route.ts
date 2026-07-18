@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { withLogging } from '@/lib/with-logging';
 import { supabaseAdmin } from '@/lib/supabase';
-import { syntheticLikes } from '@/lib/synthetic-likes';
+import { hash01, syntheticLikes } from '@/lib/synthetic-likes';
 
 const getUserSupabase = (req: NextRequest) => {
   const authHeader = req.headers.get('Authorization');
@@ -15,7 +15,7 @@ const getUserSupabase = (req: NextRequest) => {
 };
 
 /**
- * GET /api/ios/feed?category=<key>&cursor=<created_at>&limit=10
+ * GET /api/ios/feed?category=<key>&seed=<any>&cursor=<created_at|offset>&limit=10
  *
  * Category post feed: posts from digital humans tagged with any interest
  * under the given Explore category (same expansion getMatchings uses),
@@ -38,6 +38,7 @@ async function handleGET(req: NextRequest) {
     // `+` in `+00:00` (Swift URLComponents leaves it literal) arrive here with
     // it decoded as a space — restore it, a space can't occur in a valid cursor.
     const cursor = searchParams.get('cursor')?.replace(/ /g, '+') || null;
+    const seed = (searchParams.get('seed') || '').trim();
     const category = (searchParams.get('category') || '').trim().toLowerCase();
 
     const userClient = getUserSupabase(req);
@@ -84,20 +85,77 @@ async function handleGET(req: NextRequest) {
       return NextResponse.json({ posts: [], nextCursor: null, hasMore: false });
     }
 
-    // 2. Their posts, newest first, keyset on created_at.
-    let postsQ = supabaseAdmin
-      .from('user_posts')
-      .select('id, userid, description, photos, location_name, occurred_at, created_at')
-      .in('userid', authorIds.slice(0, 500))
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
-      .limit(limit + 1);
-    if (cursor) postsQ = postsQ.lt('created_at', cursor);
-    const { data: postRows, error: postsErr } = await postsQ;
-    if (postsErr) return NextResponse.json({ error: postsErr.message }, { status: 400 });
+    // 2. The page of posts.
+    //    With a `seed` (current clients): a deterministic shuffle — every post
+    //    id hashed with the seed, sorted by hash, then de-runed so the same
+    //    author never appears twice in a row while another author remains.
+    //    The client mints a fresh seed per feed-open, so each visit is a new
+    //    mix, while pagination inside one visit stays stable (cursor = offset
+    //    into the shuffled order).
+    //    Without a seed (older builds): newest-first keyset on created_at.
+    const POST_COLS = 'id, userid, description, photos, location_name, occurred_at, created_at';
+    type PostRow = {
+      id: string; userid: string; description: string | null; photos: unknown;
+      location_name: string | null; occurred_at: string | null; created_at: string;
+    };
+    let page: PostRow[] = [];
+    let hasMore = false;
+    let nextCursor: string | null = null;
 
-    const page = (postRows ?? []).slice(0, limit);
-    const hasMore = (postRows ?? []).length > limit;
+    if (seed) {
+      const { data: idRows, error: idsErr } = await supabaseAdmin
+        .from('user_posts')
+        .select('id, userid')
+        .in('userid', authorIds.slice(0, 500))
+        .is('deleted_at', null)
+        .limit(5000);
+      if (idsErr) return NextResponse.json({ error: idsErr.message }, { status: 400 });
+
+      const order = (idRows ?? [])
+        .map((r) => {
+          const id = r.id as string;
+          return { id, userid: r.userid as string, h: hash01(seed + id) };
+        })
+        .sort((a, b) => a.h - b.h || a.id.localeCompare(b.id));
+      for (let i = 1; i < order.length; i++) {
+        if (order[i].userid !== order[i - 1].userid) continue;
+        let j = i + 1;
+        while (j < order.length && order[j].userid === order[i - 1].userid) j++;
+        if (j >= order.length) break; // only this author remains — runs are unavoidable
+        const [moved] = order.splice(j, 1);
+        order.splice(i, 0, moved);
+      }
+
+      const offset = cursor ? Math.max(parseInt(cursor, 10) || 0, 0) : 0;
+      const pageIds = order.slice(offset, offset + limit).map((r) => r.id);
+      hasMore = offset + limit < order.length;
+      nextCursor = hasMore ? String(offset + limit) : null;
+
+      if (pageIds.length > 0) {
+        const { data: rows, error: rowsErr } = await supabaseAdmin
+          .from('user_posts')
+          .select(POST_COLS)
+          .in('id', pageIds);
+        if (rowsErr) return NextResponse.json({ error: rowsErr.message }, { status: 400 });
+        const byId = new Map((rows ?? []).map((r) => [r.id as string, r as PostRow]));
+        page = pageIds.map((id) => byId.get(id)).filter((p): p is PostRow => Boolean(p));
+      }
+    } else {
+      let postsQ = supabaseAdmin
+        .from('user_posts')
+        .select(POST_COLS)
+        .in('userid', authorIds.slice(0, 500))
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(limit + 1);
+      if (cursor) postsQ = postsQ.lt('created_at', cursor);
+      const { data: postRows, error: postsErr } = await postsQ;
+      if (postsErr) return NextResponse.json({ error: postsErr.message }, { status: 400 });
+
+      page = ((postRows ?? []) as PostRow[]).slice(0, limit);
+      hasMore = (postRows ?? []).length > limit;
+      nextCursor = hasMore && page.length > 0 ? page[page.length - 1].created_at : null;
+    }
     const postIds = page.map((p) => p.id as string);
     const pageAuthorIds = [...new Set(page.map((p) => p.userid as string))];
 
@@ -151,11 +209,7 @@ async function handleGET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({
-      posts,
-      nextCursor: hasMore && page.length > 0 ? page[page.length - 1].created_at : null,
-      hasMore,
-    });
+    return NextResponse.json({ posts, nextCursor, hasMore });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal Server Error';
     return NextResponse.json(
