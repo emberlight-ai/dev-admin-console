@@ -34,7 +34,10 @@ async function handleGET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '10', 10) || 10, 1), 30);
-    const cursor = searchParams.get('cursor');
+    // The cursor is an ISO timestamptz. Clients that don't percent-encode the
+    // `+` in `+00:00` (Swift URLComponents leaves it literal) arrive here with
+    // it decoded as a space — restore it, a space can't occur in a valid cursor.
+    const cursor = searchParams.get('cursor')?.replace(/ /g, '+') || null;
     const category = (searchParams.get('category') || '').trim().toLowerCase();
 
     const userClient = getUserSupabase(req);
