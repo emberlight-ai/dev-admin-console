@@ -44,6 +44,11 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
 
   // Tag catalog (interests) for the side pane + key→name lookup on the chips.
   const [catalog, setCatalog] = React.useState<TagRow[]>([])
+
+  // Inline description editing: click the text to edit, click elsewhere
+  // (blur) to save, Escape to cancel. One image at a time.
+  const [editingDesc, setEditingDesc] = React.useState<{ id: string; value: string } | null>(null)
+  const descCancelledRef = React.useRef(false)
   // Which tag key is currently being dragged from the pane (null = no drag),
   // and which image card it's hovering — drives the drop-target highlight.
   const [draggingTag, setDraggingTag] = React.useState<string | null>(null)
@@ -181,6 +186,36 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
         setImages((prev) => prev.map((im) => (im.id === id ? { ...im, interests: prevInterests } : im)))
       }
       toast.error(err instanceof Error ? err.message : "Failed to save tags")
+    }
+  }
+
+  /** Persist an edited description (blur-to-save). Optimistic with revert. */
+  const saveDescription = async (id: string, raw: string) => {
+    setEditingDesc(null)
+    const img = imagesRef.current.find((im) => im.id === id)
+    if (!img) return
+    const next = raw.trim()
+    if ((img.description ?? "") === next) return // unchanged — no request
+
+    const prev = img.description
+    const apply = (value: string | null) => {
+      imagesRef.current = imagesRef.current.map((im) => (im.id === id ? { ...im, description: value } : im))
+      setImages((p) => p.map((im) => (im.id === id ? { ...im, description: value } : im)))
+    }
+    apply(next || null)
+    try {
+      const res = await fetch(`/api/admin/shared-images/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: next }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error || "Failed to save description")
+      apply((json.data?.description ?? (next || null)) as string | null)
+      toast.success("Description saved")
+    } catch (err) {
+      apply(prev)
+      toast.error(err instanceof Error ? err.message : "Failed to save description")
     }
   }
 
@@ -342,9 +377,41 @@ export default function SharedImagesTierPage({ params }: { params: Promise<{ tie
                       </button>
                     </div>
                     <div className="space-y-1.5 p-3">
-                      <p className="line-clamp-2 text-xs text-foreground">
-                        {im.description || <span className="text-muted-foreground">No description</span>}
-                      </p>
+                      {editingDesc?.id === im.id ? (
+                        <textarea
+                          autoFocus
+                          value={editingDesc.value}
+                          rows={3}
+                          placeholder="Describe this photo…"
+                          className="w-full resize-none rounded-md border bg-background p-1.5 text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          onChange={(e) => setEditingDesc({ id: im.id, value: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              descCancelledRef.current = true
+                              ;(e.target as HTMLTextAreaElement).blur()
+                            } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                              ;(e.target as HTMLTextAreaElement).blur()
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const cancelled = descCancelledRef.current
+                            descCancelledRef.current = false
+                            if (cancelled) {
+                              setEditingDesc(null)
+                              return
+                            }
+                            void saveDescription(im.id, e.target.value)
+                          }}
+                        />
+                      ) : (
+                        <p
+                          className="line-clamp-2 cursor-text rounded text-xs text-foreground hover:bg-muted/70"
+                          title="Click to edit — click elsewhere to save"
+                          onClick={() => setEditingDesc({ id: im.id, value: im.description ?? "" })}
+                        >
+                          {im.description || <span className="text-muted-foreground">Add a description…</span>}
+                        </p>
+                      )}
                       {im.interests.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
                           {im.interests.map((k) => {

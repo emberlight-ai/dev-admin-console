@@ -49,6 +49,7 @@ async function handleGET(req: NextRequest) {
     // 1. Eligible authors: visible DHs (not deleted, not dormant), optionally
     //    narrowed to the category's tagged members.
     let taggedIds: string[] | null = null;
+    const categoryKeys: string[] = [];
     if (category) {
       const { data: interestRows } = await supabaseAdmin
         .from('interests')
@@ -56,6 +57,7 @@ async function handleGET(req: NextRequest) {
         .eq('category_key', category);
       const keys = new Set<string>([category]);
       for (const r of interestRows ?? []) keys.add((r as { key: string }).key);
+      categoryKeys.push(...keys);
 
       const { data: tagRows } = await supabaseAdmin
         .from('user_interests')
@@ -102,6 +104,14 @@ async function handleGET(req: NextRequest) {
     let hasMore = false;
     let nextCursor: string | null = null;
 
+    // Synthetic posts from the shared image library (API-level blend, no DB
+    // rows): active CASUAL-tier images — tease/reward are DM escalation
+    // tiers and must never surface on a public feed — matched to the
+    // category by tag overlap, each "authored" by an eligible DH that
+    // shares at least one of the image's tags. Only the seeded path blends
+    // them (the legacy keyset path can't paginate two sources).
+    const syntheticById = new Map<string, PostRow>();
+
     if (seed) {
       const { data: idRows, error: idsErr } = await supabaseAdmin
         .from('user_posts')
@@ -111,12 +121,74 @@ async function handleGET(req: NextRequest) {
         .limit(5000);
       if (idsErr) return NextResponse.json({ error: idsErr.message }, { status: 400 });
 
-      const order = (idRows ?? [])
-        .map((r) => {
+      type SharedImg = {
+        id: string; public_url: string; description: string | null;
+        post_content: string | null; interests: string[] | null;
+        location_name: string | null; created_at: string;
+      };
+      let sharedQ = supabaseAdmin
+        .from('shared_chat_images')
+        .select('id, public_url, description, post_content, interests, location_name, created_at')
+        .eq('active', true)
+        .eq('tier', 'casual')
+        .limit(1000);
+      if (category) sharedQ = sharedQ.overlaps('interests', categoryKeys);
+      // Blending is best-effort: a failure here degrades to the plain feed.
+      const { data: sharedRows } = await sharedQ;
+
+      if ((sharedRows ?? []).length > 0) {
+        const { data: authorTagRows } = await supabaseAdmin
+          .from('user_interests')
+          .select('user_id, interest_key')
+          .in('user_id', authorIds.slice(0, 500));
+        const tagsByAuthor = new Map<string, Set<string>>();
+        for (const r of authorTagRows ?? []) {
+          const row = r as { user_id: string; interest_key: string };
+          if (!tagsByAuthor.has(row.user_id)) tagsByAuthor.set(row.user_id, new Set());
+          tagsByAuthor.get(row.user_id)!.add(row.interest_key);
+        }
+
+        for (const img of (sharedRows ?? []) as SharedImg[]) {
+          const imgTags = img.interests ?? [];
+          if (imgTags.length === 0) continue; // untagged — no honest author match
+          const candidates = authorIds.filter((a) => {
+            const t = tagsByAuthor.get(a);
+            return t != null && imgTags.some((k) => t.has(k));
+          });
+          if (candidates.length === 0) continue;
+
+          // Author pick is SEED-INDEPENDENT (image id ⊕ author id): the same
+          // photo must keep the same "author" across visits — an identity
+          // that changes between feed opens reads as fake.
+          let author = candidates[0];
+          let best = 2;
+          for (const c of candidates) {
+            const h = hash01(img.id + c);
+            if (h < best) { best = h; author = c; }
+          }
+
+          const sid = `shared_${img.id}`;
+          syntheticById.set(sid, {
+            id: sid,
+            userid: author,
+            description: (img.post_content ?? '').trim() || img.description,
+            photos: [img.public_url],
+            location_name: img.location_name,
+            occurred_at: null,
+            created_at: img.created_at,
+          });
+        }
+      }
+
+      const order = [
+        ...(idRows ?? []).map((r) => {
           const id = r.id as string;
           return { id, userid: r.userid as string, h: hash01(seed + id) };
-        })
-        .sort((a, b) => a.h - b.h || a.id.localeCompare(b.id));
+        }),
+        ...[...syntheticById.values()].map((p) => ({
+          id: p.id, userid: p.userid, h: hash01(seed + p.id),
+        })),
+      ].sort((a, b) => a.h - b.h || a.id.localeCompare(b.id));
       for (let i = 1; i < order.length; i++) {
         if (order[i].userid !== order[i - 1].userid) continue;
         let j = i + 1;
@@ -132,13 +204,21 @@ async function handleGET(req: NextRequest) {
       nextCursor = hasMore ? String(offset + limit) : null;
 
       if (pageIds.length > 0) {
-        const { data: rows, error: rowsErr } = await supabaseAdmin
-          .from('user_posts')
-          .select(POST_COLS)
-          .in('id', pageIds);
-        if (rowsErr) return NextResponse.json({ error: rowsErr.message }, { status: 400 });
-        const byId = new Map((rows ?? []).map((r) => [r.id as string, r as PostRow]));
-        page = pageIds.map((id) => byId.get(id)).filter((p): p is PostRow => Boolean(p));
+        // Synthetic ids aren't user_posts uuids — resolve them locally and
+        // only query the DB for the real ones.
+        const realIds = pageIds.filter((id) => !syntheticById.has(id));
+        const byId = new Map<string, PostRow>();
+        if (realIds.length > 0) {
+          const { data: rows, error: rowsErr } = await supabaseAdmin
+            .from('user_posts')
+            .select(POST_COLS)
+            .in('id', realIds);
+          if (rowsErr) return NextResponse.json({ error: rowsErr.message }, { status: 400 });
+          for (const r of rows ?? []) byId.set(r.id as string, r as PostRow);
+        }
+        page = pageIds
+          .map((id) => syntheticById.get(id) ?? byId.get(id))
+          .filter((p): p is PostRow => Boolean(p));
       }
     } else {
       let postsQ = supabaseAdmin
@@ -171,13 +251,16 @@ async function handleGET(req: NextRequest) {
       }
     }
 
-    // 4. Real likes + the caller's own.
+    // 4. Real likes + the caller's own. Synthetic posts have no post_likes
+    //    rows (their like taps are acked but not persisted) — and their ids
+    //    aren't uuids, so they must stay out of the .in() filters.
     const realCounts: Record<string, number> = {};
     const likedByMe = new Set<string>();
-    if (postIds.length > 0) {
+    const likablePostIds = postIds.filter((id) => !id.startsWith('shared_'));
+    if (likablePostIds.length > 0) {
       const [{ data: likeRows }, { data: mine }] = await Promise.all([
-        supabaseAdmin.from('post_likes').select('post_id').in('post_id', postIds),
-        supabaseAdmin.from('post_likes').select('post_id').in('post_id', postIds).eq('user_id', me),
+        supabaseAdmin.from('post_likes').select('post_id').in('post_id', likablePostIds),
+        supabaseAdmin.from('post_likes').select('post_id').in('post_id', likablePostIds).eq('user_id', me),
       ]);
       for (const r of likeRows ?? []) {
         const id = (r as { post_id: string }).post_id;

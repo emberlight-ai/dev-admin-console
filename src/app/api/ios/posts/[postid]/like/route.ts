@@ -26,6 +26,11 @@ async function handlePOST(
     const userId = auth?.user?.id;
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    // Synthetic feed items (shared-library images blended by /api/ios/feed,
+    // ids `shared_<uuid>`) have no user_posts row — ack without persisting so
+    // the client's optimistic heart doesn't error. Resets on next feed load.
+    if (postid.startsWith('shared_')) return NextResponse.json({ ok: true, liked: true });
+
     const { error } = await supabase
       .from('post_likes')
       .upsert({ post_id: postid, user_id: userId }, { onConflict: 'post_id,user_id' });
@@ -51,6 +56,9 @@ async function handleDELETE(
     const { data: auth } = await supabase.auth.getUser();
     const userId = auth?.user?.id;
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    // Synthetic feed items: nothing persisted to remove — see handlePOST.
+    if (postid.startsWith('shared_')) return NextResponse.json({ ok: true, liked: false });
 
     const { error } = await supabase
       .from('post_likes')
