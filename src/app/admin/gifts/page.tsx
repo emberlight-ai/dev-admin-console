@@ -343,7 +343,7 @@ function GiftDialog({
 
   const [name, setName] = React.useState(editing?.name ?? "")
   const [cost, setCost] = React.useState(editing ? String(editing.cost_tokens) : "")
-  const [asset, setAsset] = React.useState(editing?.asset ?? "gift-single-rose")
+  const [asset, setAsset] = React.useState(editing?.asset ?? "gift-roses")
   const [file, setFile] = React.useState<File | null>(null)
   const [removeImage, setRemoveImage] = React.useState(false)
   const [saving, setSaving] = React.useState(false)

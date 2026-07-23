@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 /**
  * POST /api/admin/gifts — create a gift. multipart/form-data:
  *   name (required), cost_tokens (required, int > 0), key? (slug; derived from
- *   name if omitted), asset? (bundled fallback art, default gift-single-rose),
+ *   name if omitted), asset? (bundled fallback art, default gift-roses),
  *   active? ("true"/"false"), image? (jpeg/png/webp ≤ 8MB)
  */
 export async function POST(req: NextRequest) {
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
   const assetRaw = String(form.get('asset') ?? '').trim();
   const asset = (BUNDLED_GIFT_ASSETS as readonly string[]).includes(assetRaw)
     ? assetRaw
-    : 'gift-single-rose';
+    : 'gift-roses';
 
   let imageUrl: string | null = null;
   const image = form.get('image');

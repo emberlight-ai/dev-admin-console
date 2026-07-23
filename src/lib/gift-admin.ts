@@ -13,14 +13,18 @@ const ACCEPTED = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_BYTES = 8 * 1024 * 1024;
 
 /** Bundled iOS imagesets a gift can fall back to on builds that predate its
- *  uploaded art (must exist in the app bundle — see Amber asset catalog). */
+ *  uploaded art (must exist in the app bundle — see Amber asset catalog).
+ *  2026-07-22 asset refresh: each of these also has a matching bundled .usdc
+ *  3D model (Resources/gifts) keyed by the same base name. */
 export const BUNDLED_GIFT_ASSETS = [
-  'gift-lolipop',
-  'gift-macarons',
-  'gift-single-rose',
-  'gift-teddybear',
+  'gift-balloon',
+  'gift-juice',
+  'gift-lattie',
+  'gift-cake',
+  'gift-lipstick',
+  'gift-bear',
   'gift-roses',
-  'gift-ring',
+  'gift-ring-box',
 ] as const;
 
 export const GIFT_COLUMNS = 'key, name, asset, cost_tokens, sort_order, active, image_url, created_at';
