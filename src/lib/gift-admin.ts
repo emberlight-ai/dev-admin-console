@@ -17,6 +17,7 @@ const MAX_BYTES = 8 * 1024 * 1024;
  *  2026-07-22 asset refresh: each of these also has a matching bundled .usdc
  *  3D model (Resources/gifts) keyed by the same base name. */
 export const BUNDLED_GIFT_ASSETS = [
+  'gift-lolipop', // 2D imageset spelling; the .usdc model is gift-lollipop
   'gift-balloon',
   'gift-juice',
   'gift-lattie',
