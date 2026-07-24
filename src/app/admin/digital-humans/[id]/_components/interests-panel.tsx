@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ShieldCheck } from "lucide-react"
+import { Leaf, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { Card } from "@/components/ui/card"
@@ -10,9 +10,11 @@ import { Button } from "@/components/ui/button"
 type InterestRow = { key: string; name: string; sort_order: number; admin_only?: boolean }
 
 /**
- * Explore-category assignment for a digital human: toggle chips backed by
+ * Tag assignment for a digital human: toggle chips backed by
  * /api/admin/digital-humans/[id]/interests (many-to-many, replace-all save).
- * Categories drive which Explore pages this DH appears on in the iOS app.
+ * Regular tags drive which Explore pages this DH appears on in the iOS app;
+ * internal tags drive matching controls (Whitelist = home swipe deck,
+ * Green Mode = served while Green Mode is enabled on /admin/categories).
  */
 export function InterestsPanel({ userid }: { userid: string }) {
   const [catalog, setCatalog] = React.useState<InterestRow[]>([])
@@ -82,11 +84,13 @@ export function InterestsPanel({ userid }: { userid: string }) {
     <Card className="p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-sm font-semibold">Explore Interests</div>
+          <div className="text-sm font-semibold">Tags</div>
           <div className="text-xs text-muted-foreground">
-            Categories this digital human appears under on the Explore page. Chips
-            with <ShieldCheck className="inline h-3 w-3 -translate-y-px" /> are
-            internal-only (Whitelist adds them to the home swipe deck).
+            Tags on this digital human. Regular tags set which Explore pages they
+            appear on. Chips with <ShieldCheck className="inline h-3 w-3 -translate-y-px" /> are
+            internal-only (Whitelist adds them to the home swipe deck);{" "}
+            <Leaf className="inline h-3 w-3 -translate-y-px text-emerald-600" /> Green
+            Mode keeps them visible while Green Mode is enabled.
           </div>
         </div>
         <Button size="sm" onClick={() => void save()} disabled={!dirty || saving || loading}>
@@ -100,6 +104,7 @@ export function InterestsPanel({ userid }: { userid: string }) {
         <div className="flex flex-wrap gap-2">
           {catalog.map((interest) => {
             const active = selected.has(interest.key)
+            const isGreenMode = interest.key === "green_mode"
             return (
               <button
                 key={interest.key}
@@ -107,14 +112,18 @@ export function InterestsPanel({ userid }: { userid: string }) {
                 onClick={() => toggle(interest.key)}
                 className={
                   "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
-                  (active
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : interest.admin_only
-                      ? "border-amber-400/60 bg-amber-500/10 text-amber-700 hover:border-amber-500"
-                      : "border-border bg-background text-muted-foreground hover:border-primary/60")
+                  (isGreenMode
+                    ? active
+                      ? "border-emerald-500 bg-emerald-500 text-white"
+                      : "border-emerald-400/60 bg-emerald-500/10 text-emerald-700 hover:border-emerald-500"
+                    : active
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : interest.admin_only
+                        ? "border-amber-400/60 bg-amber-500/10 text-amber-700 hover:border-amber-500"
+                        : "border-border bg-background text-muted-foreground hover:border-primary/60")
                 }
               >
-                {interest.admin_only && <ShieldCheck className="h-3 w-3" />}
+                {isGreenMode ? <Leaf className="h-3 w-3" /> : interest.admin_only && <ShieldCheck className="h-3 w-3" />}
                 {interest.name}
               </button>
             )

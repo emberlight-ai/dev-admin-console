@@ -11,8 +11,6 @@ import { Slider } from "@/components/ui/slider"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
-import { GreenModeSection } from "./green-mode-section"
-
 // ── Config model ──────────────────────────────────────────────────────────────
 const DEFAULT_CONFIG = {
   enable_nearby_invites: "true",
@@ -369,9 +367,10 @@ export default function DigitalHumanConfigPage() {
               </div>
             </TabsContent>
 
-            {/* Matching — green mode, accept rate, deck ratio, active hours */}
+            {/* Matching — accept rate, deck ratio, active hours. (Green Mode
+                moved to /admin/categories: an internal category with an
+                Enabled switch on its card.) */}
             <TabsContent value="matching" className={TAB_CONTENT}>
-              <GreenModeSection />
               <div className="grid gap-4 sm:grid-cols-2">
                 <SliderField label="Accept rate (%)" value={config.accept_rate_percentage} onChange={(v) => set("accept_rate_percentage", v)} description={CONFIG_DESCRIPTIONS.accept_rate_percentage} />
                 <SliderField label="Whitelisted DH deck ratio (%)" value={config.whitelisted_deck_ratio} onChange={(v) => set("whitelisted_deck_ratio", v)} description={CONFIG_DESCRIPTIONS.whitelisted_deck_ratio} />

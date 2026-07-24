@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Eye, EyeOff, FolderPlus, GripVertical, Pencil, Plus, ShieldCheck, Trash2, Users } from "lucide-react"
+import { Eye, EyeOff, FolderPlus, GripVertical, Leaf, Pencil, Plus, ShieldCheck, Trash2, Users } from "lucide-react"
 import { toast } from "sonner"
 
 import { AssignDigitalHumansDialog } from "./_components/assign-dhs-dialog"
@@ -43,12 +43,15 @@ const UNSPECIFIED = "unspecified"
 
 // Internal-control categories: not ordinary Explore tiles. Ops manage them by
 // tagging DHs; they can't be hidden or deleted (Whitelist backs the home deck
-// via users.whitelisted; Featured is the curated Explore spotlight).
+// via users.whitelisted; Featured is the curated Explore spotlight; Green Mode
+// gates every matching surface behind its tag while enabled).
 const INTERNAL_DESCRIPTIONS: Record<string, string> = {
   whitelist:
     "Tag a digital human here to add them to the home swipe deck (the main Find-a-Mate cards). Internal control — not shown as an Explore tile.",
   featured:
     "The curated spotlight tile on the iOS Explore page. Tag digital humans here to feature them. Internal control — users can't self-select it.",
+  green_mode:
+    "Tag digital humans here to build the Green Mode pool. While enabled, every matching surface (swipe deck, Explore, invitations, boosts) only serves tagged DHs. Internal control — not shown as an Explore tile.",
 }
 const INTERNAL = new Set(Object.keys(INTERNAL_DESCRIPTIONS))
 
@@ -73,13 +76,17 @@ export default function InterestsAdminPage() {
   const [saving, setSaving] = React.useState(false)
   // Which interest's "assign digital humans" popup is open.
   const [assignTarget, setAssignTarget] = React.useState<{ key: string; name: string } | null>(null)
+  // Green Mode switch (digital_human_config.green_mode_enabled). null = not loaded.
+  const [greenModeEnabled, setGreenModeEnabled] = React.useState<boolean | null>(null)
+  const [greenModeSaving, setGreenModeSaving] = React.useState(false)
 
   const load = React.useCallback(async () => {
     setLoading(true)
     try {
-      const [catRes, intRes] = await Promise.all([
+      const [catRes, intRes, gmRes] = await Promise.all([
         fetch("/api/admin/interest-categories"),
         fetch("/api/admin/interests"),
+        fetch("/api/admin/matching/green-mode"),
       ])
       const catJson = await catRes.json()
       const intJson = await intRes.json()
@@ -87,6 +94,9 @@ export default function InterestsAdminPage() {
       if (!intRes.ok) throw new Error(intJson.error || "Failed to load interests")
       setCategories(catJson.data ?? [])
       setInterests(intJson.data ?? [])
+      // The switch is auxiliary — a failure disables the toggle, not the board.
+      const gmJson = gmRes.ok ? await gmRes.json() : null
+      setGreenModeEnabled(typeof gmJson?.data?.enabled === "boolean" ? gmJson.data.enabled : null)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load")
     } finally {
@@ -270,6 +280,33 @@ export default function InterestsAdminPage() {
     }
   }
 
+  // ── Green Mode switch ──────────────────────────────────────────────────────
+
+  const greenPoolCount = React.useMemo(
+    () => interests.find((i) => i.key === "green_mode")?.member_count ?? 0,
+    [interests]
+  )
+
+  const toggleGreenMode = async () => {
+    if (greenModeEnabled == null || greenModeSaving) return
+    const next = !greenModeEnabled
+    setGreenModeSaving(true)
+    try {
+      const res = await fetch("/api/admin/matching/green-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to save Green Mode")
+      setGreenModeEnabled(next)
+      toast.success(next ? "Green Mode enabled — only tagged DHs are served" : "Green Mode disabled — normal matching")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save Green Mode")
+    } finally {
+      setGreenModeSaving(false)
+    }
+  }
+
   // ── Category actions ───────────────────────────────────────────────────────
 
   const saveCategory = async () => {
@@ -431,6 +468,7 @@ export default function InterestsAdminPage() {
               colDrop === realCategories.length &&
               columnIndex === realCategories.length - 1
             const isInternal = INTERNAL.has(c.key)
+            const isGreenMode = c.key === "green_mode"
             const internalDescription = INTERNAL_DESCRIPTIONS[c.key]
             return (
               <div key={c.key} className="relative">
@@ -439,7 +477,8 @@ export default function InterestsAdminPage() {
                 <div
                   className={cn(
                     "rounded-xl border bg-muted/40",
-                    isInternal && "border-amber-400/40 bg-amber-500/5",
+                    isInternal && !isGreenMode && "border-amber-400/40 bg-amber-500/5",
+                    isGreenMode && "border-emerald-400/40 bg-emerald-500/5",
                     !c.active && !isInternal && "opacity-60",
                     isCardTarget && "ring-1 ring-ring",
                     drag?.kind === "column" && drag.key === c.key && "opacity-40"
@@ -470,9 +509,33 @@ export default function InterestsAdminPage() {
                   >
                     <div className="flex min-w-0 items-center gap-1.5">
                       {!isUnspec && !isInternal && <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />}
-                      {isInternal && <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-amber-600" />}
+                      {isInternal && (isGreenMode
+                        ? <Leaf className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                        : <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-amber-600" />)}
                       <span className="truncate text-sm font-semibold">{c.name}</span>
-                      {isInternal ? (
+                      {isGreenMode ? (
+                        // The Green Mode switch: while on, every matching surface
+                        // only serves DHs tagged in this column.
+                        <button
+                          type="button"
+                          onClick={() => void toggleGreenMode()}
+                          disabled={greenModeEnabled == null || greenModeSaving}
+                          title={
+                            greenModeEnabled
+                              ? "Green Mode is on — only tagged DHs are served. Click to disable."
+                              : "Green Mode is off — normal matching. Click to enable."
+                          }
+                          className={cn(
+                            "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-colors",
+                            greenModeEnabled
+                              ? "bg-emerald-500 text-white hover:bg-emerald-600"
+                              : "bg-muted text-muted-foreground hover:bg-emerald-500/15 hover:text-emerald-600",
+                            (greenModeEnabled == null || greenModeSaving) && "opacity-50"
+                          )}
+                        >
+                          {greenModeEnabled == null ? "…" : greenModeEnabled ? "Enabled" : "Off"}
+                        </button>
+                      ) : isInternal ? (
                         <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600">Internal</span>
                       ) : (
                         <>
@@ -507,6 +570,12 @@ export default function InterestsAdminPage() {
                     <p className="px-3 pb-2 text-xs leading-snug text-muted-foreground">{internalDescription}</p>
                   )}
 
+                  {isGreenMode && greenModeEnabled === true && greenPoolCount === 0 && (
+                    <p className="mx-3 mb-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                      Green Mode is enabled but no digital humans are tagged — every matching deck is empty.
+                    </p>
+                  )}
+
                   <div className="flex min-h-12 flex-col gap-1.5 p-2 pt-0">
                     {cards.map((i, cardIndex) => (
                       <React.Fragment key={i.key}>
@@ -529,6 +598,7 @@ export default function InterestsAdminPage() {
                           <div className="flex items-center justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5">
+                                {i.key === "green_mode" && <Leaf className="h-3 w-3 shrink-0 text-emerald-600" />}
                                 <span className="truncate text-sm font-medium">{i.name}</span>
                                 {i.admin_only && <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600">Admin</span>}
                                 {!i.active && <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Hidden</span>}

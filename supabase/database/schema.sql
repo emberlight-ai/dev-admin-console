@@ -735,7 +735,7 @@ values
   ('nearby_opener_styles', '["keep it to 2-6 words","react to noticing they''re nearby","ask one tiny question","match the time of day","playful and casual","warm and low-key"]', 'Opener style hints for nearby invitation greetings'),
   -- Match deck composition
   ('whitelisted_deck_ratio', '90', 'Percent of the swipe deck filled with whitelisted DHs (0-100); rest are random DHs'),
-  ('green_mode_personalities', '[]', 'When non-empty, matching feed candidates are limited to these personalities.'),
+  ('green_mode_enabled', 'false', 'When true, matching surfaces (deck, invitations, boosts) only serve digital humans tagged Green Mode.'),
   ('min_user_age_minutes_for_invites', '10', 'Minimum user account age before receiving digital human invites'),
   ('enable_digital_human_selfies', 'true', 'Allow DHs to send preserved selfies when intimacy is high enough'),
   ('selfie_intimacy_threshold', '55', 'Min intimacy score (0-100) before a DH may send a selfie'),

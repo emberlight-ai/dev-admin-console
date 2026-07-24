@@ -68,8 +68,9 @@ export async function DELETE(
   if (!isAdminRequest(req)) return jsonError('Unauthorized', 401);
   const { key } = await params;
 
-  // Internal-control interests must survive (Whitelist backs the home deck).
-  if (key === 'featured' || key === 'whitelist') {
+  // Internal-control interests must survive (Whitelist backs the home deck,
+  // Green Mode backs the green-mode filter).
+  if (key === 'featured' || key === 'whitelist' || key === 'green_mode') {
     return jsonError('This is an internal interest and cannot be deleted', 400);
   }
 

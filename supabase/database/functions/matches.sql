@@ -140,17 +140,15 @@ returns table (
 language sql
 security invoker
 as $$
-  with green_mode_personalities as (
-    select lower(btrim(green_value.personality)) as personality
-    from public.digital_human_config cfg
-    cross join lateral jsonb_array_elements_text(
-      case
-        when jsonb_typeof(cfg.value::jsonb) = 'array' then cfg.value::jsonb
-        else '[]'::jsonb
-      end
-    ) as green_value(personality)
-    where cfg.key = 'green_mode_personalities'
-      and nullif(btrim(green_value.personality), '') is not null
+  -- Green mode: a config switch + the user_interests('green_mode') tag. When
+  -- enabled, inbound DH invitations from untagged DHs are hidden (not deleted).
+  with green_mode as (
+    select coalesce((
+      select lower(btrim(cfg.value)) = 'true'
+      from public.digital_human_config cfg
+      where cfg.key = 'green_mode_enabled'
+      limit 1
+    ), false) as enabled
   )
   select
     mr.id as request_id,
@@ -181,9 +179,10 @@ as $$
   and (
     direction <> 'inbound'
     or not coalesce(u.is_digital_human, false)
-    or not exists (select 1 from green_mode_personalities)
-    or lower(btrim(coalesce(u.personality, ''))) in (
-      select personality from green_mode_personalities
+    or not (select enabled from green_mode)
+    or exists (
+      select 1 from public.user_interests ui
+      where ui.user_id = u.userid and ui.interest_key = 'green_mode'
     )
   )
   order by mr.created_at desc
@@ -358,17 +357,15 @@ returns setof public.users
 language sql
 security invoker
 as $$
-  with green_mode_personalities as (
-    select lower(btrim(green_value.personality)) as personality
-    from public.digital_human_config cfg
-    cross join lateral jsonb_array_elements_text(
-      case
-        when jsonb_typeof(cfg.value::jsonb) = 'array' then cfg.value::jsonb
-        else '[]'::jsonb
-      end
-    ) as green_value(personality)
-    where cfg.key = 'green_mode_personalities'
-      and nullif(btrim(green_value.personality), '') is not null
+  -- Green mode: a config switch + the user_interests('green_mode') tag,
+  -- curated on /admin/categories. When enabled, only tagged DHs are served.
+  with green_mode as (
+    select coalesce((
+      select lower(btrim(cfg.value)) = 'true'
+      from public.digital_human_config cfg
+      where cfg.key = 'green_mode_enabled'
+      limit 1
+    ), false) as enabled
   ),
   eligible_candidates as (
     select u.*
@@ -395,9 +392,10 @@ as $$
         )
       )
       and (
-        not exists (select 1 from green_mode_personalities)
-        or lower(btrim(coalesce(u.personality, ''))) in (
-          select personality from green_mode_personalities
+        not (select enabled from green_mode)
+        or exists (
+          select 1 from public.user_interests ui
+          where ui.user_id = u.userid and ui.interest_key = 'green_mode'
         )
       )
       and not exists (
@@ -536,30 +534,17 @@ begin
     where u.is_digital_human = true
     and u.deleted_at is null
     and lower(trim(coalesce(u.gender, ''))) in ('female', 'male')
+    -- Green mode: when enabled, only DHs tagged 'green_mode' send invites.
     and (
-      not exists (
-        select 1
+      not coalesce((
+        select lower(btrim(cfg.value)) = 'true'
         from public.digital_human_config cfg
-        cross join lateral jsonb_array_elements_text(
-          case
-            when jsonb_typeof(cfg.value::jsonb) = 'array' then cfg.value::jsonb
-            else '[]'::jsonb
-          end
-        ) as green_value(personality)
-        where cfg.key = 'green_mode_personalities'
-          and nullif(btrim(green_value.personality), '') is not null
-      )
-      or lower(btrim(coalesce(u.personality, ''))) in (
-        select lower(btrim(green_value.personality))
-        from public.digital_human_config cfg
-        cross join lateral jsonb_array_elements_text(
-          case
-            when jsonb_typeof(cfg.value::jsonb) = 'array' then cfg.value::jsonb
-            else '[]'::jsonb
-          end
-        ) as green_value(personality)
-        where cfg.key = 'green_mode_personalities'
-          and nullif(btrim(green_value.personality), '') is not null
+        where cfg.key = 'green_mode_enabled'
+        limit 1
+      ), false)
+      or exists (
+        select 1 from public.user_interests ui
+        where ui.user_id = u.userid and ui.interest_key = 'green_mode'
       )
     )
     order by random()
@@ -875,7 +860,7 @@ $$;
 -- Deliberately IGNORES the nearby gates (daily cap, cooldown, account age,
 -- active_greeting_enabled): a boost is an explicit purchase of attention.
 -- Green mode IS respected — rpc_list_match_requests hides invitations from
--- personalities outside the set, so scheduling them would waste the boost.
+-- DHs outside the green_mode tag, so scheduling them would waste the boost.
 -- ============================================================================
 create or replace function public.schedule_boost_invites(p_user_id uuid)
 returns integer
@@ -942,14 +927,13 @@ begin
   -- Eligible DHs: green mode respected, preferred gender when known,
   -- whitelisted (curated, image-rich) profiles first — these are the cards the
   -- user will actually SEE on the Likes page. Same dedup as nearby invites.
-  with green_mode_personalities as (
-    select lower(btrim(green_value.personality)) as personality
-    from digital_human_config cfg
-    cross join lateral jsonb_array_elements_text(
-      case when jsonb_typeof(cfg.value::jsonb) = 'array' then cfg.value::jsonb else '[]'::jsonb end
-    ) as green_value(personality)
-    where cfg.key = 'green_mode_personalities'
-      and nullif(btrim(green_value.personality), '') is not null
+  with green_mode as (
+    select coalesce((
+      select lower(btrim(cfg.value)) = 'true'
+      from digital_human_config cfg
+      where cfg.key = 'green_mode_enabled'
+      limit 1
+    ), false) as enabled
   ),
   candidates as (
     select u.userid, u.whitelisted
@@ -958,8 +942,11 @@ begin
       and u.deleted_at is null
       and u.avatar is not null
       and (
-        not exists (select 1 from green_mode_personalities)
-        or lower(btrim(coalesce(u.personality, ''))) in (select personality from green_mode_personalities)
+        not (select enabled from green_mode)
+        or exists (
+          select 1 from user_interests ui
+          where ui.user_id = u.userid and ui.interest_key = 'green_mode'
+        )
       )
       and (
         v_pref_gender is null

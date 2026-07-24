@@ -60,9 +60,10 @@ export async function DELETE(
   const { key } = await params
 
   if (key === "unspecified") return jsonError("The unspecified category cannot be deleted", 400)
-  // Featured and Whitelist are internal-control categories the app + matching
-  // depend on (Whitelist deletion would sever the users.whitelisted bridge).
-  if (key === "featured" || key === "whitelist") {
+  // Featured, Whitelist and Green Mode are internal-control categories the app
+  // + matching depend on (Whitelist deletion would sever the users.whitelisted
+  // bridge; Green Mode backs the green-mode filter).
+  if (key === "featured" || key === "whitelist" || key === "green_mode") {
     return jsonError("This is an internal category and cannot be deleted", 400)
   }
 
