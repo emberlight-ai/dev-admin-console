@@ -79,7 +79,8 @@ export default function UserDetail() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
-  const currentTab = searchParams.get("tab") || "posts"
+  // Chat is what ops actually come here for — it leads, and is the default.
+  const currentTab = searchParams.get("tab") || "history"
 
   const handleTabChange = (value: string) => {
     const newParams = new URLSearchParams(searchParams.toString())
@@ -471,8 +472,8 @@ export default function UserDetail() {
           <Card className="p-6">
             <Tabs value={currentTab} onValueChange={handleTabChange} className="w-full">
               <TabsList>
-                <TabsTrigger value="posts">Post History</TabsTrigger>
                 <TabsTrigger value="history">Chat History</TabsTrigger>
+                <TabsTrigger value="posts">Post History</TabsTrigger>
                 <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
                 <TabsTrigger value="management">User Management</TabsTrigger>
               </TabsList>

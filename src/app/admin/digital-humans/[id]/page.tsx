@@ -27,7 +27,8 @@ export default function DigitalHumanDetail() {
   const searchParams = useSearchParams()
 
   // URL-driven tabs so other pages can deep-link (e.g. "Take over" → ?tab=history).
-  const currentTab = searchParams.get("tab") || "posts"
+  // Chat is what ops actually come here for — it leads, and is the default.
+  const currentTab = searchParams.get("tab") || "history"
   const handleTabChange = (value: string) => {
     const newParams = new URLSearchParams(searchParams.toString())
     newParams.set("tab", value)
@@ -193,9 +194,9 @@ export default function DigitalHumanDetail() {
           <Card className="p-6">
             <Tabs value={currentTab} onValueChange={handleTabChange} className="w-full">
               <TabsList>
+                <TabsTrigger value="history">Chat History</TabsTrigger>
                 <TabsTrigger value="posts">Post History</TabsTrigger>
                 <TabsTrigger value="chat-images">Chat Images</TabsTrigger>
-                <TabsTrigger value="history">Chat History</TabsTrigger>
                 <TabsTrigger value="invite">Send Invitation</TabsTrigger>
               </TabsList>
 

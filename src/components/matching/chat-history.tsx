@@ -34,6 +34,7 @@ import {
   parseCoachComponent,
   parseGift,
 } from './coach-components';
+import { CoachComposerActions } from './coach-composer';
 import { toast } from 'sonner';
 
 // Helper to get a client that definitely has the keys from the env
@@ -336,6 +337,36 @@ function ChatInterface({
   const receiverId = pageUserIsDh ? partner.partner_id : pageUserId;
   const dhSideName = pageUserIsDh ? 'this digital human' : partner.username ?? 'the digital human';
   const canSend = Boolean(dhSideId);
+
+  // Coach card actions only make sense for a DH that actually hosts a coach
+  // program (health/fitness/nutrition/wellness), matching the iOS gate.
+  const [hasCoachSkill, setHasCoachSkill] = React.useState(false);
+  React.useEffect(() => {
+    if (!dhSideId) {
+      setHasCoachSkill(false);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/admin/digital-humans/${encodeURIComponent(dhSideId)}/skills`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (cancelled) return;
+        const selected: string[] = Array.isArray(json?.selected) ? json.selected : [];
+        setHasCoachSkill(
+          selected.some((k) =>
+            ['health', 'fitness', 'nutrition', 'wellness', 'coach'].some((needle) =>
+              k.toLowerCase().includes(needle)
+            )
+          )
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setHasCoachSkill(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dhSideId]);
 
   // Takeover: focusing the composer pauses the bot (human_takeover) so it never
   // talks over the operator; leaving the conversation hands control back.
@@ -722,6 +753,12 @@ function ChatInterface({
               <X className="h-3 w-3" />
             </Button>
           </div>
+        )}
+
+        {/* Coach card actions. The sent card arrives through the same Realtime
+            INSERT subscription as a model-generated one — no refetch needed. */}
+        {canSend && hasCoachSkill && (
+          <CoachComposerActions matchId={matchId} disabled={sending} />
         )}
 
         {canSend ? (
