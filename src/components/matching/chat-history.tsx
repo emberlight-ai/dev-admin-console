@@ -29,6 +29,11 @@ import {
   ImagePlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  CoachComponentMessage,
+  parseCoachComponent,
+  parseGift,
+} from './coach-components';
 import { toast } from 'sonner';
 
 // Helper to get a client that definitely has the keys from the env
@@ -48,6 +53,8 @@ interface Message {
   media_url?: string | null;
   intimacy_score?: number | null;
   created_at: string;
+  /** 'text' | 'image' | 'gift' | 'component' — drives the rich renderers. */
+  type?: string | null;
 }
 
 interface ChatHistoryProps {
@@ -616,6 +623,45 @@ function ChatInterface({
               const isMe = msg.sender_id === pageUserId;
               const intimacyScore = formatIntimacyScore(msg.intimacy_score);
               const timestamp = formatMessageTimestamp(msg.created_at);
+
+              // Component (and gift) messages carry JSON in `content`. Show the
+              // card the user actually saw instead of the raw payload.
+              const component = parseCoachComponent(msg.content, msg.type);
+              const gift = component ? null : parseGift(msg.content, msg.type);
+              if (component || gift) {
+                return (
+                  <div key={msg.id} className={cn('flex w-full', isMe ? 'justify-end' : 'justify-start')}>
+                    <div className={cn('flex flex-col gap-1', isMe ? 'items-end' : 'items-start')}>
+                      {component ? (
+                        <CoachComponentMessage payload={component} />
+                      ) : (
+                        <div className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2 text-sm shadow-sm">
+                          <span aria-hidden>🎁</span>
+                          <span className="font-medium">{gift!.name}</span>
+                          <span className="text-xs text-muted-foreground">{gift!.cost} tokens</span>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-1.5 px-0.5">
+                        <span className="rounded border bg-background/70 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground">
+                          {component ? component.component : 'gift'}
+                        </span>
+                        {timestamp && (
+                          <span className="text-[10px] leading-none text-muted-foreground">{timestamp}</span>
+                        )}
+                        {intimacyScore && (
+                          <span
+                            className="rounded border bg-background/70 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground"
+                            title="Intimacy score captured when this message was sent"
+                          >
+                            Intimacy {intimacyScore}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <div key={msg.id} className={cn('flex w-full', isMe ? 'justify-end' : 'justify-start')}>
                   <div
