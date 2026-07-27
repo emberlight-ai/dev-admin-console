@@ -321,6 +321,11 @@ function normalizeComponentProps(name: string, raw: Record<string, unknown>): Re
       if (carbs !== null) props.carbs_g = Math.max(0, carbs);
       if (fat !== null) props.fat_g = Math.max(0, fat);
       if (typeof raw.note === 'string') props.note = raw.note.trim().slice(0, 240);
+      // The scanner writes the plate photo alongside its analysis; keep it if
+      // a model-authored card ever carries one (unknown keys are dropped).
+      if (typeof raw.photo_url === 'string' && raw.photo_url.startsWith('http')) {
+        props.photo_url = raw.photo_url.trim().slice(0, 500);
+      }
       return props;
     }
     case 'coach_plan': {

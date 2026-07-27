@@ -34,7 +34,7 @@ Same transport as gifts: `messages.type = 'component'`, JSON in `content`:
 | `caffeine_window`  | Daily-rhythm timeline: wake/sleep, caffeine window pills, a personalized meal rhythm, delay + in-body stats, consumed counter with quick-log |
 | `lux_meter`        | Teaser card with animated ticker; tap opens the full camera Lux Meter page (ideal exposure minutes) |
 | `nutrition_scan`   | Scanner card with calorie/protein targets; tap opens camera → photo message → coach replies with `nutrition_result` |
-| `nutrition_result` | Meal breakdown card: calories, protein/carbs/fat bars, coach note  |
+| `nutrition_result` | Meal breakdown card: the scanned photo, calories, protein/carbs/fat bars, coach note. Written by `POST /api/ios/coach/scan-meal`, which validates the photo is FOOD before returning macros and puts the photo in `props.photo_url` — one row holds the picture and its analysis, so a meal log is queryable as a single record. Deliberately NOT the `media_url` column: `rpc_locked_received_image_ids` counts any received row with a media_url toward the paywalled daily image allowance regardless of type. |
 | `coach_plan`       | The personal plan: goal + focus items + schedule                   |
 | `match_cards`      | Concierge people row (2026-07-27 pivot): the model names only a `category` (fitness/dating/spiritual/profession); `sendComponentMessages` hydrates real candidates via rpc_get_matching_candidates (already-connected DHs + the sender excluded). Tapping Connect calls `rpc_connect_direct` (DH targets only) — instant match, no invite flow. Emitted by the `amber_guide` skill on the guide DH (442e10be…), which powers the iOS Discover tab (ConciergeView) that replaced the swipe deck. |
 

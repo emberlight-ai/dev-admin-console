@@ -56,6 +56,8 @@ type NutritionResultProps = {
   carbs_g?: number
   fat_g?: number
   note?: string
+  /** The scanned plate — written by /api/ios/coach/scan-meal. */
+  photo_url?: string
 }
 type CoachPlanProps = { title?: string; goal: string; focus: string[]; cadence?: string }
 type MatchCardItem = {
@@ -378,6 +380,14 @@ function NutritionScanCard({ props }: { props: NutritionScanProps }) {
 function NutritionResultCard({ props }: { props: NutritionResultProps }) {
   return (
     <CoachCard>
+      {props.photo_url && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={props.photo_url}
+          alt={props.meal}
+          className="mb-3 h-32 w-full rounded-xl border object-cover"
+        />
+      )}
       <CardTitle icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />}>{props.meal}</CardTitle>
       <div className="mt-2 flex items-baseline gap-1.5">
         <span className="text-3xl font-bold tabular-nums">{props.calories.toLocaleString()}</span>
