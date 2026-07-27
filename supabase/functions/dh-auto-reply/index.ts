@@ -572,11 +572,10 @@ Deno.serve(async (req) => {
         ? await renderTrackerContext({ trackers, userId: realId, dhId, timezone: human.timezone })
         : null;
 
-      // Coach turns extend the brief (intake/plan/active) and unlock the
-      // component catalog in the tool notes.
-      const componentNote = coachTurn && (coachSkill?.components?.length ?? 0) > 0
-        ? componentCatalogNote(coachSkill.components)
-        : '';
+      // Any skill that declares components unlocks the catalog (coach programs
+      // AND the concierge guide); coach turns additionally extend the brief.
+      const componentSkill = skills.find((s) => (s.components?.length ?? 0) > 0) ?? null;
+      const componentNote = componentSkill ? componentCatalogNote(componentSkill.components) : '';
       const systemInstruction = buildSystemPrompt({
         template: promptConfig?.template ??
           `You are ${bot.username ?? 'a digital human'}. Personality: ${bot.personality ?? 'Friendly'}. Bio: ${bot.bio ?? 'N/A'}. Reply as this character. Keep it engaging, short, and natural.`,
@@ -602,8 +601,8 @@ Deno.serve(async (req) => {
 
         // Component blocks come out BEFORE the length cap so a card is never
         // truncated away with the prose around it.
-        const split = coachTurn
-          ? extractComponents(bubbles, coachSkill?.components ?? [])
+        const split = componentSkill
+          ? extractComponents(bubbles, componentSkill.components)
           : { textBubbles: bubbles, components: [] };
         let textBubbles = split.textBubbles;
         // HARD length discipline: a few words from him never earns a

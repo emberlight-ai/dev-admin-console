@@ -256,6 +256,8 @@ const CATALOG: Record<string, string> = {
     `nutrition_result — your nutrition read of a food photo he sent. props: {"meal":"short name","calories":520,"protein_g":42,"carbs_g":31,"fat_g":22,"note":"one coaching line"}.`,
   coach_plan:
     `coach_plan — his personal plan card. props: {"title":"Your starter plan","goal":"...","focus":["...","...","..."],"cadence":"e.g. 3 sessions/week"}.`,
+  match_cards:
+    `match_cards — a row of people cards for a direction the user asked about. props: {"category":"fitness"|"dating"|"spiritual"|"profession","title":"short row title"}. The SERVER fills in the actual people — never name or describe specific people yourself.`,
 };
 
 /** Tool-notes block teaching the model the component syntax + catalog. */
@@ -344,6 +346,15 @@ function normalizeComponentProps(name: string, raw: Record<string, unknown>): Re
       }
       return props;
     }
+    case 'match_cards': {
+      const category = typeof raw.category === 'string' ? raw.category.trim().toLowerCase() : '';
+      if (!['fitness', 'dating', 'spiritual', 'profession'].includes(category)) return null;
+      const props: Record<string, unknown> = { category };
+      if (typeof raw.title === 'string') props.title = raw.title.trim().slice(0, 80);
+      // `cards` is server-hydrated at send time (hydrateMatchCards) — anything
+      // the model put there is discarded.
+      return props;
+    }
     default:
       return null;
   }
@@ -412,6 +423,68 @@ export function coachPlanMemoryFromComponents(components: Array<Record<string, u
     .slice(0, 4000);
 }
 
+/** Fill a match_cards component with real candidates for the receiver.
+ * The model only names a category; people come from the same deck RPC as the
+ * classic swipe view (already-connected DHs and the sender are excluded). */
+async function hydrateMatchCards(
+  payload: Record<string, unknown>,
+  receiverId: string,
+  senderId: string,
+  tag: string
+): Promise<Record<string, unknown> | null> {
+  const props = payload.props as Record<string, unknown>;
+  const category = String(props.category ?? '');
+
+  // Category → interest keys (dating = the classic unfiltered deck).
+  let interestFilter: string[] | null = null;
+  if (category !== 'dating') {
+    const { data: rows } = await supabase
+      .from('interests')
+      .select('key')
+      .eq('category_key', category);
+    interestFilter = [category, ...(rows ?? []).map((r: { key: string }) => r.key)];
+    interestFilter = [...new Set(interestFilter)];
+  }
+
+  const { data: candidates, error } = await supabase.rpc('rpc_get_matching_candidates', {
+    viewer_user_id: receiverId,
+    limit_count: 8,
+    gender_filter: null,
+    digital_humans_only: true,
+    interest_filter: interestFilter,
+  });
+  if (error) {
+    console.error(`[${tag}] match_cards hydration failed`, error);
+    return null;
+  }
+
+  // Exclude the guide herself and anyone already connected.
+  const { data: existing } = await supabase
+    .from('user_matches')
+    .select('user_a, user_b')
+    .or(`user_a.eq.${receiverId},user_b.eq.${receiverId}`);
+  const connected = new Set<string>();
+  for (const m of existing ?? []) {
+    connected.add(m.user_a === receiverId ? m.user_b : m.user_a);
+  }
+
+  const cards = (candidates ?? [])
+    .filter((u: Record<string, unknown>) => u.userid !== senderId && !connected.has(u.userid as string))
+    .slice(0, 4)
+    .map((u: Record<string, unknown>) => ({
+      user_id: u.userid,
+      username: u.username ?? 'Unknown',
+      age: u.age ?? null,
+      avatar: u.avatar ?? null,
+      profession: u.profession ?? null,
+    }));
+  if (cards.length === 0) {
+    console.warn(`[${tag}] match_cards for ${category}: no candidates — dropping component`);
+    return null;
+  }
+  return { ...payload, props: { ...props, cards } };
+}
+
 /** Insert component messages (type='component', JSON in content, gift-style). */
 export async function sendComponentMessages(input: {
   matchId: string;
@@ -420,7 +493,12 @@ export async function sendComponentMessages(input: {
   components: Array<Record<string, unknown>>;
   tag: string;
 }): Promise<void> {
-  for (const payload of input.components) {
+  for (let payload of input.components) {
+    if (payload.component === 'match_cards') {
+      const hydrated = await hydrateMatchCards(payload, input.receiverId, input.senderId, input.tag);
+      if (!hydrated) continue;
+      payload = hydrated;
+    }
     // A short beat between cards so they land as distinct bubbles.
     await new Promise((r) => setTimeout(r, 600));
     const { error } = await supabase.from('messages').insert({

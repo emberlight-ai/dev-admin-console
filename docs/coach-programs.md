@@ -36,6 +36,7 @@ Same transport as gifts: `messages.type = 'component'`, JSON in `content`:
 | `nutrition_scan`   | Scanner card with calorie/protein targets; tap opens camera → photo message → coach replies with `nutrition_result` |
 | `nutrition_result` | Meal breakdown card: calories, protein/carbs/fat bars, coach note  |
 | `coach_plan`       | The personal plan: goal + focus items + schedule                   |
+| `match_cards`      | Concierge people row (2026-07-27 pivot): the model names only a `category` (fitness/dating/spiritual/profession); `sendComponentMessages` hydrates real candidates via rpc_get_matching_candidates (already-connected DHs + the sender excluded). Tapping Connect calls `rpc_connect_direct` (DH targets only) — instant match, no invite flow. Emitted by the `amber_guide` skill on the guide DH (442e10be…), which powers the iOS Discover tab (ConciergeView) that replaced the swipe deck. |
 
 Props schemas live in `Amber/Core/Chat/CoachComponents/CoachComponentModels.swift`
 (iOS) and are documented inline in the edge-function component catalog, which
