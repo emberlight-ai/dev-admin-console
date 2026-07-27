@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { AlarmClock, Eye, EyeOff, LineChart, MessageSquareQuote, Pencil, Plus, Trash2, Wand2, Wrench, X } from "lucide-react"
+import { AlarmClock, ClipboardList, Eye, EyeOff, LineChart, MessageSquareQuote, Pencil, Plus, Sparkles, Trash2, Wand2, Wrench, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
@@ -40,6 +40,10 @@ type Skill = {
   active: boolean
   check_in_slots: string[]
   check_in_prompt: string | null
+  intake_questions: string[]
+  plan_prompt: string | null
+  demo_checkins: { after_minutes: number; prompt: string }[]
+  components: string[]
   tool_ids: string[]
   dh_count: number
   trackers: Tracker[]
@@ -71,6 +75,20 @@ const SLOTS: { value: string; label: string }[] = [
   { value: "evening", label: "Evening 7–9pm" },
 ]
 
+// The server-driven UI cards a coach program is allowed to attach (see
+// docs/coach-programs.md — must match COACH_COMPONENTS in the API).
+const COACH_COMPONENTS: { value: string; label: string }[] = [
+  { value: "caffeine_window", label: "Caffeine window" },
+  { value: "lux_meter", label: "Lux meter" },
+  { value: "nutrition_scan", label: "Nutrition scan" },
+  { value: "nutrition_result", label: "Nutrition result" },
+  { value: "coach_plan", label: "Coach plan" },
+]
+
+// Dialog-side check-in shape: minutes as a string so the input can be blank
+// mid-edit; converted to a number on save.
+type CheckinDraft = { after_minutes: string; prompt: string }
+
 const EMPTY_DRAFT = {
   key: "",
   name: "",
@@ -79,7 +97,42 @@ const EMPTY_DRAFT = {
   opener_prompt: "",
   check_in_slots: [] as string[],
   check_in_prompt: "",
+  intake_questions: "",
+  plan_prompt: "",
+  demo_checkins: [] as CheckinDraft[],
+  components: [] as string[],
   trackers: [] as TrackerDraft[],
+}
+
+// Best-practice coach program (the Melody health-coach demo config).
+const HEALTH_COACH_TEMPLATE = {
+  intake_questions: [
+    "What's your weight and height?",
+    "What's your current goal — gain weight, lose weight, or build muscle?",
+    "How long have you been working out?",
+    "What's your weekly schedule like — when do you wake up, sleep, and have time to train?",
+    "What's your favorite sport or way to exercise?",
+  ].join("\n"),
+  plan_prompt:
+    "All intake questions are answered. Write his personal starter plan: 2-3 short warm lines — training cadence tied to HIS schedule, one nutrition focus for his goal, one recovery/morning-light habit. Then attach a coach_plan component summarizing it, and the nutrition_scan card so he can log his next meal.",
+  demo_checkins: [
+    {
+      after_minutes: "2",
+      prompt:
+        "Check in on his plan: send today's caffeine window based on his wake and sleep times, with one warm line tying it to what he committed to — attach the caffeine_window component.",
+    },
+    {
+      after_minutes: "5",
+      prompt:
+        "Morning-light nudge: one short line on getting outdoor light after waking to anchor his body clock — attach the lux_meter component so he can measure it.",
+    },
+    {
+      after_minutes: "8",
+      prompt:
+        "Nutrition check-in: ask what his next meal looks like and remind him of his one nutrition focus — attach the nutrition_scan component so he can log it with a photo.",
+    },
+  ] as CheckinDraft[],
+  components: COACH_COMPONENTS.map((c) => c.value),
 }
 
 function toTrackerDraft(t: Tracker): TrackerDraft {
@@ -174,6 +227,10 @@ export default function SkillsPage() {
         opener_prompt: draft.opener_prompt,
         check_in_slots: draft.check_in_slots,
         check_in_prompt: draft.check_in_prompt,
+        intake_questions: draft.intake_questions.split("\n").map((q) => q.trim()).filter(Boolean),
+        plan_prompt: draft.plan_prompt,
+        demo_checkins: draft.demo_checkins.map((c) => ({ after_minutes: Number(c.after_minutes), prompt: c.prompt })),
+        components: draft.components,
         trackers: draft.trackers.map(fromTrackerDraft),
       }
       const res = editing
@@ -326,6 +383,13 @@ export default function SkillsPage() {
                         opener_prompt: skill.opener_prompt ?? "",
                         check_in_slots: skill.check_in_slots ?? [],
                         check_in_prompt: skill.check_in_prompt ?? "",
+                        intake_questions: (skill.intake_questions ?? []).join("\n"),
+                        plan_prompt: skill.plan_prompt ?? "",
+                        demo_checkins: (skill.demo_checkins ?? []).map((c) => ({
+                          after_minutes: String(c.after_minutes),
+                          prompt: c.prompt,
+                        })),
+                        components: skill.components ?? [],
                         trackers: (skill.trackers ?? []).map(toTrackerDraft),
                       })
                       setDialog({ open: true, editing: skill.key })
@@ -369,8 +433,17 @@ export default function SkillsPage() {
                 )}
               </div>
 
-              {((skill.trackers?.length ?? 0) > 0 || (skill.check_in_slots?.length ?? 0) > 0) && (
+              {((skill.trackers?.length ?? 0) > 0 || (skill.check_in_slots?.length ?? 0) > 0 || (skill.intake_questions?.length ?? 0) > 0) && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {(skill.intake_questions?.length ?? 0) > 0 && (
+                    <span
+                      title={skill.intake_questions.join("\n")}
+                      className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-700 dark:text-violet-400"
+                    >
+                      <ClipboardList className="h-3 w-3" />
+                      Coach program · {skill.intake_questions.length} questions · {skill.demo_checkins?.length ?? 0} check-ins
+                    </span>
+                  )}
                   {(skill.trackers ?? []).map((t) => (
                     <span
                       key={t.key}
@@ -617,6 +690,129 @@ export default function SkillsPage() {
                   className="min-h-16 font-mono text-xs"
                 />
               )}
+            </div>
+
+            {/* Coach program — intake → plan → scheduled check-ins */}
+            <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+              <div className="flex items-center justify-between">
+                <Label className="flex items-center gap-1.5"><ClipboardList className="h-3.5 w-3.5" /> Coach program</Label>
+                {!draft.intake_questions.trim() &&
+                  !draft.plan_prompt.trim() &&
+                  draft.demo_checkins.length === 0 &&
+                  draft.components.length === 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setDraft((d) => ({ ...d, ...HEALTH_COACH_TEMPLATE, demo_checkins: HEALTH_COACH_TEMPLATE.demo_checkins.map((c) => ({ ...c })) }))}
+                    >
+                      <Sparkles className="mr-1 h-3 w-3" /> Use health-coach template
+                    </Button>
+                  )}
+              </div>
+              <p className="text-[11px] text-muted-foreground/60">
+                Non-empty intake questions turn this skill into a structured program: she asks them one
+                per turn, writes a personal plan, then the scheduled check-ins below fire. Leave the
+                questions empty for a plain conversational skill.
+              </p>
+              <div className="space-y-1">
+                <Label className="text-xs">Intake questions (one per line)</Label>
+                <Textarea
+                  value={draft.intake_questions}
+                  onChange={(e) => setDraft((d) => ({ ...d, intake_questions: e.target.value }))}
+                  placeholder={"What's your current goal — gain weight, lose weight, or build muscle?\nOne question per line — she asks them in order, never as a list."}
+                  className="min-h-24 font-mono text-xs"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Plan instruction</Label>
+                <Textarea
+                  value={draft.plan_prompt}
+                  onChange={(e) => setDraft((d) => ({ ...d, plan_prompt: e.target.value }))}
+                  placeholder="What she should do once every question is answered, e.g. Write his personal starter plan and attach a coach_plan component."
+                  className="min-h-20 font-mono text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Scheduled check-ins (minutes after the plan)</Label>
+                {draft.demo_checkins.map((c, ci) => {
+                  const patchCheckin = (patch: Partial<CheckinDraft>) =>
+                    setDraft((d) => ({
+                      ...d,
+                      demo_checkins: d.demo_checkins.map((x, i) => (i === ci ? { ...x, ...patch } : x)),
+                    }))
+                  return (
+                    <div key={ci} className="flex items-start gap-1.5">
+                      <div className="flex shrink-0 items-center gap-1 pt-1">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={c.after_minutes}
+                          placeholder="5"
+                          className="h-7 w-16 text-xs tabular-nums"
+                          onChange={(e) => patchCheckin({ after_minutes: e.target.value })}
+                        />
+                        <span className="text-[11px] text-muted-foreground/60">min</span>
+                      </div>
+                      <Textarea
+                        value={c.prompt}
+                        placeholder="What she should do at this check-in, e.g. Send today's caffeine window — attach the caffeine_window component."
+                        className="min-h-14 flex-1 font-mono text-xs"
+                        onChange={(e) => patchCheckin({ prompt: e.target.value })}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        title="Remove check-in"
+                        onClick={() => setDraft((d) => ({ ...d, demo_checkins: d.demo_checkins.filter((_, i) => i !== ci) }))}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
+                    </div>
+                  )
+                })}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1.5 text-[11px] text-muted-foreground"
+                  onClick={() => setDraft((d) => ({ ...d, demo_checkins: [...d.demo_checkins, { after_minutes: "", prompt: "" }] }))}
+                >
+                  <Plus className="mr-1 h-3 w-3" /> Check-in
+                </Button>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Components she may attach</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {COACH_COMPONENTS.map((comp) => {
+                    const on = draft.components.includes(comp.value)
+                    return (
+                      <button
+                        key={comp.value}
+                        title={comp.value}
+                        className={cn(
+                          "rounded-full border px-2.5 py-1 font-mono text-xs",
+                          on ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground"
+                        )}
+                        onClick={() =>
+                          setDraft((d) => ({
+                            ...d,
+                            components: on
+                              ? d.components.filter((x) => x !== comp.value)
+                              : [...d.components, comp.value],
+                          }))
+                        }
+                      >
+                        {comp.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="text-[11px] text-muted-foreground/60">
+                  Rich cards the iOS app renders natively — the prompts above reference them by their
+                  snake_case names (hover a chip to see it).
+                </p>
+              </div>
             </div>
           </div>
           <DialogFooter>

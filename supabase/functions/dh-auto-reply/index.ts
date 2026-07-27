@@ -40,6 +40,15 @@ import {
 } from '../_shared/tools.ts';
 import { runAgentTurn } from '../_shared/actor.ts';
 import {
+  coachSkillOf,
+  coachPlanMemoryFromComponents,
+  commitCoachTurn,
+  componentCatalogNote,
+  extractComponents,
+  prepareCoachTurn,
+  sendComponentMessages,
+} from '../_shared/coach.ts';
+import {
   extractTrackerEntries,
   loadTrackers,
   recordEntries,
@@ -242,13 +251,20 @@ Deno.serve(async (req) => {
     // ── COMPOSITION (persona/skill/strategy) — cohort-gated during migration ──
     // Off-cohort DHs keep running on the legacy SystemPrompts behavior columns.
     const composed = await isInCompositionCohort(dhId);
-    const [strategy, skills, botInterests] = composed
-      ? await Promise.all([
-          resolveStrategy(bot, promptConfig),
-          getSkillsForUser(dhId),
-          getUserInterestNames(dhId),
-        ])
-      : [null, [], []];
+    // Coach programs are deliberately independent from the composition cohort:
+    // the pilot DH can host a skill before the broader persona/strategy rollout
+    // reaches her. Other skill decorations remain cohort-gated.
+    const [assignedSkills, strategy, botInterests] = await Promise.all([
+      getSkillsForUser(dhId),
+      composed ? resolveStrategy(bot, promptConfig) : Promise.resolve(null),
+      composed ? getUserInterestNames(dhId) : Promise.resolve([]),
+    ]);
+    const pilotCoachSkill = coachSkillOf(assignedSkills);
+    const skills = composed
+      ? assignedSkills
+      : pilotCoachSkill
+        ? [pilotCoachSkill]
+        : [];
     // Skills v2: what this DH's skills track for this user (generic — the
     // engine only knows aggregates, never domains).
     const trackers = composed && skills.length > 0
@@ -275,13 +291,21 @@ Deno.serve(async (req) => {
     const configuredMaxDelaySec = Math.min(60, Math.max(0, pacing?.replyMaxDelaySeconds ?? 18));
     const lockSeconds = Math.min(120, Math.max(LOCK_DURATION_SECONDS, configuredMaxDelaySec + 37));
     const lockTime = new Date(Date.now() + lockSeconds * 1000).toISOString();
-    const { error: lockErr } = await supabase
+    // Compare against the state we just read. `update()` returns no error when
+    // zero rows match, so checking only `error` would falsely claim a lock
+    // owned by another worker (and an expired lock must remain stealable).
+    let lockQuery = supabase
       .from('user_match_ai_state')
       .update({ ai_locked_until: lockTime })
-      .eq('match_id', matchId)
-      .is('ai_locked_until', null);
-    if (lockErr) {
-      console.log(`[${TAG}] Failed to acquire lock for`, matchId);
+      .eq('match_id', matchId);
+    lockQuery = stateData.ai_locked_until
+      ? lockQuery.eq('ai_locked_until', stateData.ai_locked_until)
+      : lockQuery.is('ai_locked_until', null);
+    const { data: lockedMatch, error: lockErr } = await lockQuery
+      .select('match_id')
+      .maybeSingle();
+    if (lockErr || !lockedMatch) {
+      console.log(`[${TAG}] Failed to acquire lock for`, matchId, lockErr?.message ?? 'contention');
       return new Response('Lock contention', { status: 200 });
     }
 
@@ -334,6 +358,20 @@ Deno.serve(async (req) => {
       const lastUserWords = (latestUserMsg?.content ?? '').trim().split(/\s+/).filter(Boolean).length;
       const shortUser = !latestUserMsg?.media_url && lastUserWords > 0 && lastUserWords <= 7;
 
+      // ── COACH PROGRAM (skill hosting) ──────────────────────────────────────
+      // A skill with intake questions turns the conversation into a program:
+      // intake → plan → check-ins, with component (server-driven UI) messages.
+      const coachSkill = coachSkillOf(skills);
+      const coachTurn = coachSkill
+        ? await prepareCoachTurn({
+            skill: coachSkill,
+            matchId,
+            userId: realId,
+            dhId,
+            latestUserText: latestUserMsg?.content ?? null,
+          })
+        : null;
+
       // Grounding turn? (first chat / conversation resuming / daily refresh)
       const newestDhMsg = msgRows.find((m) => m.sender_id === dhId);
       const dhSilenceMs = newestDhMsg?.created_at
@@ -371,7 +409,8 @@ Deno.serve(async (req) => {
         critic ? clampIntimacy(stateData.intimacy_score ?? null, critic.intimacy, warmupRate) : null;
 
       // ── Human-like silence (needs the critic → awaited only on this path) ──
-      if (pacing?.skipReplyEnabled) {
+      // A coach never randomly ghosts her client mid-program.
+      if (pacing?.skipReplyEnabled && !coachTurn) {
         let trailingUserMsgs = 0; // msgRows is newest-first
         for (const m of msgRows) {
           if (m.sender_id === dhId) break;
@@ -533,12 +572,17 @@ Deno.serve(async (req) => {
         ? await renderTrackerContext({ trackers, userId: realId, dhId, timezone: human.timezone })
         : null;
 
+      // Coach turns extend the brief (intake/plan/active) and unlock the
+      // component catalog in the tool notes.
+      const componentNote = coachTurn && (coachSkill?.components?.length ?? 0) > 0
+        ? componentCatalogNote(coachSkill.components)
+        : '';
       const systemInstruction = buildSystemPrompt({
         template: promptConfig?.template ??
           `You are ${bot.username ?? 'a digital human'}. Personality: ${bot.personality ?? 'Friendly'}. Bio: ${bot.bio ?? 'N/A'}. Reply as this character. Keep it engaging, short, and natural.`,
         bot, human,
-        brief: textingBrief({ stage, shortUser, lastUserWords }),
-        toolNotes,
+        brief: textingBrief({ stage, shortUser, lastUserWords }) + (coachTurn ? `\n${coachTurn.brief}` : ''),
+        toolNotes: componentNote ? `${toolNotes}\n\n${componentNote}` : toolNotes,
         skillBlocks: skills.map((s) => s.prompt_block),
         botInterests,
         trackerContext,
@@ -555,21 +599,48 @@ Deno.serve(async (req) => {
         bubbles = turn.bubbles;
         toolEvents = turn.toolEvents;
         if (bubbles.length === 0) throw new Error('Empty reply from model');
+
+        // Component blocks come out BEFORE the length cap so a card is never
+        // truncated away with the prose around it.
+        const split = coachTurn
+          ? extractComponents(bubbles, coachSkill?.components ?? [])
+          : { textBubbles: bubbles, components: [] };
+        let textBubbles = split.textBubbles;
         // HARD length discipline: a few words from him never earns a
-        // multi-bubble essay back, no matter what the model produced.
-        if (shortUser && bubbles.length > 1) bubbles = bubbles.slice(0, 1);
+        // multi-bubble essay back. Coach turns are exempt — the program
+        // (intake question, full plan) sets the length, not his last message.
+        if (shortUser && !coachTurn && textBubbles.length > 1) textBubbles = textBubbles.slice(0, 1);
+        bubbles = textBubbles; // may be empty when the turn was components-only
 
         // ── DELIVER ───────────────────────────────────────────────────────────
         const critic = await criticPromise;
-        await deliverBubbles({
-          matchId,
-          senderId: bot.userid,
-          bubbles,
-          intimacyScore: clampedIntimacy(critic) ?? stateData.intimacy_score ?? null,
-          promptConfig: pacing,
-          turnStartedAt: startTime,
-          tag: TAG,
-        });
+        if (textBubbles.length > 0) {
+          await deliverBubbles({
+            matchId,
+            senderId: bot.userid,
+            bubbles: textBubbles,
+            intimacyScore: clampedIntimacy(critic) ?? stateData.intimacy_score ?? null,
+            promptConfig: pacing,
+            turnStartedAt: startTime,
+            tag: TAG,
+          });
+        }
+        if (split.components.length > 0) {
+          await sendComponentMessages({
+            matchId,
+            senderId: bot.userid,
+            receiverId: realId,
+            components: split.components,
+            tag: TAG,
+          });
+        }
+        if (coachTurn) {
+          await commitCoachTurn({
+            turn: coachTurn,
+            deliveredText: textBubbles.join('\n\n') || coachPlanMemoryFromComponents(split.components),
+            tag: TAG,
+          });
+        }
       } finally {
         await stopTyping();
       }
@@ -631,6 +702,7 @@ Deno.serve(async (req) => {
         composed,
         strategy: composed ? (strategy?.key ?? null) : null,
         skills: composed ? skills.map((s) => s.key) : undefined,
+        coach: coachTurn ? (coachTurn.isPlanTurn ? 'plan' : coachTurn.state.phase) : undefined,
         grounding,
         tools_used: toolEvents.map((t) => t.name),
         bubbles: bubbles.length,

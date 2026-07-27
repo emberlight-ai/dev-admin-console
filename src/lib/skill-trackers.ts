@@ -5,6 +5,10 @@
 
 export const TRACKER_AGGREGATES = ['none', 'latest', 'latest_per_subject', 'sum_today', 'count_7d'] as const;
 export const CHECK_IN_SLOTS = ['morning', 'lunch', 'evening'] as const;
+export const COACH_COMPONENTS = ['caffeine_window', 'lux_meter', 'nutrition_scan', 'nutrition_result', 'coach_plan'] as const;
+
+const MAX_INTAKE_QUESTIONS = 12;
+const MAX_DEMO_CHECKINS = 10;
 
 export type TrackerInput = {
   key: string;
@@ -98,6 +102,61 @@ export function parseCheckIns(b: Record<string, unknown>): { patch: Record<strin
   if ('check_in_prompt' in b) {
     patch.check_in_prompt =
       typeof b.check_in_prompt === 'string' && b.check_in_prompt.trim() ? b.check_in_prompt.trim() : null;
+  }
+  return { patch };
+}
+
+/**
+ * Parse the coach-program fields (`intake_questions`, `plan_prompt`,
+ * `demo_checkins`, `components`) from a request body into a skills-table
+ * patch. Only touches keys present in `b`. A skill with non-empty
+ * intake_questions runs a coach program (see docs/coach-programs.md):
+ * intake one question per turn → plan → scheduled check-ins.
+ */
+export function parseCoachProgram(b: Record<string, unknown>): { patch: Record<string, unknown> } | { error: string } {
+  const patch: Record<string, unknown> = {};
+  if ('intake_questions' in b) {
+    if (!Array.isArray(b.intake_questions)) return { error: 'intake_questions must be an array' };
+    if (b.intake_questions.length > MAX_INTAKE_QUESTIONS) {
+      return { error: `At most ${MAX_INTAKE_QUESTIONS} intake questions` };
+    }
+    const questions: string[] = [];
+    for (const q of b.intake_questions) {
+      if (typeof q !== 'string' || !q.trim()) return { error: 'Every intake question must be a non-empty string' };
+      questions.push(q.trim());
+    }
+    patch.intake_questions = questions;
+  }
+  if ('plan_prompt' in b) {
+    patch.plan_prompt = typeof b.plan_prompt === 'string' && b.plan_prompt.trim() ? b.plan_prompt.trim() : null;
+  }
+  if ('demo_checkins' in b) {
+    if (!Array.isArray(b.demo_checkins)) return { error: 'demo_checkins must be an array' };
+    if (b.demo_checkins.length > MAX_DEMO_CHECKINS) {
+      return { error: `At most ${MAX_DEMO_CHECKINS} scheduled check-ins` };
+    }
+    const checkins: { after_minutes: number; prompt: string }[] = [];
+    for (const item of b.demo_checkins) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        return { error: 'Every check-in must be an object' };
+      }
+      const c = item as Record<string, unknown>;
+      const after = typeof c.after_minutes === 'number' && Number.isFinite(c.after_minutes) ? c.after_minutes : NaN;
+      if (!(after > 0)) return { error: 'Every check-in needs a positive after_minutes' };
+      const prompt = typeof c.prompt === 'string' ? c.prompt.trim() : '';
+      if (!prompt) return { error: 'Every check-in needs a prompt' };
+      checkins.push({ after_minutes: after, prompt });
+    }
+    patch.demo_checkins = checkins;
+  }
+  if ('components' in b) {
+    if (!Array.isArray(b.components)) return { error: 'components must be an array' };
+    const comps = [...new Set(b.components.filter((c): c is string => typeof c === 'string'))];
+    if (comps.some((c) => !COACH_COMPONENTS.includes(c as never))) {
+      return { error: `components must be among: ${COACH_COMPONENTS.join(', ')}` };
+    }
+    // Store in catalog order so the UI and prompt read them consistently.
+    patch.components = COACH_COMPONENTS.filter((c) => comps.includes(c));
   }
   return { patch };
 }

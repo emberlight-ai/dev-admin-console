@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { isAdminRequest } from '@/lib/admin-auth';
-import { parseCheckIns, parseTrackers } from '@/lib/skill-trackers';
+import { parseCheckIns, parseCoachProgram, parseTrackers } from '@/lib/skill-trackers';
 import { supabaseAdmin } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
@@ -13,7 +13,8 @@ function jsonError(message: string, status = 400) {
 /**
  * PATCH /api/admin/skills/[key]
  * { name?, description?, prompt_block?, opener_prompt?, active?, sort_order?, tool_ids?,
- *   check_in_slots?, check_in_prompt?, trackers? }
+ *   check_in_slots?, check_in_prompt?, trackers?,
+ *   intake_questions?, plan_prompt?, demo_checkins?, components? }
  * tool_ids and trackers are replace-all (skill_tools / skill_trackers).
  */
 export async function PATCH(
@@ -43,6 +44,9 @@ export async function PATCH(
   const checkIns = parseCheckIns(b);
   if ('error' in checkIns) return jsonError(checkIns.error, 400);
   Object.assign(patch, checkIns.patch);
+  const coach = parseCoachProgram(b);
+  if ('error' in coach) return jsonError(coach.error, 400);
+  Object.assign(patch, coach.patch);
 
   if (Object.keys(patch).length > 0) {
     patch.updated_at = new Date().toISOString();

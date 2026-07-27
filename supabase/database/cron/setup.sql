@@ -31,6 +31,7 @@ select cron.unschedule('dh-matching')          where exists (select 1 from cron.
 select cron.unschedule('dh-nearby-dispatch')   where exists (select 1 from cron.job where jobname = 'dh-nearby-dispatch');
 select cron.unschedule('dh-scheduled-replies') where exists (select 1 from cron.job where jobname = 'dh-scheduled-replies');
 select cron.unschedule('dh-nightly-debrief')   where exists (select 1 from cron.job where jobname = 'dh-nightly-debrief');
+select cron.unschedule('dh-coach-checkin')     where exists (select 1 from cron.job where jobname = 'dh-coach-checkin');
 
 -- ---- 1. dh-outbound: every 5 minutes -----------------------
 -- The unified proactive scheduler (composition Phase 3): follow-up ladders +
@@ -71,6 +72,21 @@ select cron.schedule(
   $$
   select net.http_post(
     url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-nearby-dispatch',
+    headers := jsonb_build_object('Content-Type', 'application/json'),
+    body    := '{}'::jsonb
+  );
+  $$
+);
+
+-- ---- 3b. dh-coach-checkin: every minute, deliver due coach check-ins -----
+-- Coach programs (docs/coach-programs.md): rows land in dh_coach_checkins when
+-- a plan turn completes; per-row run_at makes delivery feel personally timed.
+select cron.schedule(
+  'dh-coach-checkin',
+  '* * * * *',
+  $$
+  select net.http_post(
+    url     := 'https://wvcwvjlmnjnvyblrycxj.supabase.co/functions/v1/dh-coach-checkin',
     headers := jsonb_build_object('Content-Type', 'application/json'),
     body    := '{}'::jsonb
   );

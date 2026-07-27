@@ -37,6 +37,12 @@ export function buildTranscript(
         const line = giftLine(m.content) ?? '[User sent you a gift]';
         return `${speaker}: ${line}`;
       }
+      // Component messages (coach cards) carry JSON — replay as a readable beat.
+      if (m.type === 'component') {
+        let name = 'interactive';
+        try { name = JSON.parse(m.content ?? '{}').component ?? name; } catch { /* keep default */ }
+        return `${speaker}: ${isBot ? `[You sent him your ${name} card]` : `[Sent a ${name} card]`}`;
+      }
       let text = m.content || '';
       if (m.media_url) {
         if (isBot) {

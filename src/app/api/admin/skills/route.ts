@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { isAdminRequest } from '@/lib/admin-auth';
-import { parseCheckIns, parseTrackers } from '@/lib/skill-trackers';
+import { parseCheckIns, parseCoachProgram, parseTrackers } from '@/lib/skill-trackers';
 import { supabaseAdmin } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
@@ -63,7 +63,8 @@ export async function GET(req: NextRequest) {
 /**
  * POST /api/admin/skills
  * { name, key?, description?, prompt_block, opener_prompt?,
- *   check_in_slots?, check_in_prompt?, trackers? }
+ *   check_in_slots?, check_in_prompt?, trackers?,
+ *   intake_questions?, plan_prompt?, demo_checkins?, components? }
  */
 export async function POST(req: NextRequest) {
   if (!isAdminRequest(req)) return jsonError('Unauthorized', 401);
@@ -84,6 +85,8 @@ export async function POST(req: NextRequest) {
 
   const checkIns = parseCheckIns(b);
   if ('error' in checkIns) return jsonError(checkIns.error, 400);
+  const coach = parseCoachProgram(b);
+  if ('error' in coach) return jsonError(coach.error, 400);
   const trackers = 'trackers' in b ? parseTrackers(b.trackers) : { rows: [] };
   if ('error' in trackers) return jsonError(trackers.error, 400);
 
@@ -105,6 +108,7 @@ export async function POST(req: NextRequest) {
         typeof b.opener_prompt === 'string' && b.opener_prompt.trim() ? b.opener_prompt.trim() : null,
       sort_order: (maxRow?.sort_order ?? 0) + 10,
       ...checkIns.patch,
+      ...coach.patch,
     })
     .select('*')
     .single();
