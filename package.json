@@ -12,6 +12,7 @@
   "dependencies": {
     "@apple/app-store-server-library": "^3.0.0",
     "@google/generative-ai": "^0.24.1",
+    "@lottiefiles/dotlottie-react": "^0.19.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-dialog": "^1.1.15",
@@ -32,6 +33,7 @@
     "d3-force": "^3.0.0",
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
+    "framer-motion": "^12.42.2",
     "gsap": "^3.15.0",
     "jose": "^6.2.2",
     "lucide-react": "^0.561.0",
