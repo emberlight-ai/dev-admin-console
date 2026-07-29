@@ -69,6 +69,37 @@ async function handleGET(req: NextRequest) {
       }
     }
 
+    // 1b. GREEN MODE. When enabled globally, only green-tagged DHs are visible
+    //     anywhere in the product. It already gates the matching SQL functions;
+    //     this feed was the surface that missed it, so Community kept serving
+    //     posts by non-green people. Intersect BEFORE the 500-id cap below, or
+    //     the cap could slice every green author out of the list.
+    const { data: gmCfg } = await supabaseAdmin
+      .from('digital_human_config')
+      .select('value')
+      .eq('key', 'green_mode_enabled')
+      .maybeSingle();
+    const greenModeOn =
+      String((gmCfg as { value?: unknown } | null)?.value ?? '')
+        .trim()
+        .toLowerCase() === 'true';
+
+    if (greenModeOn) {
+      const { data: greenRows } = await supabaseAdmin
+        .from('user_interests')
+        .select('user_id')
+        .eq('interest_key', 'green_mode');
+      const greenIds = new Set(
+        (greenRows ?? []).map((r) => (r as { user_id: string }).user_id)
+      );
+      taggedIds = taggedIds
+        ? taggedIds.filter((id) => greenIds.has(id))
+        : [...greenIds];
+      if (taggedIds.length === 0) {
+        return NextResponse.json({ posts: [], nextCursor: null, hasMore: false });
+      }
+    }
+
     let authorsQ = supabaseAdmin
       .from('users')
       .select('userid, username, avatar, age, strategy_key')

@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
   const gender = (url.searchParams.get('gender') ?? 'all').toLowerCase();
   const personality = url.searchParams.get('personality') ?? 'all';
   const search = (url.searchParams.get('search') ?? '').trim();
+  const whitelistedOnly = url.searchParams.get('whitelisted') === 'true';
   const offset = parseInt(url.searchParams.get('offset') ?? '0') || 0;
   const limit = parseInt(url.searchParams.get('limit') ?? '20') || 20;
 
@@ -45,6 +46,10 @@ export async function GET(req: NextRequest) {
   if (gender === 'male') q = q.eq('gender', 'Male');
   if (personality !== 'all') q = q.eq('personality', personality);
   if (search) q = q.ilike('username', `${search}%`);
+  // Filtered server-side, not on the client: the list pages in via
+  // offset/limit, so a client-side filter would leave pages nearly empty and
+  // break the infinite scroll's "did we reach the end" signal.
+  if (whitelistedOnly) q = q.eq('whitelisted', true);
 
   const { data, error } = await q;
   if (error) return jsonError(error.message, 500);
@@ -82,11 +87,32 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Green Mode + Featured membership for the per-row switches. Both are
+  // `user_interests` tags, so one batched read covers them.
+  const greenMode = new Set<string>();
+  const featured = new Set<string>();
+  if (ids.length) {
+    const { data: tagRows, error: tagErr } = await supabaseAdmin
+      .from('user_interests')
+      .select('user_id, interest_key')
+      .in('interest_key', ['green_mode', 'featured'])
+      .in('user_id', ids);
+    if (!tagErr) {
+      for (const t of tagRows ?? []) {
+        const { user_id, interest_key } = t as { user_id: string; interest_key: string };
+        if (interest_key === 'green_mode') greenMode.add(user_id);
+        else if (interest_key === 'featured') featured.add(user_id);
+      }
+    }
+  }
+
   return NextResponse.json({
     data: rows.map((r) => ({
       ...r,
       postsCount: counts[r.userid] ?? 0,
       chatImagesCount: imgCounts[r.userid] ?? 0,
+      greenMode: greenMode.has(r.userid),
+      featured: featured.has(r.userid),
     })),
   });
 }

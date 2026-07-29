@@ -94,3 +94,58 @@ export async function PUT(
 
   return NextResponse.json({ ok: true, selected: keys });
 }
+
+/**
+ * PATCH /api/admin/digital-humans/[id]/interests  { key: string, enabled: boolean }
+ *
+ * Toggles ONE tag, additively. Deliberately separate from PUT above: PUT is
+ * replace-all, so a caller that only knows about a single tag (the list page's
+ * per-row Green Mode switch) would wipe every other tag on that DH.
+ */
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  if (!isAdminRequest(req)) return jsonError('Unauthorized', 401);
+  const { id } = await params;
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonError('Invalid JSON body', 400);
+  }
+
+  const { key, enabled } = (body ?? {}) as { key?: unknown; enabled?: unknown };
+  if (typeof key !== 'string' || !key.trim()) return jsonError('Missing key', 400);
+  if (typeof enabled !== 'boolean') return jsonError('Missing enabled', 400);
+  const interestKey = key.trim();
+
+  // Same FK guard as PUT: validate against the active catalog.
+  const { data: match, error: catErr } = await supabaseAdmin
+    .from('interests')
+    .select('key')
+    .eq('key', interestKey)
+    .eq('active', true)
+    .maybeSingle();
+  if (catErr) return jsonError(catErr.message, 500);
+  if (!match) return jsonError(`Unknown interest "${interestKey}"`, 400);
+
+  if (enabled) {
+    // Idempotent: the PK is (user_id, interest_key), so a repeat tap is a no-op
+    // rather than a duplicate-key error.
+    const { error } = await supabaseAdmin
+      .from('user_interests')
+      .upsert({ user_id: id, interest_key: interestKey }, { onConflict: 'user_id,interest_key' });
+    if (error) return jsonError(error.message, 500);
+  } else {
+    const { error } = await supabaseAdmin
+      .from('user_interests')
+      .delete()
+      .eq('user_id', id)
+      .eq('interest_key', interestKey);
+    if (error) return jsonError(error.message, 500);
+  }
+
+  return NextResponse.json({ ok: true, key: interestKey, enabled });
+}

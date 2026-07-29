@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { ArrowUpDown, Eye, Plus, SlidersHorizontal, Star } from "lucide-react"
+import { ArrowUpDown, Leaf, Plus, SlidersHorizontal, Star } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter, useSearchParams, usePathname } from "next/navigation"
 
@@ -27,6 +27,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { cn } from "@/lib/utils"
 
 type Row = {
   userid: string
@@ -40,6 +42,256 @@ type Row = {
   postsCount: number
   chatImagesCount: number
   whitelisted?: boolean | null
+  greenMode?: boolean | null
+  featured?: boolean | null
+}
+
+/**
+ * Avatar with a large hover preview.
+ *
+ * Built on Popover (driven by mouse enter/leave) rather than an inline
+ * absolutely-positioned element: the shadcn Table wraps itself in an
+ * `overflow-x-auto` container, which would clip any in-flow popup. Popover
+ * portals to the body, so it escapes. `pointer-events-none` on the content
+ * keeps it from swallowing the row's click, and auto-focus is suppressed so
+ * merely hovering never steals the caret from an inline editor.
+ */
+function AvatarHoverPreview({
+  src,
+  alt,
+  fallback,
+}: {
+  src: string
+  alt: string
+  fallback: string
+}) {
+  const [open, setOpen] = React.useState(false)
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <span
+          className="inline-block cursor-pointer"
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+        >
+          <Avatar className="h-14 w-14">
+            <AvatarImage src={src} alt={alt} />
+            <AvatarFallback>{fallback}</AvatarFallback>
+          </Avatar>
+        </span>
+      </PopoverTrigger>
+      <PopoverContent
+        side="right"
+        align="center"
+        sideOffset={12}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        className="pointer-events-none w-auto p-1.5"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={alt}
+          className="h-64 w-64 rounded-md object-cover"
+        />
+        <div className="mt-1.5 truncate text-center text-xs text-muted-foreground">
+          {alt}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+/**
+ * Row-level switch for a `user_interests` tag (Featured / Green Mode).
+ *
+ * Sized for a comfortable pointer target — 56x32 with a 44px-tall padded hit
+ * area — because these sit in dense table rows. `stopPropagation` on both
+ * click and keydown is load-bearing: the row itself navigates on click, so
+ * without it every toggle would also open the detail page.
+ */
+function TagSwitch({
+  checked,
+  pending,
+  label,
+  icon,
+  onColor,
+  onToggle,
+}: {
+  checked: boolean
+  pending: boolean
+  label: string
+  icon: React.ReactNode
+  onColor: string
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={pending}
+      onClick={(e) => {
+        e.stopPropagation()
+        onToggle()
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+      className={cn(
+        "inline-flex items-center justify-center px-2 py-1.5",
+        pending && "opacity-50"
+      )}
+    >
+      <span
+        className={cn(
+          "relative inline-flex h-8 w-14 shrink-0 items-center rounded-full border transition-colors",
+          checked ? onColor : "border-input bg-muted"
+        )}
+      >
+        <span
+          className={cn(
+            "inline-flex h-7 w-7 items-center justify-center rounded-full bg-background shadow transition-transform",
+            checked ? "translate-x-[26px]" : "translate-x-[2px]"
+          )}
+        >
+          {icon}
+        </span>
+      </span>
+    </button>
+  )
+}
+
+/** Click-to-edit text cell. Enter or blur saves, Escape reverts. */
+function InlineText({
+  value,
+  placeholder,
+  onSave,
+}: {
+  value: string
+  placeholder: string
+  onSave: (next: string) => Promise<boolean>
+}) {
+  const [editing, setEditing] = React.useState(false)
+  const [draft, setDraft] = React.useState(value)
+  const [saving, setSaving] = React.useState(false)
+
+  // Re-sync when the row's value changes underneath (optimistic update or
+  // a rollback after a failed save).
+  React.useEffect(() => {
+    if (!editing) setDraft(value)
+  }, [value, editing])
+
+  const commit = async () => {
+    setEditing(false)
+    if (draft.trim() === value.trim()) return
+    setSaving(true)
+    const ok = await onSave(draft.trim())
+    if (!ok) setDraft(value)
+    setSaving(false)
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setEditing(true)
+        }}
+        className={cn(
+          "-mx-1 w-full max-w-[220px] truncate rounded px-1 py-0.5 text-left",
+          "hover:bg-muted hover:ring-1 hover:ring-border",
+          saving && "opacity-50",
+          !value && "italic text-muted-foreground/60"
+        )}
+        title="Click to edit"
+      >
+        {value || placeholder}
+      </button>
+    )
+  }
+
+  return (
+    <input
+      autoFocus
+      value={draft}
+      disabled={saving}
+      onChange={(e) => setDraft(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onBlur={() => void commit()}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === "Enter") void commit()
+        if (e.key === "Escape") {
+          setDraft(value)
+          setEditing(false)
+        }
+      }}
+      className="h-7 w-full max-w-[220px] rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+    />
+  )
+}
+
+/** Click-to-edit dropdown cell. Choosing an option saves immediately. */
+function InlineSelect({
+  value,
+  options,
+  onSave,
+}: {
+  value: string
+  options: string[]
+  onSave: (next: string) => Promise<boolean>
+}) {
+  const [editing, setEditing] = React.useState(false)
+  const [saving, setSaving] = React.useState(false)
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setEditing(true)
+        }}
+        className={cn(
+          "-mx-1 w-full max-w-[180px] truncate rounded px-1 py-0.5 text-left",
+          "hover:bg-muted hover:ring-1 hover:ring-border",
+          saving && "opacity-50",
+          !value && "italic text-muted-foreground/60"
+        )}
+        title="Click to edit"
+      >
+        {value || "Set persona"}
+      </button>
+    )
+  }
+
+  return (
+    <select
+      autoFocus
+      value={value}
+      disabled={saving}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+      onBlur={() => setEditing(false)}
+      onChange={async (e) => {
+        const next = e.target.value
+        setEditing(false)
+        if (next === value) return
+        setSaving(true)
+        await onSave(next)
+        setSaving(false)
+      }}
+      className="h-7 w-full max-w-[180px] rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+    >
+      <option value="">—</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  )
 }
 
 function ManageDigitalHumansContent() {
@@ -58,12 +310,13 @@ function ManageDigitalHumansContent() {
   const genderFilter = (searchParams.get("gender") as "all" | "female" | "male") || "all"
   const personalityFilter = searchParams.get("personality") || "All"
   const searchQuery = searchParams.get("search") || ""
+  const whitelistedOnly = searchParams.get("whitelisted") === "true"
 
   // Local state for search input with debounce
   const [searchInput, setSearchInput] = React.useState(searchQuery)
 
   // Fetched personalities based on gender filter
-  const [personalities, setPersonalities] = React.useState<string[]>([])
+  const [personalitiesByGender, setPersonalitiesByGender] = React.useState<Record<string, string[]>>({})
 
   type SortKey = "name" | "created" | "posts" | "images"
   type SortDir = "asc" | "desc"
@@ -94,7 +347,8 @@ function ManageDigitalHumansContent() {
   }, [searchParams, pathname, router])
 
   const visibleColumnCount = React.useMemo(() => {
-    // name + actions are always visible
+    // name + Featured + Green Mode are always visible; the Actions column is
+    // gone (rows are clickable).
     return (
       (columns.avatar ? 1 : 0) +
       1 +
@@ -103,9 +357,93 @@ function ManageDigitalHumansContent() {
       (columns.posts ? 1 : 0) +
       (columns.chatImages ? 1 : 0) +
       (columns.created ? 1 : 0) +
-      1
+      2
     )
   }, [columns])
+
+  /// Persists one field on one DH and reconciles the row optimistically.
+  /// Returns false on failure so the editor can restore its own draft.
+  const saveRowField = React.useCallback(
+    async (userid: string, field: "profession" | "personality", value: string | null) => {
+      const previous = rows.find((r) => r.userid === userid)?.[field] ?? null
+      setRows((prev) =>
+        prev.map((r) => (r.userid === userid ? { ...r, [field]: value } : r))
+      )
+      try {
+        const res = await fetch(`/api/admin/users/${encodeURIComponent(userid)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [field]: value }),
+        })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error(body?.error || `Request failed (${res.status})`)
+        }
+        toast.success(field === "profession" ? "Profession updated" : "Persona updated")
+        return true
+      } catch (e) {
+        setRows((prev) =>
+          prev.map((r) => (r.userid === userid ? { ...r, [field]: previous } : r))
+        )
+        toast.error(e instanceof Error ? e.message : "Couldn't save")
+        return false
+      }
+    },
+    [rows]
+  )
+
+  /// Rows open in a NEW TAB so the list (and its scroll position, filters and
+  /// search) survives — this page is worked through in bulk.
+  const openRow = React.useCallback((userid: string) => {
+    window.open(`/admin/digital-humans/${userid}`, "_blank", "noopener,noreferrer")
+  }, [])
+
+  /// Tag writes in flight, keyed `${userid}:${key}` — disables just that switch.
+  const [tagPending, setTagPending] = React.useState<Set<string>>(new Set())
+
+  /// Green Mode and Featured are both `user_interests` rows, so one handler
+  /// covers both. PATCH (not PUT) so it only touches this one tag — PUT is
+  /// replace-all and would wipe the DH's other tags.
+  const toggleTag = React.useCallback(
+    async (userid: string, key: "green_mode" | "featured", next: boolean) => {
+      const field = key === "green_mode" ? "greenMode" : "featured"
+      const pendingKey = `${userid}:${key}`
+      setTagPending((p) => new Set(p).add(pendingKey))
+      // Optimistic: the switch flips immediately and rolls back on failure —
+      // the round trip is long enough that a lagging toggle feels broken.
+      setRows((prev) =>
+        prev.map((r) => (r.userid === userid ? { ...r, [field]: next } : r))
+      )
+      try {
+        const res = await fetch(
+          `/api/admin/digital-humans/${encodeURIComponent(userid)}/interests`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key, enabled: next }),
+          }
+        )
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error(body?.error || `Request failed (${res.status})`)
+        }
+        const label = key === "green_mode" ? "Green Mode" : "Featured"
+        toast.success(next ? `Added to ${label}` : `Removed from ${label}`)
+      } catch (e) {
+        setRows((prev) =>
+          prev.map((r) => (r.userid === userid ? { ...r, [field]: !next } : r))
+        )
+        toast.error(e instanceof Error ? e.message : "Couldn't update tag")
+      } finally {
+        setTagPending((p) => {
+          const n = new Set(p)
+          n.delete(pendingKey)
+          return n
+        })
+      }
+    },
+    []
+  )
 
   const toggleSort = React.useCallback(
     (key: SortKey) => {
@@ -139,23 +477,25 @@ function ManageDigitalHumansContent() {
   }, [rows, sortKey, sortDir])
 
   // Fetch Personalities Effect
+  //
+  // BOTH genders are always fetched and kept separately. The filter dropdown
+  // wants the union, but the inline Persona editor must offer only the personas
+  // valid for THAT ROW's gender — personality is a join key into SystemPrompts
+  // (keyed `gender:personality`), so a mismatched pair silently falls back to
+  // the General prompt.
   React.useEffect(() => {
     let cancelled = false;
     const fetchPersonalities = async () => {
-      const gendersToFetch = genderFilter === 'all' ? ['Male', 'Female'] : [genderFilter === 'female' ? 'Female' : 'Male'];
-      const allPersonalities = new Set<string>();
-
       try {
-        for (const g of gendersToFetch) {
-          const res = await fetch(`/api/system-prompts/personalities?gender=${encodeURIComponent(g)}`);
-          if (res.ok) {
+        const entries = await Promise.all(
+          (["Female", "Male"] as const).map(async (g) => {
+            const res = await fetch(`/api/system-prompts/personalities?gender=${encodeURIComponent(g)}`);
+            if (!res.ok) return [g, [] as string[]] as const;
             const json = await res.json();
-            (json.data || []).forEach((p: string) => allPersonalities.add(p));
-          }
-        }
-        if (!cancelled) {
-          setPersonalities(Array.from(allPersonalities).sort());
-        }
+            return [g, ((json.data || []) as string[]).slice().sort()] as const;
+          })
+        );
+        if (!cancelled) setPersonalitiesByGender(Object.fromEntries(entries) as Record<string, string[]>);
       } catch (err) {
         console.error("Failed to fetch personalities", err);
       }
@@ -163,7 +503,18 @@ function ManageDigitalHumansContent() {
 
     fetchPersonalities();
     return () => { cancelled = true; };
-  }, [genderFilter]);
+  }, []);
+
+  // Options for the top filter: union when viewing all genders.
+  const personalities = React.useMemo(() => {
+    const wanted =
+      genderFilter === "all"
+        ? ["Female", "Male"]
+        : [genderFilter === "female" ? "Female" : "Male"];
+    return Array.from(
+      new Set(wanted.flatMap((g) => personalitiesByGender[g] ?? []))
+    ).sort();
+  }, [personalitiesByGender, genderFilter]);
 
   const fetchRows = React.useCallback(async (isLoadMore = false) => {
     if (isLoadMore) setLoadingMore(true)
@@ -175,7 +526,7 @@ function ManageDigitalHumansContent() {
 
       const searchParam = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : '';
       const res = await fetch(
-        `/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}&personality=${encodeURIComponent(personalityFilter === 'All' || personalityFilter === null ? 'all' : personalityFilter)}${searchParam}&offset=${currentOffset}&limit=${LIMIT}`
+        `/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}&personality=${encodeURIComponent(personalityFilter === 'All' || personalityFilter === null ? 'all' : personalityFilter)}${searchParam}${whitelistedOnly ? '&whitelisted=true' : ''}&offset=${currentOffset}&limit=${LIMIT}`
       )
       const json = (await res.json()) as { data?: Row[]; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to fetch digital humans")
@@ -203,7 +554,7 @@ function ManageDigitalHumansContent() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [genderFilter, personalityFilter, searchQuery, offset])
+  }, [genderFilter, personalityFilter, searchQuery, whitelistedOnly, offset])
 
   // Debounce search input to URL param
   React.useEffect(() => {
@@ -224,24 +575,25 @@ function ManageDigitalHumansContent() {
   // Reset offset and fetch when filters change (detected via URL change)
   // We use a ref to track if this is the initial mount or a filter change
   const isFirstRun = React.useRef(true);
-  const prevFilters = React.useRef({ genderFilter, personalityFilter, searchQuery });
+  const prevFilters = React.useRef({ genderFilter, personalityFilter, searchQuery, whitelistedOnly });
 
   React.useEffect(() => {
     const filtersChanged =
       prevFilters.current.genderFilter !== genderFilter ||
       prevFilters.current.personalityFilter !== personalityFilter ||
+      prevFilters.current.whitelistedOnly !== whitelistedOnly ||
       prevFilters.current.searchQuery !== searchQuery;
 
     if (filtersChanged) {
       setOffset(0);
       setHasMore(true);
-      prevFilters.current = { genderFilter, personalityFilter, searchQuery };
+      prevFilters.current = { genderFilter, personalityFilter, searchQuery, whitelistedOnly };
       void fetchRows(false);
     } else if (isFirstRun.current) {
       void fetchRows(false);
       isFirstRun.current = false;
     }
-  }, [genderFilter, personalityFilter, searchQuery, fetchRows])
+  }, [genderFilter, personalityFilter, searchQuery, whitelistedOnly, fetchRows])
 
 
   // Infinite scroll
@@ -407,6 +759,25 @@ function ManageDigitalHumansContent() {
                   <TabsTrigger value="male">Male</TabsTrigger>
                 </TabsList>
               </Tabs>
+
+              {/* Lives in the URL like every other filter, so a filtered list
+                  survives a refresh and can be shared as a link. */}
+              <Button
+                type="button"
+                variant={whitelistedOnly ? "default" : "outline"}
+                size="sm"
+                className="h-9 gap-2"
+                aria-pressed={whitelistedOnly}
+                onClick={() => updateFilters({ whitelisted: whitelistedOnly ? null : "true" })}
+              >
+                <Star
+                  className={cn(
+                    "h-4 w-4",
+                    whitelistedOnly ? "fill-current" : "fill-amber-400 text-amber-400"
+                  )}
+                />
+                Whitelisted
+              </Button>
             </div>
           </div>
         </div>
@@ -424,7 +795,7 @@ function ManageDigitalHumansContent() {
                 </button>
               </TableHead>
               {columns.profession ? <TableHead>Profession</TableHead> : null}
-              {columns.personality ? <TableHead>Personality</TableHead> : null}
+              {columns.personality ? <TableHead>Persona</TableHead> : null}
               {columns.posts ? (
                 <TableHead>
                   <button
@@ -458,7 +829,8 @@ function ManageDigitalHumansContent() {
                   </button>
                 </TableHead>
               ) : null}
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="text-center">Featured</TableHead>
+              <TableHead className="text-center">Green Mode</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -477,16 +849,29 @@ function ManageDigitalHumansContent() {
             ) : (
               <>
                 {sortedRows.map((r) => (
-                  <TableRow key={r.userid} className="hover:bg-muted/20">
+                  <TableRow
+                    key={r.userid}
+                    className="cursor-pointer hover:bg-muted/40"
+                    // Keyboard-reachable too: losing the Details link would
+                    // otherwise leave this row navigable by mouse only.
+                    tabIndex={0}
+                    role="link"
+                    aria-label={`Open ${r.username} in a new tab`}
+                    onClick={() => openRow(r.userid)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault()
+                        openRow(r.userid)
+                      }
+                    }}
+                  >
                     {columns.avatar ? (
                       <TableCell className="pl-4">
-                        <Avatar className="h-9 w-9">
-                          <AvatarImage
-                            src={`/api/avatar/${r.userid}?v=${encodeURIComponent(r.updated_at || r.created_at)}`}
-                            alt={r.username}
-                          />
-                          <AvatarFallback>{r.username?.slice(0, 2)?.toUpperCase()}</AvatarFallback>
-                        </Avatar>
+                        <AvatarHoverPreview
+                          src={`/api/avatar/${r.userid}?v=${encodeURIComponent(r.updated_at || r.created_at)}`}
+                          alt={r.username}
+                          fallback={r.username?.slice(0, 2)?.toUpperCase() ?? "??"}
+                        />
                       </TableCell>
                     ) : null}
                     <TableCell className="font-medium">
@@ -498,10 +883,26 @@ function ManageDigitalHumansContent() {
                       </span>
                     </TableCell>
                     {columns.profession ? (
-                      <TableCell className="text-muted-foreground">{r.profession ?? "—"}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <InlineText
+                          value={r.profession ?? ""}
+                          placeholder="Add profession"
+                          onSave={(v) => saveRowField(r.userid, "profession", v || null)}
+                        />
+                      </TableCell>
                     ) : null}
                     {columns.personality ? (
-                      <TableCell className="text-muted-foreground">{r.personality ?? "—"}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <InlineSelect
+                          value={r.personality ?? ""}
+                          // Gender-scoped on purpose: personality is a join key
+                          // into SystemPrompts (`gender:personality`), so an
+                          // option from the other gender would silently fall
+                          // back to the General prompt.
+                          options={personalitiesByGender[r.gender ?? ""] ?? []}
+                          onSave={(v) => saveRowField(r.userid, "personality", v || null)}
+                        />
+                      </TableCell>
                     ) : null}
                     {columns.posts ? <TableCell className="text-muted-foreground">{r.postsCount}</TableCell> : null}
                     {columns.chatImages ? <TableCell className="text-muted-foreground">{r.chatImagesCount}</TableCell> : null}
@@ -510,15 +911,39 @@ function ManageDigitalHumansContent() {
                         {new Date(r.created_at).toLocaleDateString()}
                       </TableCell>
                     ) : null}
-                    <TableCell className="text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <Button asChild variant="outline" size="sm">
-                          <Link href={`/admin/digital-humans/${r.userid}`} className="gap-2">
-                            <Eye className="h-4 w-4" />
-                            Details
-                          </Link>
-                        </Button>
-                      </div>
+                    <TableCell className="text-center">
+                      <TagSwitch
+                        checked={!!r.featured}
+                        pending={tagPending.has(`${r.userid}:featured`)}
+                        label={`Featured for ${r.username}`}
+                        onColor="bg-sky-600 border-sky-600"
+                        icon={
+                          <Star
+                            className={cn(
+                              "h-3.5 w-3.5",
+                              r.featured ? "fill-sky-600 text-sky-600" : "text-muted-foreground"
+                            )}
+                          />
+                        }
+                        onToggle={() => void toggleTag(r.userid, "featured", !r.featured)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <TagSwitch
+                        checked={!!r.greenMode}
+                        pending={tagPending.has(`${r.userid}:green_mode`)}
+                        label={`Green Mode for ${r.username}`}
+                        onColor="bg-emerald-600 border-emerald-600"
+                        icon={
+                          <Leaf
+                            className={cn(
+                              "h-3.5 w-3.5",
+                              r.greenMode ? "text-emerald-600" : "text-muted-foreground"
+                            )}
+                          />
+                        }
+                        onToggle={() => void toggleTag(r.userid, "green_mode", !r.greenMode)}
+                      />
                     </TableCell>
                   </TableRow>
                 ))}

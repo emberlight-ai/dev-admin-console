@@ -534,11 +534,24 @@ function ChatInterface({
     };
   }, [matchId]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll the TRANSCRIPT to the bottom — not the page.
+  //
+  // `scrollIntoView` walks every scrollable ancestor, so it dragged the whole
+  // admin page down to the chat panel on each new message. Scrolling the Radix
+  // viewport directly keeps the movement inside this box. The first paint
+  // jumps; later messages animate.
+  const hasAutoScrolled = React.useRef(false);
   React.useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (!messages.length) return;
+    const viewport = scrollRef.current?.closest<HTMLElement>(
+      '[data-radix-scroll-area-viewport]'
+    );
+    if (!viewport) return;
+    viewport.scrollTo({
+      top: viewport.scrollHeight,
+      behavior: hasAutoScrolled.current ? 'smooth' : 'auto',
+    });
+    hasAutoScrolled.current = true;
   }, [messages]);
 
   const handleSend = async () => {

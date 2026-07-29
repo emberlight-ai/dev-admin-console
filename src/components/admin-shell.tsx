@@ -46,7 +46,7 @@ const navGroups = [
   {
     title: "Digital Humans",
     items: [
-      { href: "/admin/digital-humans", label: "Profiles", icon: Bot },
+      { href: "/admin/digital-humans", label: "Digital Humans", icon: Bot },
       { href: "/admin/personas", label: "Personas", icon: ScrollText },
       { href: "/admin/strategies", label: "Strategies", icon: Gauge },
       { href: "/admin/categories", label: "Categories", icon: Sparkles },
