@@ -29,6 +29,8 @@ export async function GET(req: NextRequest) {
   const personality = url.searchParams.get('personality') ?? 'all';
   const search = (url.searchParams.get('search') ?? '').trim();
   const whitelistedOnly = url.searchParams.get('whitelisted') === 'true';
+  // Membership filter on a `user_interests` tag (green_mode / featured).
+  const tagFilter = (url.searchParams.get('tag') ?? '').trim();
   const offset = parseInt(url.searchParams.get('offset') ?? '0') || 0;
   const limit = parseInt(url.searchParams.get('limit') ?? '20') || 20;
 
@@ -50,6 +52,22 @@ export async function GET(req: NextRequest) {
   // offset/limit, so a client-side filter would leave pages nearly empty and
   // break the infinite scroll's "did we reach the end" signal.
   if (whitelistedOnly) q = q.eq('whitelisted', true);
+
+  // Server-side for the same reason as `whitelisted`: the list pages via
+  // offset/limit, so filtering on the client would leave pages near-empty and
+  // break the infinite scroll's end detection. This is also what makes
+  // "show me the green ones" work across the whole catalog rather than only
+  // the rows already loaded — a client-side sort can't do that.
+  if (tagFilter) {
+    const { data: tagRows, error: tagErr } = await supabaseAdmin
+      .from('user_interests')
+      .select('user_id')
+      .eq('interest_key', tagFilter);
+    if (tagErr) return jsonError(tagErr.message, 500);
+    const ids = [...new Set((tagRows ?? []).map((r) => (r as { user_id: string }).user_id))];
+    if (ids.length === 0) return NextResponse.json({ data: [] });
+    q = q.in('userid', ids);
+  }
 
   const { data, error } = await q;
   if (error) return jsonError(error.message, 500);

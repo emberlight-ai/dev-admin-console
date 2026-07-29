@@ -343,6 +343,7 @@ function ManageDigitalHumansContent() {
   const personalityFilter = searchParams.get("personality") || "All"
   const searchQuery = searchParams.get("search") || ""
   const whitelistedOnly = searchParams.get("whitelisted") === "true"
+  const tagFilter = searchParams.get("tag") || ""
 
   // Local state for search input with debounce
   const [searchInput, setSearchInput] = React.useState(searchQuery)
@@ -350,7 +351,7 @@ function ManageDigitalHumansContent() {
   // Fetched personalities based on gender filter
   const [personalitiesByGender, setPersonalitiesByGender] = React.useState<Record<string, string[]>>({})
 
-  type SortKey = "name" | "created" | "posts" | "images"
+  type SortKey = "name" | "created" | "posts" | "images" | "featured" | "greenMode" | "whitelisted"
   type SortDir = "asc" | "desc"
   const [sortKey, setSortKey] = React.useState<SortKey>("created")
   const [sortDir, setSortDir] = React.useState<SortDir>("desc")
@@ -380,8 +381,8 @@ function ManageDigitalHumansContent() {
   }, [searchParams, pathname, router])
 
   const visibleColumnCount = React.useMemo(() => {
-    // name + Featured + Green Mode are always visible; the Actions column is
-    // gone (rows are clickable).
+    // name + Whitelisted + Featured + Green Mode are always visible; the
+    // Actions column is gone (rows are clickable).
     return (
       (columns.avatar ? 1 : 0) +
       1 +
@@ -391,7 +392,7 @@ function ManageDigitalHumansContent() {
       (columns.posts ? 1 : 0) +
       (columns.chatImages ? 1 : 0) +
       (columns.created ? 1 : 0) +
-      2
+      3
     )
   }, [columns])
 
@@ -437,6 +438,42 @@ function ManageDigitalHumansContent() {
   const openRow = React.useCallback((userid: string) => {
     window.open(`/admin/digital-humans/${userid}`, "_blank", "noopener,noreferrer")
   }, [])
+
+  /// Whitelisted is a COLUMN on `users`, not a `user_interests` tag, so it
+  /// writes through the user PATCH rather than the interests route.
+  const toggleWhitelisted = React.useCallback(
+    async (userid: string, next: boolean) => {
+      const pendingKey = `${userid}:whitelisted`
+      setTagPending((p) => new Set(p).add(pendingKey))
+      setRows((prev) =>
+        prev.map((r) => (r.userid === userid ? { ...r, whitelisted: next } : r))
+      )
+      try {
+        const res = await fetch(`/api/admin/users/${encodeURIComponent(userid)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ whitelisted: next }),
+        })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error(body?.error || `Request failed (${res.status})`)
+        }
+        toast.success(next ? "Whitelisted" : "Removed from whitelist")
+      } catch (e) {
+        setRows((prev) =>
+          prev.map((r) => (r.userid === userid ? { ...r, whitelisted: !next } : r))
+        )
+        toast.error(e instanceof Error ? e.message : "Couldn't update whitelist")
+      } finally {
+        setTagPending((p) => {
+          const n = new Set(p)
+          n.delete(pendingKey)
+          return n
+        })
+      }
+    },
+    []
+  )
 
   /// Tag writes in flight, keyed `${userid}:${key}` — disables just that switch.
   const [tagPending, setTagPending] = React.useState<Set<string>>(new Set())
@@ -510,6 +547,18 @@ function ManageDigitalHumansContent() {
       if (sortKey === "images") {
         return (a.chatImagesCount - b.chatImagesCount) * dir
       }
+      // Boolean columns: desc puts the tagged rows on top, which is the point.
+      if (sortKey === "featured" || sortKey === "greenMode" || sortKey === "whitelisted") {
+        const flag = (r: Row) =>
+          sortKey === "featured" ? !!r.featured
+            : sortKey === "greenMode" ? !!r.greenMode
+              : !!r.whitelisted
+        const delta = Number(flag(a)) - Number(flag(b))
+        // Stable, readable secondary ordering inside each group.
+        return delta !== 0
+          ? delta * dir
+          : a.username.localeCompare(b.username, undefined, { sensitivity: "base" })
+      }
       // created
       return (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir
     })
@@ -566,7 +615,7 @@ function ManageDigitalHumansContent() {
 
       const searchParam = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : '';
       const res = await fetch(
-        `/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}&personality=${encodeURIComponent(personalityFilter === 'All' || personalityFilter === null ? 'all' : personalityFilter)}${searchParam}${whitelistedOnly ? '&whitelisted=true' : ''}&offset=${currentOffset}&limit=${LIMIT}`
+        `/api/admin/digital-humans?gender=${encodeURIComponent(genderFilter)}&personality=${encodeURIComponent(personalityFilter === 'All' || personalityFilter === null ? 'all' : personalityFilter)}${searchParam}${whitelistedOnly ? '&whitelisted=true' : ''}${tagFilter ? `&tag=${encodeURIComponent(tagFilter)}` : ''}&offset=${currentOffset}&limit=${LIMIT}`
       )
       const json = (await res.json()) as { data?: Row[]; error?: string }
       if (!res.ok) throw new Error(json.error || "Failed to fetch digital humans")
@@ -594,7 +643,7 @@ function ManageDigitalHumansContent() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [genderFilter, personalityFilter, searchQuery, whitelistedOnly, offset])
+  }, [genderFilter, personalityFilter, searchQuery, whitelistedOnly, tagFilter, offset])
 
   // Debounce search input to URL param
   React.useEffect(() => {
@@ -615,25 +664,26 @@ function ManageDigitalHumansContent() {
   // Reset offset and fetch when filters change (detected via URL change)
   // We use a ref to track if this is the initial mount or a filter change
   const isFirstRun = React.useRef(true);
-  const prevFilters = React.useRef({ genderFilter, personalityFilter, searchQuery, whitelistedOnly });
+  const prevFilters = React.useRef({ genderFilter, personalityFilter, searchQuery, whitelistedOnly, tagFilter });
 
   React.useEffect(() => {
     const filtersChanged =
       prevFilters.current.genderFilter !== genderFilter ||
       prevFilters.current.personalityFilter !== personalityFilter ||
       prevFilters.current.whitelistedOnly !== whitelistedOnly ||
+      prevFilters.current.tagFilter !== tagFilter ||
       prevFilters.current.searchQuery !== searchQuery;
 
     if (filtersChanged) {
       setOffset(0);
       setHasMore(true);
-      prevFilters.current = { genderFilter, personalityFilter, searchQuery, whitelistedOnly };
+      prevFilters.current = { genderFilter, personalityFilter, searchQuery, whitelistedOnly, tagFilter };
       void fetchRows(false);
     } else if (isFirstRun.current) {
       void fetchRows(false);
       isFirstRun.current = false;
     }
-  }, [genderFilter, personalityFilter, searchQuery, whitelistedOnly, fetchRows])
+  }, [genderFilter, personalityFilter, searchQuery, whitelistedOnly, tagFilter, fetchRows])
 
 
   // Infinite scroll
@@ -810,8 +860,11 @@ function ManageDigitalHumansContent() {
                 </TabsList>
               </Tabs>
 
-              {/* Lives in the URL like every other filter, so a filtered list
-                  survives a refresh and can be shared as a link. */}
+              {/* All three live in the URL like the other filters, so a
+                  filtered list survives a refresh and can be shared as a link.
+                  Filtering (server-side) is what actually isolates a cohort
+                  across all 576 rows — the column sorts only reorder what's
+                  already loaded. */}
               <Button
                 type="button"
                 variant={whitelistedOnly ? "default" : "outline"}
@@ -823,10 +876,48 @@ function ManageDigitalHumansContent() {
                 <Star
                   className={cn(
                     "h-4 w-4",
-                    whitelistedOnly ? "fill-current" : "fill-amber-400 text-amber-400"
+                    whitelistedOnly ? "fill-current" : "fill-amber-500 text-amber-500"
                   )}
                 />
                 Whitelisted
+              </Button>
+
+              <Button
+                type="button"
+                variant={tagFilter === "featured" ? "default" : "outline"}
+                size="sm"
+                className="h-9 gap-2"
+                aria-pressed={tagFilter === "featured"}
+                onClick={() =>
+                  updateFilters({ tag: tagFilter === "featured" ? null : "featured" })
+                }
+              >
+                <Star
+                  className={cn(
+                    "h-4 w-4",
+                    tagFilter === "featured" ? "fill-current" : "fill-sky-600 text-sky-600"
+                  )}
+                />
+                Featured
+              </Button>
+
+              <Button
+                type="button"
+                variant={tagFilter === "green_mode" ? "default" : "outline"}
+                size="sm"
+                className="h-9 gap-2"
+                aria-pressed={tagFilter === "green_mode"}
+                onClick={() =>
+                  updateFilters({ tag: tagFilter === "green_mode" ? null : "green_mode" })
+                }
+              >
+                <Leaf
+                  className={cn(
+                    "h-4 w-4",
+                    tagFilter === "green_mode" ? "" : "text-emerald-600"
+                  )}
+                />
+                Green Mode
               </Button>
             </div>
           </div>
@@ -880,8 +971,33 @@ function ManageDigitalHumansContent() {
                   </button>
                 </TableHead>
               ) : null}
-              <TableHead className="text-center">Featured</TableHead>
-              <TableHead className="text-center">Green Mode</TableHead>
+              <TableHead className="text-center">
+                <button
+                  type="button"
+                  onClick={() => toggleSort("whitelisted")}
+                  className="inline-flex items-center gap-1 font-medium"
+                >
+                  Whitelisted <ArrowUpDown className="h-4 w-4 opacity-60" />
+                </button>
+              </TableHead>
+              <TableHead className="text-center">
+                <button
+                  type="button"
+                  onClick={() => toggleSort("featured")}
+                  className="inline-flex items-center gap-1 font-medium"
+                >
+                  Featured <ArrowUpDown className="h-4 w-4 opacity-60" />
+                </button>
+              </TableHead>
+              <TableHead className="text-center">
+                <button
+                  type="button"
+                  onClick={() => toggleSort("greenMode")}
+                  className="inline-flex items-center gap-1 font-medium"
+                >
+                  Green Mode <ArrowUpDown className="h-4 w-4 opacity-60" />
+                </button>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -925,14 +1041,7 @@ function ManageDigitalHumansContent() {
                         />
                       </TableCell>
                     ) : null}
-                    <TableCell className="font-medium">
-                      <span className="inline-flex items-center gap-1.5">
-                        {r.username}
-                        {r.whitelisted ? (
-                          <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-400" aria-label="Whitelisted" />
-                        ) : null}
-                      </span>
-                    </TableCell>
+                    <TableCell className="font-medium">{r.username}</TableCell>
                     {columns.profession ? (
                       <TableCell className="text-muted-foreground">
                         <InlineText
@@ -972,6 +1081,25 @@ function ManageDigitalHumansContent() {
                         {new Date(r.created_at).toLocaleDateString()}
                       </TableCell>
                     ) : null}
+                    <TableCell className="text-center">
+                      <TagSwitch
+                        checked={!!r.whitelisted}
+                        pending={tagPending.has(`${r.userid}:whitelisted`)}
+                        label={`Whitelisted for ${r.username}`}
+                        onColor="bg-amber-500 border-amber-500"
+                        icon={
+                          <Star
+                            className={cn(
+                              "h-3.5 w-3.5",
+                              r.whitelisted
+                                ? "fill-amber-500 text-amber-500"
+                                : "text-muted-foreground"
+                            )}
+                          />
+                        }
+                        onToggle={() => void toggleWhitelisted(r.userid, !r.whitelisted)}
+                      />
+                    </TableCell>
                     <TableCell className="text-center">
                       <TagSwitch
                         checked={!!r.featured}
