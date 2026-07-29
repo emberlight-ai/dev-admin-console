@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "functions:deploy": "supabase functions deploy dh-auto-reply dh-greeting dh-followup dh-matching dh-outbound dh-coach-checkin --no-verify-jwt --project-ref wvcwvjlmnjnvyblrycxj"
+    "functions:deploy": "supabase functions deploy dh-auto-reply dh-greeting dh-followup dh-matching dh-outbound dh-coach-checkin push-notification --no-verify-jwt --project-ref wvcwvjlmnjnvyblrycxj"
   },
   "dependencies": {
     "@apple/app-store-server-library": "^3.0.0",

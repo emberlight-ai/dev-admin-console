@@ -139,6 +139,16 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const showPersonalities = pathname.startsWith("/admin/personas/manage")
 
+  // Creator Studio ships its own full-page chrome (its own sidebar + header),
+  // so it must not be wrapped in the operator shell. The v2 create flow lives
+  // under /admin/digital-humans for URL continuity but belongs to the studio.
+  // Prefix match, same convention as `showPersonalities` above; must sit below
+  // every hook.
+  const isStudio =
+    pathname.startsWith("/admin/studio") ||
+    pathname.startsWith("/admin/digital-humans/v2/create")
+  if (isStudio) return <>{children}</>
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       {/* Desktop sidebar */}

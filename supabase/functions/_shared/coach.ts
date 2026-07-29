@@ -428,6 +428,22 @@ export function coachPlanMemoryFromComponents(components: Array<Record<string, u
     .slice(0, 4000);
 }
 
+/** Experts who should LEAD their category's row, in this order.
+ *
+ * The deck RPC ranks by availability, so which faces a category returns shifts
+ * between runs. For the categories we actively curate that is the wrong
+ * behaviour: the strongest expert should open the row every time. Pinned ids
+ * still go through the same sender/connected filters as everyone else, and the
+ * rest of the row fills from the RPC — an unavailable pin just drops out.
+ */
+const PINNED_CARDS: Record<string, string[]> = {
+  fitness: [
+    '229f38dd-fd81-47c5-94b7-d3657e048738', // Andrew Huberman — Health Coach
+    'f64f2585-72dd-418e-8a67-d903dcacc86c', // Robert
+    'e288afbe-daaa-45e0-8e9f-aa712786d237', // Nacho
+  ],
+};
+
 /** Fill a match_cards component with real candidates for the receiver.
  * The model only names a category; people come from the same deck RPC as the
  * classic swipe view (already-connected DHs and the sender are excluded). */
@@ -473,8 +489,33 @@ async function hydrateMatchCards(
     connected.add(m.user_a === receiverId ? m.user_b : m.user_a);
   }
 
-  const cards = (candidates ?? [])
-    .filter((u: Record<string, unknown>) => u.userid !== senderId && !connected.has(u.userid as string))
+  // Curated leads first, then the deck. Fetched separately because the RPC
+  // ranks its own way and may not surface them at all.
+  const pinnedIds = PINNED_CARDS[category] ?? [];
+  let pinned: Array<Record<string, unknown>> = [];
+  if (pinnedIds.length > 0) {
+    const { data: rows, error: pinnedError } = await supabase
+      .from('users')
+      .select('userid, username, age, avatar, profession')
+      .in('userid', pinnedIds)
+      .eq('is_digital_human', true);
+    if (pinnedError) {
+      // Non-fatal: the row is still worth sending from the deck alone.
+      console.error(`[${tag}] pinned card lookup failed`, pinnedError);
+    } else {
+      const byId = new Map((rows ?? []).map((u) => [u.userid as string, u]));
+      pinned = pinnedIds.map((id) => byId.get(id)).filter(Boolean) as Array<Record<string, unknown>>;
+    }
+  }
+
+  const seen = new Set<string>();
+  const cards = [...pinned, ...(candidates ?? [])]
+    .filter((u: Record<string, unknown>) => {
+      const id = u.userid as string;
+      if (id === senderId || connected.has(id) || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
     .slice(0, 4)
     .map((u: Record<string, unknown>) => ({
       user_id: u.userid,

@@ -1,5 +1,7 @@
 -- User content archive on delete — manual migration (2026-07-07).
--- Run once against production (SQL editor / psql). Idempotent (create if not exists).
+-- APPLIED to production 2026-07-28. Idempotent (create if not exists).
+-- Until it was applied, deletion was gated on tables that did not exist, so
+-- every iOS account delete failed with a 500 and silently deleted nothing.
 -- Source of truth: database/schema.sql (same block, kept in sync).
 
 -- ==============================================================================
@@ -49,6 +51,10 @@ create table if not exists public.archived_messages (
   sender_id uuid,
   receiver_id uuid,
   content text,
+  -- 'text' | 'image' | 'gift' | 'component'. Added 2026-07-28: gift and
+  -- component rows carry a JSON envelope in `content`, so without the type an
+  -- archived transcript can't tell them apart from a literal message.
+  type text,
   media_url text,                      -- rewritten to the archived/ storage path
   image_desc text,
   intimacy_score double precision,
@@ -59,6 +65,9 @@ create index if not exists archived_messages_deleted_user_id_idx
   on public.archived_messages (deleted_user_id);
 create index if not exists archived_messages_match_id_idx
   on public.archived_messages (match_id);
+
+-- Older deployments may already have the table without `type`.
+alter table public.archived_messages add column if not exists type text;
 
 alter table public.archived_user_posts enable row level security;
 alter table public.archived_user_matches enable row level security;

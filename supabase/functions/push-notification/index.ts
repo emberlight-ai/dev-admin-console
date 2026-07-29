@@ -31,8 +31,52 @@ interface WebhookPayload {
     receiver_id?: string;
     content: string;
     created_at: string;
+    /** 'text' | 'image' | 'gift' | 'component'. Present on the webhook body
+     *  since the gifts migration; it was simply untyped here. */
+    type?: string;
   };
   schema: string;
+}
+
+// ── Notification copy for non-text messages ─────────────────────────────────
+// `content` on gift and component rows is a JSON envelope, so using it raw
+// pushed things like {"component":"nutrition_result","props":{…}} to the
+// lock screen. Each kind gets a line written in the coach's voice instead.
+const COMPONENT_COPY: Record<string, string> = {
+  lux_meter:
+    "Step outside and get some sunlight — it keeps your melatonin on schedule.",
+  nutrition_scan: "It's time to eat. Can you log what you're eating?",
+  caffeine_window:
+    "Great time for coffee — based on your sleep, this lands you at your mental peak.",
+  nutrition_result: "I logged your meal — here's how it breaks down.",
+  coach_plan: "Your starter plan is ready.",
+  match_cards: "I found a few people you should meet.",
+};
+
+/** Human-readable body for a message whose content is a JSON payload. */
+function bodyForPayload(type: string | undefined, content: string): string | undefined {
+  if (!content?.trimStart().startsWith('{')) return undefined;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    // Malformed JSON must never reach the lock screen verbatim.
+    return type === 'component' || type === 'gift' ? 'Sent you something' : undefined;
+  }
+
+  if (type === 'gift' || typeof parsed.gift === 'string') {
+    const giftName = nonEmptyString(parsed.name);
+    return giftName ? `🎁 Sent you ${giftName}` : '🎁 Sent you a gift';
+  }
+
+  if (type === 'component' || typeof parsed.component === 'string') {
+    const name = typeof parsed.component === 'string' ? parsed.component : '';
+    // The payload's own `text` is authored as a chat-list preview, so it is a
+    // good fallback for components added after this map was written.
+    return COMPONENT_COPY[name] ?? nonEmptyString(parsed.text) ?? 'Sent you a card';
+  }
+
+  return undefined;
 }
 
 function nonEmptyString(value: unknown): string | undefined {
@@ -88,7 +132,10 @@ Deno.serve(async (req) => {
 
     const senderName = nonEmptyString(sender?.username) ?? 'Someone';
     const senderAvatarUrl = nonEmptyString(sender?.avatar);
-    const messageBody = nonEmptyString(record.content) ?? 'Sent a photo';
+    const messageBody =
+      bodyForPayload(record.type, record.content) ??
+      nonEmptyString(record.content) ??
+      'Sent a photo';
 
     // 4. Send the Notification via Firebase
     // We send a "Data" message so the client can handle it in background (or "Notification" for auto-display)

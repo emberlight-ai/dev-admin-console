@@ -167,6 +167,9 @@ export async function archiveUserContent(userId: string): Promise<ArchiveResult>
         sender_id: msg.sender_id,
         receiver_id: msg.receiver_id,
         content: msg.content,
+        // Gift and component rows put a JSON envelope in `content`; without
+        // the type an archived transcript reads them as literal text.
+        type: msg.type,
         media_url: (() => {
           const matchId = msg.match_id as string;
           return rewriteArchivedUrl(
@@ -237,6 +240,11 @@ export async function purgeUserContent(userId: string) {
     // rows to decide). Boost purchases-by-subscription live in subscription/
     // apple_purchase, which are retained.
     supabaseAdmin.from('user_boost').delete().eq('user_id', userId),
+    // Interests are profile data, not billing: they decide which Explore
+    // category decks this person shows up in. Leaving them behind means a
+    // "deleted" identity keeps surfacing to strangers under the old tags, and
+    // the returning user re-onboards already tagged.
+    supabaseAdmin.from('user_interests').delete().eq('user_id', userId),
   ]);
 
   const firstError = results.find((r) => r.error)?.error;

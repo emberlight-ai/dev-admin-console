@@ -7,6 +7,8 @@ import { ArrowLeft, Check } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+import { StudioShell } from "@/app/admin/studio/_components/studio-shell"
+
 import { StepIdentity } from "./_components/step-identity"
 import { StepIngest } from "./_components/step-ingest"
 import { StepRoutine } from "./_components/step-routine"
@@ -48,16 +50,17 @@ export default function CreateExpertV2Page() {
   }, [photo])
 
   return (
-    <div className="min-h-screen bg-background">
+    <StudioShell>
+      <div className="min-h-screen bg-background">
       {/* Chrome */}
       <header className="sticky top-0 z-20 border-b bg-background/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3.5">
           <Link
-            href="/admin/digital-humans"
+            href="/admin/studio/dashboard"
             className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />
-            Experts
+            Overview
           </Link>
 
           <div className="flex flex-1 items-center justify-center gap-1.5">
@@ -138,6 +141,7 @@ export default function CreateExpertV2Page() {
           </motion.div>
         </div>
       </main>
-    </div>
+      </div>
+    </StudioShell>
   )
 }
