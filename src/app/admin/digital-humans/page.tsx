@@ -34,6 +34,7 @@ type Row = {
   userid: string
   username: string
   profession?: string | null
+  bio?: string | null
   avatar?: string | null
   gender?: string | null
   personality?: string | null
@@ -161,14 +162,20 @@ function TagSwitch({
   )
 }
 
-/** Click-to-edit text cell. Enter or blur saves, Escape reverts. */
+/**
+ * Click-to-edit text cell. Single-line: Enter or blur saves, Escape reverts.
+ * `multiline` swaps in a textarea for prose fields like Bio, where Enter has
+ * to insert a newline — there, Cmd/Ctrl+Enter or blur saves.
+ */
 function InlineText({
   value,
   placeholder,
+  multiline = false,
   onSave,
 }: {
   value: string
   placeholder: string
+  multiline?: boolean
   onSave: (next: string) => Promise<boolean>
 }) {
   const [editing, setEditing] = React.useState(false)
@@ -199,15 +206,40 @@ function InlineText({
           setEditing(true)
         }}
         className={cn(
-          "-mx-1 w-full max-w-[220px] truncate rounded px-1 py-0.5 text-left",
+          "-mx-1 w-full rounded px-1 py-0.5 text-left",
           "hover:bg-muted hover:ring-1 hover:ring-border",
+          multiline ? "line-clamp-2 max-w-[320px]" : "max-w-[220px] truncate",
           saving && "opacity-50",
           !value && "italic text-muted-foreground/60"
         )}
-        title="Click to edit"
+        title={multiline && value ? value : "Click to edit"}
       >
         {value || placeholder}
       </button>
+    )
+  }
+
+  if (multiline) {
+    return (
+      <textarea
+        autoFocus
+        rows={4}
+        value={draft}
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          e.stopPropagation()
+          // Enter must stay a newline in prose; save with the modifier.
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void commit()
+          if (e.key === "Escape") {
+            setDraft(value)
+            setEditing(false)
+          }
+        }}
+        className="w-full min-w-[280px] max-w-[320px] rounded-md border border-input bg-background px-2 py-1.5 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      />
     )
   }
 
@@ -327,6 +359,7 @@ function ManageDigitalHumansContent() {
     avatar: true,
     profession: true,
     personality: true,
+    bio: true,
     posts: true,
     chatImages: true,
     created: false,
@@ -354,6 +387,7 @@ function ManageDigitalHumansContent() {
       1 +
       (columns.profession ? 1 : 0) +
       (columns.personality ? 1 : 0) +
+      (columns.bio ? 1 : 0) +
       (columns.posts ? 1 : 0) +
       (columns.chatImages ? 1 : 0) +
       (columns.created ? 1 : 0) +
@@ -364,7 +398,7 @@ function ManageDigitalHumansContent() {
   /// Persists one field on one DH and reconciles the row optimistically.
   /// Returns false on failure so the editor can restore its own draft.
   const saveRowField = React.useCallback(
-    async (userid: string, field: "profession" | "personality", value: string | null) => {
+    async (userid: string, field: "profession" | "personality" | "bio", value: string | null) => {
       const previous = rows.find((r) => r.userid === userid)?.[field] ?? null
       setRows((prev) =>
         prev.map((r) => (r.userid === userid ? { ...r, [field]: value } : r))
@@ -379,7 +413,13 @@ function ManageDigitalHumansContent() {
           const body = await res.json().catch(() => ({}))
           throw new Error(body?.error || `Request failed (${res.status})`)
         }
-        toast.success(field === "profession" ? "Profession updated" : "Persona updated")
+        toast.success(
+          field === "profession"
+            ? "Profession updated"
+            : field === "bio"
+              ? "Bio updated"
+              : "Persona updated"
+        )
         return true
       } catch (e) {
         setRows((prev) =>
@@ -688,6 +728,15 @@ function ManageDigitalHumansContent() {
                   <input
                     type="checkbox"
                     className="h-4 w-4 rounded border-input bg-background"
+                    checked={columns.bio}
+                    onChange={(e) => setColumns((c) => ({ ...c, bio: e.target.checked }))}
+                  />
+                  Bio
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-input bg-background"
                     checked={columns.created}
                     onChange={(e) => setColumns((c) => ({ ...c, created: e.target.checked }))}
                   />
@@ -702,6 +751,7 @@ function ManageDigitalHumansContent() {
                       avatar: true,
                       profession: true,
                       personality: true,
+                      bio: true,
                       posts: true,
                       chatImages: true,
                       created: true,
@@ -796,6 +846,7 @@ function ManageDigitalHumansContent() {
               </TableHead>
               {columns.profession ? <TableHead>Profession</TableHead> : null}
               {columns.personality ? <TableHead>Persona</TableHead> : null}
+              {columns.bio ? <TableHead className="min-w-[260px]">Bio</TableHead> : null}
               {columns.posts ? (
                 <TableHead>
                   <button
@@ -901,6 +952,16 @@ function ManageDigitalHumansContent() {
                           // back to the General prompt.
                           options={personalitiesByGender[r.gender ?? ""] ?? []}
                           onSave={(v) => saveRowField(r.userid, "personality", v || null)}
+                        />
+                      </TableCell>
+                    ) : null}
+                    {columns.bio ? (
+                      <TableCell className="max-w-[320px] text-muted-foreground">
+                        <InlineText
+                          value={r.bio ?? ""}
+                          placeholder="Add bio"
+                          multiline
+                          onSave={(v) => saveRowField(r.userid, "bio", v || null)}
                         />
                       </TableCell>
                     ) : null}

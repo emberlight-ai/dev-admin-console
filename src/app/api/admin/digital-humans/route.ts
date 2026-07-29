@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   let q = supabaseAdmin
     .from('users')
     .select(
-      'userid,username,profession,avatar,gender,personality,created_at,updated_at,whitelisted'
+      'userid,username,profession,bio,avatar,gender,personality,created_at,updated_at,whitelisted'
     )
     .eq('is_digital_human', true)
     .is('deleted_at', null)
