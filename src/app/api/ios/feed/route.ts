@@ -157,15 +157,25 @@ async function handleGET(req: NextRequest) {
         post_content: string | null; interests: string[] | null;
         location_name: string | null; created_at: string;
       };
-      let sharedQ = supabaseAdmin
-        .from('shared_chat_images')
-        .select('id, public_url, description, post_content, interests, location_name, created_at')
-        .eq('active', true)
-        .eq('tier', 'casual')
-        .limit(1000);
-      if (category) sharedQ = sharedQ.overlaps('interests', categoryKeys);
-      // Blending is best-effort: a failure here degrades to the plain feed.
-      const { data: sharedRows } = await sharedQ;
+      // GREEN MODE excludes synthetic posts entirely. Gating the AUTHOR is not
+      // enough here: these photos come from the global shared library and are
+      // merely *attributed* to a tag-matching DH, so a green-gated feed would
+      // still show a green person's name over a picture that was never theirs.
+      // With Green Mode on the feed must be real `user_posts` rows only.
+      const sharedRows = greenModeOn
+        ? []
+        : await (async () => {
+            let sharedQ = supabaseAdmin
+              .from('shared_chat_images')
+              .select('id, public_url, description, post_content, interests, location_name, created_at')
+              .eq('active', true)
+              .eq('tier', 'casual')
+              .limit(1000);
+            if (category) sharedQ = sharedQ.overlaps('interests', categoryKeys);
+            // Blending is best-effort: a failure here degrades to the plain feed.
+            const { data } = await sharedQ;
+            return data ?? [];
+          })();
 
       if ((sharedRows ?? []).length > 0) {
         const { data: authorTagRows } = await supabaseAdmin
