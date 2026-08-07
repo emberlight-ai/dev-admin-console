@@ -283,6 +283,47 @@ begin
 end;
 $$;
 
+-- Unmatch: remove a match the caller is part of. NOT a per-user hide —
+-- `user_matches` has no soft-delete column and every dependent table cascades
+-- from it, so the conversation goes for both participants (the app confirms
+-- before calling this).
+--
+-- Cascades: messages, user_match_ai_state, dh_coach_state, dh_coach_checkins,
+-- dh_sent_images. Deliberately left behind: archived_messages (the deletion
+-- audit trail), shared_image_sends + dh_opener_ledger (per-user dedup — a DH
+-- must not re-send the same photo or opener to someone who deleted the chat
+-- and matched again), dh_outbound_events, and the swipe rows (someone you
+-- removed should not reappear in the deck).
+--
+-- Added 2026-08-06. The iOS client had called this name since it was written,
+-- against a function that never existed — see
+-- manual-migrations/2026-08-06-rpc-delete-match.sql.
+create or replace function public.rpc_delete_match(match_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_caller uuid := auth.uid();
+begin
+  if v_caller is null then
+    raise exception 'not authenticated';
+  end if;
+
+  -- The membership predicate IS the authorization check: a caller who is not
+  -- in the match deletes nothing. Silent by design — raising would let anyone
+  -- probe whether an arbitrary match id exists — and a no-op is also correct
+  -- for a retry or a second device that already deleted it.
+  delete from public.user_matches um
+   where um.id = match_id
+     and (um.user_a = v_caller or um.user_b = v_caller);
+end;
+$$;
+
+revoke execute on function public.rpc_delete_match(uuid) from public;
+grant execute on function public.rpc_delete_match(uuid) to authenticated;
+
 create or replace function public.rpc_list_connections(
   start_index integer default 0,
   limit_count integer default 50
