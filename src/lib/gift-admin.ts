@@ -28,7 +28,8 @@ export const BUNDLED_GIFT_ASSETS = [
   'gift-ring-box',
 ] as const;
 
-export const GIFT_COLUMNS = 'key, name, asset, cost_tokens, sort_order, active, image_url, created_at';
+export const GIFT_COLUMNS =
+  'key, name, asset, cost_tokens, sort_order, active, free_for_all, image_url, created_at';
 
 function extFor(mime: string) {
   if (mime === 'image/png') return 'png';

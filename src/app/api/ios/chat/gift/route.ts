@@ -10,8 +10,10 @@ export const runtime = 'nodejs';
  *
  * Proxies rpc_send_gift as the caller (user JWT → auth.uid() is the sender):
  * atomic wallet debit + gift message + intimacy bump, all server-side.
- * Insufficient balance maps to 402 with a stable error code the client
- * branches on to open the token paywall.
+ * Two refusals carry stable error codes the client branches on:
+ *   402 insufficient_tokens — not enough balance (dormant while gifts cost 0)
+ *   403 premium_required    — a members-only gift from a non-subscriber; the
+ *                             app opens the subscription paywall
  */
 async function handlePOST(req: NextRequest) {
   try {
@@ -33,6 +35,9 @@ async function handlePOST(req: NextRequest) {
     });
 
     if (error) {
+      if (error.message?.includes('premium_required')) {
+        return NextResponse.json({ error: 'premium_required' }, { status: 403 });
+      }
       if (error.message?.includes('insufficient_tokens')) {
         return NextResponse.json({ error: 'insufficient_tokens' }, { status: 402 });
       }

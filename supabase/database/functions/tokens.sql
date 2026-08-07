@@ -25,13 +25,22 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 
 create table if not exists public.gift_catalog (
-  key         text primary key,
-  name        text not null,
-  asset       text not null,               -- iOS asset name
-  cost_tokens integer not null check (cost_tokens > 0),
-  sort_order  integer not null default 0,
-  active      boolean not null default true,
-  created_at  timestamptz not null default now()
+  key              text primary key,
+  name             text not null,
+  asset            text not null,          -- bundled iOS asset (fallback art)
+  image_url        text,                   -- admin-uploaded art; wins over `asset`
+  -- What the gift costs TODAY. Forced to 0 for every row while the consumable
+  -- token IAP is out for App Review, hence no `> 0` check.
+  cost_tokens      integer not null,
+  -- What it cost when tokens were purchasable. Kept so anything that tiers on
+  -- "how premium is this gift" (the confetti moment) still has a real number.
+  cost_tokens_paid integer,
+  -- The one gift anyone may send. Everything else needs an ACTIVE
+  -- subscription — enforced in rpc_send_gift, not just in the app.
+  free_for_all     boolean not null default false,
+  sort_order       integer not null default 0,
+  active           boolean not null default true,
+  created_at       timestamptz not null default now()
 );
 
 alter table public.gift_catalog enable row level security;
@@ -215,11 +224,19 @@ after insert on public.users
 for each row
 execute function public.grant_signup_tokens();
 
--- Atomic gift send: membership + block checks, wallet debit (row lock,
--- balance >= cost), gift message insert (type='gift', content = JSON
--- {gift,name,cost} snapshotted at send time), ledger row, intimacy bump by the
--- token cost (clamped to 100). Raises 'insufficient_tokens' so the client can
--- branch to the token paywall.
+-- Atomic gift send: membership + block checks, the Premium gate, wallet debit
+-- (row lock, balance >= cost), gift message insert (type='gift', content =
+-- JSON {gift,name,cost} snapshotted at send time), ledger row, intimacy bump.
+-- Raises 'insufficient_tokens' (→ 402) and 'premium_required' (→ 403) so the
+-- client can branch to the right paywall.
+--
+-- Two states are folded in here that were applied straight to production and
+-- only later reconciled back into this file — see
+-- manual-migrations/2026-08-06-premium-gift-shelf.sql:
+--   · gifts cost 0 while the consumable token IAP is out for App Review, so
+--     every debit/ledger path is conditional on cost_tokens > 0 and intimacy
+--     uses a flat floor instead of scaling with a price that is always zero;
+--   · `gift_catalog.free_for_all` marks the one gift anyone may send.
 create or replace function public.rpc_send_gift(
   p_match_id uuid,
   p_gift_key text
@@ -274,15 +291,35 @@ begin
     raise exception 'unknown gift';
   end if;
 
-  update public.user_wallet
-     set balance = balance - v_gift.cost_tokens,
-         updated_at = now()
-   where user_id = v_sender
-     and balance >= v_gift.cost_tokens
-  returning balance into v_balance;
+  -- Membership gate. Mirrors /api/ios/me/entitlement's definition of premium
+  -- (an ACTIVE row that has not lapsed) so the tray's lock and this refusal
+  -- can never disagree. Only the `free_for_all` gift skips it.
+  if not v_gift.free_for_all then
+    if not exists (
+      select 1 from public.subscription s
+      where s.user_id = v_sender
+        and s.status = 'ACTIVE'
+        and (s.current_period_end is null or s.current_period_end > now())
+    ) then
+      raise exception 'premium_required';
+    end if;
+  end if;
 
-  if not found then
-    raise exception 'insufficient_tokens';
+  if v_gift.cost_tokens > 0 then
+    update public.user_wallet
+       set balance = balance - v_gift.cost_tokens,
+           updated_at = now()
+     where user_id = v_sender
+       and balance >= v_gift.cost_tokens
+    returning balance into v_balance;
+
+    if not found then
+      raise exception 'insufficient_tokens';
+    end if;
+  else
+    -- Free gift: report the current balance without moving it.
+    select balance into v_balance from public.user_wallet where user_id = v_sender;
+    v_balance := coalesce(v_balance, 0);
   end if;
 
   insert into public.messages (match_id, sender_id, receiver_id, content, type)
@@ -293,11 +330,16 @@ begin
   )
   returning * into v_msg;
 
-  insert into public.token_ledger (user_id, delta, balance_after, reason, ref)
-  values (v_sender, -v_gift.cost_tokens, v_balance, 'gift_send', v_msg.id::text);
+  if v_gift.cost_tokens > 0 then
+    insert into public.token_ledger (user_id, delta, balance_after, reason, ref)
+    values (v_sender, -v_gift.cost_tokens, v_balance, 'gift_send', v_msg.id::text);
+  end if;
 
+  -- Intimacy previously scaled with the gift's price; with free gifts that would
+  -- always be 0, so a flat bump keeps the signal alive.
   update public.user_match_ai_state
-     set intimacy_score      = least(100, coalesce(intimacy_score, 0) + v_gift.cost_tokens),
+     set intimacy_score      = least(100, coalesce(intimacy_score, 0)
+                                        + greatest(v_gift.cost_tokens, 5)),
          intimacy_updated_at = now()
    where match_id = p_match_id;
 

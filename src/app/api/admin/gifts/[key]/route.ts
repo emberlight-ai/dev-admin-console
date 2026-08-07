@@ -35,11 +35,13 @@ async function giftEverSent(key: string): Promise<boolean | null> {
 /**
  * PATCH /api/admin/gifts/[key]
  *
- * JSON body: { name?, cost_tokens?, active?, asset?, remove_image? } — or
- * multipart/form-data with the same fields plus `image` (jpeg/png/webp ≤ 8MB)
- * to replace the art. `active: false` is the HIDE state: the tray drops the
- * gift on next catalog load and rpc_send_gift refuses it, but history and
- * existing bubbles keep working.
+ * JSON body: { name?, cost_tokens?, active?, free_for_all?, asset?,
+ * remove_image? } — or multipart/form-data with the same fields plus `image`
+ * (jpeg/png/webp ≤ 8MB) to replace the art. `active: false` is the HIDE state:
+ * the tray drops the gift on next catalog load and rpc_send_gift refuses it,
+ * but history and existing bubbles keep working. `free_for_all: true` makes a
+ * gift sendable without a membership — rpc_send_gift reads the same column, so
+ * this toggle is the whole gate, app-side and server-side.
  */
 export async function PATCH(
   req: NextRequest,
@@ -60,7 +62,7 @@ export async function PATCH(
     } catch {
       return jsonError('Invalid multipart body', 400);
     }
-    for (const k of ['name', 'cost_tokens', 'active', 'asset', 'remove_image'] as const) {
+    for (const k of ['name', 'cost_tokens', 'active', 'free_for_all', 'asset', 'remove_image'] as const) {
       const v = form.get(k);
       if (typeof v === 'string') fields[k] = v;
     }
@@ -90,6 +92,9 @@ export async function PATCH(
   }
   if (fields.active != null) {
     patch.active = String(fields.active) !== 'false' && fields.active !== false;
+  }
+  if (fields.free_for_all != null) {
+    patch.free_for_all = String(fields.free_for_all) !== 'false' && fields.free_for_all !== false;
   }
   if (fields.asset != null) {
     const asset = String(fields.asset).trim();

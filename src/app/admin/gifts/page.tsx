@@ -10,9 +10,11 @@ import {
   EyeOff,
   Gift as GiftIcon,
   ImageIcon,
+  Lock,
   Pencil,
   Plus,
   Trash2,
+  Unlock,
 } from "lucide-react"
 
 import {
@@ -55,6 +57,9 @@ type GiftRow = {
   cost_tokens: number
   sort_order: number
   active: boolean
+  /** Sendable without a membership. Everything else is members-only —
+   *  rpc_send_gift reads this same column, so the toggle IS the gate. */
+  free_for_all: boolean
   image_url: string | null
   created_at: string
 }
@@ -114,6 +119,32 @@ export default function GiftsAdminPage() {
     } catch (e) {
       // Functional revert of just this row — never a whole-list snapshot.
       setGifts((gs) => gs.map((g) => (g.key === gift.key ? { ...g, active: gift.active } : g)))
+      toast.error(e instanceof Error ? e.message : "Failed to update gift")
+    }
+  }
+
+  const toggleFree = async (gift: GiftRow) => {
+    const next = !gift.free_for_all
+    setGifts((gs) => gs.map((g) => (g.key === gift.key ? { ...g, free_for_all: next } : g)))
+    try {
+      const res = await fetch(`/api/admin/gifts/${gift.key}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ free_for_all: next }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? "Failed to update gift")
+      }
+      toast.success(
+        next
+          ? `"${gift.name}" is free for everyone`
+          : `"${gift.name}" is members-only`
+      )
+    } catch (e) {
+      setGifts((gs) =>
+        gs.map((g) => (g.key === gift.key ? { ...g, free_for_all: gift.free_for_all } : g))
+      )
       toast.error(e instanceof Error ? e.message : "Failed to update gift")
     }
   }
@@ -248,6 +279,11 @@ export default function GiftsAdminPage() {
                     {gift.key}
                   </Badge>
                   {!gift.active && <Badge variant="secondary">Hidden</Badge>}
+                  {gift.free_for_all ? (
+                    <Badge variant="secondary">Free for all</Badge>
+                  ) : (
+                    <Badge variant="outline">Members only</Badge>
+                  )}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1 text-sm text-muted-foreground">
                   <Coins className="h-3.5 w-3.5" />
@@ -259,6 +295,22 @@ export default function GiftsAdminPage() {
               </div>
 
               <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => void toggleFree(gift)}
+                  title={
+                    gift.free_for_all
+                      ? "Make it members-only"
+                      : "Make it free for everyone"
+                  }
+                >
+                  {gift.free_for_all ? (
+                    <Unlock className="h-4 w-4" />
+                  ) : (
+                    <Lock className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"

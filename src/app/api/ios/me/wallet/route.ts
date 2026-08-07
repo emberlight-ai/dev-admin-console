@@ -23,7 +23,12 @@ async function handleGET(req: NextRequest) {
       supabase.rpc('rpc_get_token_balance'),
       supabase
         .from('gift_catalog')
-        .select('key, name, asset, cost_tokens, sort_order, image_url')
+        // cost_tokens_paid and free_for_all are NOT cosmetic extras: the app
+        // tiers the confetti moment on the paid price (every cost_tokens is 0
+        // while the token IAP is out) and locks the tray on free_for_all.
+        // Dropping either here silently disables both — this is the preferred
+        // transport, so the client's direct-Supabase fallback never runs.
+        .select('key, name, asset, cost_tokens, cost_tokens_paid, free_for_all, sort_order, image_url')
         .eq('active', true)
         .order('sort_order'),
       supabase
