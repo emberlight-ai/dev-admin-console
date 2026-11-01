@@ -139,7 +139,7 @@ async function handlePOST(req: NextRequest) {
         VISION_PROMPT,
         { inlineData: { data: bytes.toString('base64'), mimeType } },
       ],
-      'gemini-2.5-flash'
+      'gemini-3.1-flash-lite'
     );
     analysis = parseAnalysis(raw);
   } catch (err) {
