@@ -3,7 +3,8 @@
 // Triggered by: pg_cron every 5 minutes via pg_net HTTP call
 // See setup instructions in walkthrough.md
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { VertexAI } from 'npm:@google-cloud/vertexai';
+import { GoogleGenAI } from 'npm:@google/genai@2.32.0';
+import { controlledGenerationConfig, vertexOptions, utilityModelName } from '../_shared/vertex-config.ts';
 
 // ── Clients ────────────────────────────────────────────────────────────────────
 const supabase = createClient(
@@ -11,30 +12,10 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
-const project = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') || 'YOUR_PROJECT_ID';
-const location = Deno.env.get('GOOGLE_CLOUD_LOCATION') || 'global';
-const clientEmail = Deno.env.get('GOOGLE_CLIENT_EMAIL');
-const privateKey = Deno.env.get('GOOGLE_PRIVATE_KEY')?.replace(/\\n/g, '\n');
+const vertexAI = new GoogleGenAI(vertexOptions((name) => Deno.env.get(name)));
 
-const vertexAI = new VertexAI({
-  project,
-  location,
-  apiEndpoint: 'aiplatform.googleapis.com',
-  ...(clientEmail && privateKey
-    ? {
-        googleAuthOptions: {
-          credentials: {
-            client_email: clientEmail,
-            private_key: privateKey,
-          },
-        },
-      }
-    : {}),
-});
-
-const model = vertexAI.getGenerativeModel({
-  model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-3.1-flash-lite-preview',
-});
+const modelId = utilityModelName((name) => Deno.env.get(name));
+const modelConfig = controlledGenerationConfig(modelId, 96);
 
 // ── In-process cache ──────────────────────────────────────────────────────────
 interface CachedPrompt {
@@ -394,9 +375,12 @@ Deno.serve(async (req) => {
           promptConfig.followUpPrompt || 'Send a casual follow-up message to re-engage the conversation.';
         const prompt = `${systemText}\n\nConversation so far:\n${transcript}\n\nThe user hasn't replied in a while.\nInstruction: ${followUpInstruction}\n\nWrite the follow-up as ${botUser.username ?? 'the bot'}. Keep it SHORT (under ~12 words), casual texting register (lowercase start is fine), one bubble. Reply with only the message text.`;
 
-        const result = await model.generateContent(prompt);
-        const respData = await result.response;
-        const responseText = respData?.candidates?.[0]?.content?.parts?.[0]?.text || respData?.text?.() || "";
+        const result = await vertexAI.models.generateContent({
+          model: modelId,
+          contents: prompt,
+          config: modelConfig,
+        });
+        const responseText = result?.candidates?.[0]?.content?.parts?.[0]?.text || result?.text || "";
 
         const { data: sentMsg, error: sendError } = await supabase.rpc('rpc_send_message', {
           match_id: c.match_id,

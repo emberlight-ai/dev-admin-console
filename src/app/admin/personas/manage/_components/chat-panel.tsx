@@ -20,10 +20,7 @@ export interface ChatMessage {
 }
 
 const MODEL_OPTIONS = [
-  { value: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
-  { value: "gemini-2.5-flash", label: "gemini-2.5-flash" },
-  { value: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
-  { value: "gemini-pro-latest", label: "gemini-pro-latest" },
+  { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite" },
 ] as const
 
 export function ChatPanel({
@@ -51,7 +48,7 @@ export function ChatPanel({
   const [chatLoading, setChatLoading] = React.useState(false)
   const [autoFollowUpCount, setAutoFollowUpCount] = React.useState(0)
   const [autoFollowUpArmed, setAutoFollowUpArmed] = React.useState(false)
-  const [model, setModel] = React.useState<string>("gemini-3-flash-preview")
+  const [model, setModel] = React.useState<string>("gemini-3.1-flash-lite")
   const chatEndRef = React.useRef<HTMLDivElement>(null)
   const followUpTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const chatHistoryRef = React.useRef<ChatMessage[]>([])

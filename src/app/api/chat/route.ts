@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Part } from '@google/generative-ai';
+import type { Part } from '@google/genai';
 import {
   ALLOWED_GEMINI_MODELS,
   generateGeminiContent,
@@ -25,13 +25,13 @@ export async function POST(req: NextRequest) {
     }
 
     const requested = (
-      typeof model === 'string' ? model : 'gemini-2.5-flash'
+      typeof model === 'string' ? model : 'gemini-3.1-flash-lite'
     ) as string;
     const modelName: AllowedGeminiModel = (
       ALLOWED_GEMINI_MODELS as readonly string[]
     ).includes(requested)
       ? (requested as AllowedGeminiModel)
-      : 'gemini-2.5-flash';
+      : 'gemini-3.1-flash-lite';
 
     // Unified Digital Human Logic
     let finalPrompt: string | (string | Part)[] = '';  

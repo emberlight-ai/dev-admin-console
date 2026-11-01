@@ -39,9 +39,8 @@ export async function runAgentTurn(input: {
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     const result = await generateWithFallback(input.tag, request);
-    const respData = await result.response;
     const parts: Array<Record<string, unknown>> =
-      respData?.candidates?.[0]?.content?.parts ?? [];
+      result?.candidates?.[0]?.content?.parts ?? [];
 
     const functionCalls = parts.filter((p) => p.functionCall);
     if (functionCalls.length === 0 || iteration === MAX_ITERATIONS - 1) {

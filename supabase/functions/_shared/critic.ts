@@ -3,7 +3,7 @@
 // so the actor can't game its own score. Referee ONLY — the L5 "director" mode
 // (beat plans, engagement, bubble counts) is gone; the texting brief + hard
 // caps govern reply shape now.
-import { supabase, utilityModel } from './clients.ts';
+import { generateUtilityContent, supabase } from './clients.ts';
 import type { IntimacyWarmupRate } from './store.ts';
 
 export interface IntimacyResult {
@@ -59,9 +59,10 @@ Conversation:
 ${transcript}
 
 Respond with JSON only.`;
-    const res = await utilityModel.generateContent({
+    const res = await generateUtilityContent({
       contents: [{ role: 'user', parts: [{ text: judgePrompt }] }],
       generationConfig: {
+        maxOutputTokens: 96,
         temperature: 0.2,
         responseMimeType: 'application/json',
         responseSchema: {
@@ -76,7 +77,7 @@ Respond with JSON only.`;
       },
     });
     const txt =
-      res.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? res.response?.text?.() ?? '';
+      res.candidates?.[0]?.content?.parts?.[0]?.text ?? res.text ?? '';
     const parsed = JSON.parse(txt);
     return {
       intimacy: normalizeIntimacyScore(parsed.intimacy),
@@ -120,7 +121,7 @@ export async function describeUserImageIfNeeded(msg: {
     const { encodeBase64 } = await import('jsr:@std/encoding@1/base64');
     const base64Data = encodeBase64(new Uint8Array(await imgRes.arrayBuffer()));
     const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
-    const descResult = await utilityModel.generateContent({
+    const descResult = await generateUtilityContent({
       contents: [{
         role: 'user',
         parts: [
@@ -128,10 +129,10 @@ export async function describeUserImageIfNeeded(msg: {
           { text: 'Describe this image in detail. It was sent to you in an intimate/friendly chat. What does it show? Be descriptive as this will replace the image in your memory.' },
         ],
       }],
+      generationConfig: { maxOutputTokens: 192 },
     });
-    const responseData = await descResult.response;
     const generatedDesc =
-      responseData?.candidates?.[0]?.content?.parts?.[0]?.text || responseData?.text?.() || 'No description generated.';
+      descResult?.candidates?.[0]?.content?.parts?.[0]?.text || descResult?.text || 'No description generated.';
     const { error: updateErr } = await supabase
       .from('messages')
       .update({ image_desc: generatedDesc })

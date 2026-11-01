@@ -5,7 +5,8 @@
 // It does NOT create a match — the user accepts to turn it into a conversation.
 // Triggered by pg_cron (~every minute); per-invite run_at is what staggers arrivals.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { VertexAI } from 'npm:@google-cloud/vertexai';
+import { GoogleGenAI } from 'npm:@google/genai@2.32.0';
+import { controlledGenerationConfig, vertexOptions, utilityModelName } from '../_shared/vertex-config.ts';
 import admin from 'npm:firebase-admin@12.0.0';
 
 // ── Clients ─────────────────────────────────────────────────────────────────────
@@ -19,22 +20,9 @@ if (admin.apps.length === 0) {
   admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 }
 
-const project = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') || 'YOUR_PROJECT_ID';
-const location = Deno.env.get('GOOGLE_CLOUD_LOCATION') || 'global';
-const clientEmail = Deno.env.get('GOOGLE_CLIENT_EMAIL');
-const privateKey = Deno.env.get('GOOGLE_PRIVATE_KEY')?.replace(/\\n/g, '\n');
-
-const vertexAI = new VertexAI({
-  project,
-  location,
-  apiEndpoint: 'aiplatform.googleapis.com',
-  ...(clientEmail && privateKey
-    ? { googleAuthOptions: { credentials: { client_email: clientEmail, private_key: privateKey } } }
-    : {}),
-});
-const model = vertexAI.getGenerativeModel({
-  model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-3.1-flash-lite-preview',
-});
+const vertexAI = new GoogleGenAI(vertexOptions((name) => Deno.env.get(name)));
+const modelId = utilityModelName((name) => Deno.env.get(name));
+const modelConfig = controlledGenerationConfig(modelId, 96);
 
 // ── Caches (mirror dh-greeting) ─────────────────────────────────────────────────
 interface CachedPrompt {
@@ -182,13 +170,16 @@ This user was JUST sent the openers below by other people, so yours MUST be clea
 ${blockList}
 Output only the opener text.`;
 
-  const chat = model.startChat({
+  const chat = vertexAI.chats.create({
+    model: modelId,
     history: [],
-    systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+    config: {
+      ...modelConfig,
+      systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+    },
   });
-  const result = await chat.sendMessage(`[System: ${greetingPrompt}]`);
-  const resp = await result.response;
-  const text = resp?.candidates?.[0]?.content?.parts?.[0]?.text || resp?.text?.() || '';
+  const response = await chat.sendMessage({ message: `[System: ${greetingPrompt}]` });
+  const text = response?.candidates?.[0]?.content?.parts?.[0]?.text || response?.text || '';
   return text.trim();
 }
 

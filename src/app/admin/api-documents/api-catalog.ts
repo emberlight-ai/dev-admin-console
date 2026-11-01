@@ -52,12 +52,12 @@ export const apiCatalog: ApiEndpointDoc[] = [
         { role: 'model', parts: [{ text: 'Hi! How can I help?' }] },
       ],
       message: 'Write a short greeting for a new user.',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.1-flash-lite',
     },
     responseExample: { response: 'Welcome! Glad you’re here — how can I help today?' },
     notes: [
       'If `message` is missing, returns HTTP 400 with `{ error }`.',
-      'If `model` is invalid, it falls back to `gemini-2.5-flash`.',
+      'If `model` is invalid, it falls back to `gemini-3.1-flash-lite`.',
     ],
   },
   {

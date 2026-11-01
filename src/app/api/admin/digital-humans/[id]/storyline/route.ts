@@ -82,7 +82,7 @@ Profile:
 Write her storyline now.`;
 
   try {
-    const draft = await getGeminiResponse(generatorSystem, [], generatorUser, 'gemini-2.5-flash');
+    const draft = await getGeminiResponse(generatorSystem, [], generatorUser, 'gemini-3.1-flash-lite');
     const text = (draft ?? '').trim();
     if (!text) return jsonError('Generator returned empty text', 502);
     return NextResponse.json({ draft: text });

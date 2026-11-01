@@ -1,15 +1,33 @@
-import { GoogleGenerativeAI, Part, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import {
+  GoogleGenAI,
+  type Part,
+  type GenerateContentResponse,
+  type GenerateContentConfig,
+  HarmCategory,
+  HarmBlockThreshold,
+  ThinkingLevel,
+} from '@google/genai';
+import {
+  controlledGenerationConfig,
+  DEFAULT_REPLY_MODEL,
+  vertexOptions,
+} from '../../supabase/functions/_shared/vertex-config';
 
-const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY!;
-const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+// Lazy initialization keeps builds independent of deployment credentials.
+let vertexAI: GoogleGenAI | undefined;
+function client() {
+  return vertexAI ??= new GoogleGenAI(vertexOptions((name) => process.env[name]));
+}
 
-const genAI = new GoogleGenerativeAI(apiKey);
+function responseText(response: GenerateContentResponse): string {
+  const text = response.text?.trim() || response.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text ?? '').join('').trim();
+  if (!text) throw new Error(`Vertex returned no text (${response.promptFeedback?.blockReason ?? response.candidates?.[0]?.finishReason ?? 'empty response'}).`);
+  return text;
+}
 
 export const ALLOWED_GEMINI_MODELS = [
-  'gemini-3-flash-preview',
-  'gemini-3-pro-preview',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
+  'gemini-3.1-flash-lite',
 ] as const;
 
 export type AllowedGeminiModel = (typeof ALLOWED_GEMINI_MODELS)[number];
@@ -33,47 +51,52 @@ const safetySettings = [
   },
 ];
 
+function generationConfig(model: string): GenerateContentConfig {
+  const controlled = controlledGenerationConfig(model);
+  const config: GenerateContentConfig = {
+    maxOutputTokens: controlled.maxOutputTokens,
+    automaticContinuation: controlled.automaticContinuation,
+  };
+  if (controlled.thinkingConfig) {
+    config.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
+  }
+  return config;
+}
+
 export async function getGeminiResponse(
   systemPrompt: string,
   messageHistory: { role: 'user' | 'model'; parts: { text: string }[] }[],
   userMessage: string,
-  modelName: AllowedGeminiModel = 'gemini-2.5-flash'
+  modelName: AllowedGeminiModel = DEFAULT_REPLY_MODEL
 ) {
-  const model = genAI.getGenerativeModel(
-    {
-      model: modelName,
+  const chat = client().chats.create({
+    model: modelName,
+    history: messageHistory,
+    config: {
+      ...generationConfig(modelName),
       systemInstruction: systemPrompt,
       safetySettings,
     },
-    {
-      baseUrl: baseUrl, // Optional if using a proxy/custom endpoint
-    }
-  );
-
-  const chat = model.startChat({
-    history: messageHistory,
   });
 
-  const result = await chat.sendMessage(userMessage);
-  const response = await result.response;
-  return response.text();
+  const result = await chat.sendMessage({ message: userMessage });
+  return responseText(result);
 }
 
 export async function generateGeminiContent(
   prompt: string | (string | Part)[],
-  modelName: AllowedGeminiModel = 'gemini-2.5-flash'
+  modelName: AllowedGeminiModel = DEFAULT_REPLY_MODEL
 ) {
-  const model = genAI.getGenerativeModel(
-    {
-      model: modelName,
+  const parts: Part[] = typeof prompt === 'string'
+    ? [{ text: prompt }]
+    : prompt.map((part) => typeof part === 'string' ? { text: part } : part);
+  const result = await client().models.generateContent({
+    model: modelName,
+    contents: [{ role: 'user', parts }],
+    config: {
+      ...generationConfig(modelName),
       safetySettings,
     },
-    {
-      baseUrl: baseUrl,
-    }
-  );
-
-  const result = await model.generateContent(prompt);
-  const response = await result.response;
-  return response.text();
+  });
+  return responseText(result);
 }

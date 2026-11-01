@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
 
     const raw = await generateGeminiContent(
       DRAFT_PROMPT.replace('<<REQUEST>>', description),
-      'gemini-3-pro-preview'
+      'gemini-3.1-flash-lite'
     );
 
     // Tolerate accidental markdown fences.

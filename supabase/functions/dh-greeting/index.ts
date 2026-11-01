@@ -2,7 +2,8 @@
 // Supabase Edge Function (Deno runtime) — replaces scripts/digital-human-greetings.ts
 // Triggered by: DB Webhook on `user_matches` table INSERT
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { VertexAI } from 'npm:@google-cloud/vertexai';
+import { GoogleGenAI } from 'npm:@google/genai@2.32.0';
+import { controlledGenerationConfig, vertexOptions, utilityModelName } from '../_shared/vertex-config.ts';
 
 // ── Clients ────────────────────────────────────────────────────────────────────
 const supabase = createClient(
@@ -10,30 +11,10 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
-const project = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') || 'YOUR_PROJECT_ID';
-const location = Deno.env.get('GOOGLE_CLOUD_LOCATION') || 'global';
-const clientEmail = Deno.env.get('GOOGLE_CLIENT_EMAIL');
-const privateKey = Deno.env.get('GOOGLE_PRIVATE_KEY')?.replace(/\\n/g, '\n');
+const vertexAI = new GoogleGenAI(vertexOptions((name) => Deno.env.get(name)));
 
-const vertexAI = new VertexAI({
-  project,
-  location,
-  apiEndpoint: 'aiplatform.googleapis.com',
-  ...(clientEmail && privateKey
-    ? {
-        googleAuthOptions: {
-          credentials: {
-            client_email: clientEmail,
-            private_key: privateKey,
-          },
-        },
-      }
-    : {}),
-});
-
-const model = vertexAI.getGenerativeModel({
-  model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-3.1-flash-lite-preview',
-});
+const modelId = utilityModelName((name) => Deno.env.get(name));
+const modelConfig = controlledGenerationConfig(modelId, 96);
 
 // ── In-process cache ──────────────────────────────────────────────────────────
 interface CachedPrompt {
@@ -374,13 +355,16 @@ Output only the opener text.`;
       const blocked = new Set(recentOpeners.map(norm));
 
       const generateGreeting = async (): Promise<string> => {
-        const chat = model.startChat({
+        const chat = vertexAI.chats.create({
+          model: modelId,
           history: [],
-          systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+          config: {
+            ...modelConfig,
+            systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+          },
         });
-        const r = await chat.sendMessage(`[System: ${greetingPrompt}]`);
-        const rd = await r.response;
-        return (rd?.candidates?.[0]?.content?.parts?.[0]?.text || rd?.text?.() || '').trim();
+        const response = await chat.sendMessage({ message: `[System: ${greetingPrompt}]` });
+        return (response?.candidates?.[0]?.content?.parts?.[0]?.text || response?.text || '').trim();
       };
 
       let responseText = await generateGreeting();

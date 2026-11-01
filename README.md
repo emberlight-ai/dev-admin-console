@@ -2,6 +2,8 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+AI uses Vertex project `the-method-392512`, not a Gemini API key. See [AI configuration](docs/ai-configuration.md) for local and deployed credentials.
+
 First, run the development server:
 
 ```bash

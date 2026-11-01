@@ -2,33 +2,25 @@
 // Shared clients for the DH edge functions: one supabase handle, the two
 // Vertex models (utility + reply with graceful fallback), and safety settings.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { VertexAI, HarmCategory, HarmBlockThreshold } from 'npm:@google-cloud/vertexai';
+import {
+  GoogleGenAI,
+  HarmCategory,
+  HarmBlockThreshold,
+  ThinkingLevel,
+} from 'npm:@google/genai@2.32.0';
+import {
+  controlledGenerationConfig,
+  vertexOptions,
+  utilityModelName,
+  replyModelName,
+} from './vertex-config.ts';
 
 export const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 export const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 export const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
-const project = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') || 'YOUR_PROJECT_ID';
-const location = Deno.env.get('GOOGLE_CLOUD_LOCATION') || 'global';
-const clientEmail = Deno.env.get('GOOGLE_CLIENT_EMAIL');
-const privateKey = Deno.env.get('GOOGLE_PRIVATE_KEY')?.replace(/\\n/g, '\n');
-
-const vertexAI = new VertexAI({
-  project,
-  location,
-  apiEndpoint: 'aiplatform.googleapis.com',
-  ...(clientEmail && privateKey
-    ? {
-        googleAuthOptions: {
-          credentials: {
-            client_email: clientEmail,
-            private_key: privateKey,
-          },
-        },
-      }
-    : {}),
-});
+const vertexAI = new GoogleGenAI(vertexOptions((name) => Deno.env.get(name)));
 
 export const safetySettings = [
   { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -37,28 +29,51 @@ export const safetySettings = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-// Utility model (cheap/fast): intimacy critic + image description.
-export const utilityModel = vertexAI.getGenerativeModel({
-  model: Deno.env.get('AI_INTEGRATIONS_GEMINI_MODEL') ?? 'gemini-3.1-flash-lite-preview',
-  safetySettings,
-});
+export const utilityModelId = utilityModelName((name) => Deno.env.get(name));
+export const replyModelId = replyModelName((name) => Deno.env.get(name));
 
-// Reply model (higher quality): the user-facing message. Gemini 3 Pro follows
-// long, nuanced persona prompts far better than flash-lite. Override via the
-// AI_REPLY_MODEL secret.
-export const replyModel = vertexAI.getGenerativeModel({
-  model: Deno.env.get('AI_REPLY_MODEL') ?? 'gemini-3-pro-preview',
-  safetySettings,
-});
+function configFor(model: string, generationConfig: Record<string, unknown> = {}) {
+  const controlled = controlledGenerationConfig(model);
+  return {
+    ...controlled,
+    ...(controlled.thinkingConfig
+      ? { thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } }
+      : {}),
+    safetySettings,
+    ...generationConfig,
+  };
+}
 
-// Generate with the Pro model, falling back to the utility model if the
-// configured reply model id is unavailable — a bad id degrades gracefully
-// instead of breaking replies in production.
+async function generateContent(model: string, request: Record<string, any>) {
+  const {
+    contents,
+    systemInstruction,
+    generationConfig = {},
+    tools,
+    toolConfig,
+  } = request;
+  return await vertexAI.models.generateContent({
+    model,
+    contents,
+    config: {
+      ...configFor(model, generationConfig),
+      ...(systemInstruction ? { systemInstruction } : {}),
+      ...(tools ? { tools } : {}),
+      ...(toolConfig ? { toolConfig } : {}),
+    },
+  });
+}
+
+export async function generateUtilityContent(request: Record<string, unknown>) {
+  return await generateContent(utilityModelId, request);
+}
+
+// A bad reply-model id degrades gracefully instead of breaking production.
 export async function generateWithFallback(tag: string, request: Record<string, unknown>) {
   try {
-    return await replyModel.generateContent(request as any);
+    return await generateContent(replyModelId, request);
   } catch (err) {
     console.error(`[${tag}] reply model failed; falling back to utility model`, err);
-    return await utilityModel.generateContent(request as any);
+    return await generateContent(utilityModelId, request);
   }
 }

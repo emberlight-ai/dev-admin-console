@@ -4,7 +4,7 @@
 // refusal or the sent caption) is what fixes promise-then-ghost and photos out
 // of nowhere. Reuses the ledger, tier fallback chain, and caption backfill.
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
-import { supabase, utilityModel } from './clients.ts';
+import { generateUtilityContent, supabase } from './clients.ts';
 import { sendMessageWithOptionalIntimacy } from './pacing.ts';
 import type { SelfieConfig } from './store.ts';
 import type { IntimacyResult } from './critic.ts';
@@ -113,7 +113,7 @@ export async function captionDhImageIfNeeded(imageId: string, publicUrl: string,
     if (!res.ok) return null;
     const base64Data = encodeBase64(new Uint8Array(await res.arrayBuffer()));
     const mimeType = res.headers.get('content-type') || 'image/jpeg';
-    const out = await utilityModel.generateContent({
+    const out = await generateUtilityContent({
       contents: [{
         role: 'user',
         parts: [
@@ -122,9 +122,7 @@ export async function captionDhImageIfNeeded(imageId: string, publicUrl: string,
         ],
       }],
     });
-    const caption =
-      out.response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ??
-      out.response?.text?.()?.trim() ?? '';
+    const caption = out.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? out.text?.trim() ?? '';
     if (caption) {
       await supabase.from('dh_chat_images').update({ caption }).eq('id', imageId);
       return caption;

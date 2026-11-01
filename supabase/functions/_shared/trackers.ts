@@ -4,7 +4,7 @@
 // a parallel cheap model records) and renders each skill's computed context
 // block. The engine knows aggregates, never domains: calories for Jack, tarot
 // pulls for Andy, project ideas for Yossi are all just declarations.
-import { supabase, utilityModel } from './clients.ts';
+import { generateUtilityContent, supabase } from './clients.ts';
 
 export type TrackerDecl = {
   skill_key: string;
@@ -79,9 +79,10 @@ The companion replied: ${input.dhReply || '(nothing)'}
 
 For each observation output: tracker_key, source ("user_message" | "photo_analysis" | "dh_reply" — where the fact came from), subject (entity name or null), value_json (a JSON object string with the tracker's declared fields). Output {"entries": []} when nothing matches. Respond with JSON only.`;
   try {
-    const res = await utilityModel.generateContent({
+    const res = await generateUtilityContent({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
+        maxOutputTokens: 192,
         temperature: 0.1,
         responseMimeType: 'application/json',
         responseSchema: {
@@ -105,7 +106,7 @@ For each observation output: tracker_key, source ("user_message" | "photo_analys
         },
       },
     });
-    const txt = res.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    const txt = res.candidates?.[0]?.content?.parts?.[0]?.text ?? res.text ?? '';
     const parsed = JSON.parse(txt);
     const byKey = new Map(input.trackers.map((t) => [t.key, t]));
     const out: TrackerEntry[] = [];
